@@ -260,6 +260,57 @@ class Database:
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_unrecommended_content(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Get cached content that has not been recommended yet."""
+        cursor = self.conn.execute(
+            """
+            SELECT c.*
+            FROM content_cache AS c
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM recommendations AS r
+                WHERE r.bvid = c.bvid
+            )
+            ORDER BY c.view_count DESC, c.discovered_at DESC, c.bvid ASC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def insert_recommendation(
+        self,
+        bvid: str,
+        *,
+        confidence: float,
+        expression: str = "",
+        topic: str = "",
+        presented: int = 0,
+    ) -> int:
+        """Insert a recommendation history record."""
+        cursor = self.conn.execute(
+            """
+            INSERT INTO recommendations (bvid, expression, topic, confidence, presented)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (bvid, expression, topic, confidence, presented),
+        )
+        self.conn.commit()
+        return cursor.lastrowid or 0
+
+    def get_recommendations(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Get recommendation history ordered by newest first."""
+        cursor = self.conn.execute(
+            """
+            SELECT *
+            FROM recommendations
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
     def close(self) -> None:
         """Close the database connection."""
         if self._conn:

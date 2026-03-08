@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from openbiliclaw.discovery.engine import DiscoveredContent
     from openbiliclaw.llm.base import LLMProvider
     from openbiliclaw.soul.profile import SoulProfile
+    from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +54,13 @@ class RecommendationEngine:
     - Personal insights connecting content to the user's soul
     """
 
-    def __init__(self, llm: LLMProvider) -> None:
+    def __init__(self, llm: LLMProvider, database: Database) -> None:
         self._llm = llm
+        self._database = database
 
     async def generate_recommendations(
         self,
-        discovered: list[DiscoveredContent],
+        discovered: list[DiscoveredContent] | None,
         profile: SoulProfile,
         limit: int = 10,
     ) -> list[Recommendation]:
@@ -72,10 +74,33 @@ class RecommendationEngine:
         Returns:
             List of personalized recommendations.
         """
-        # TODO: Rank by soul-based relevance
-        # TODO: Generate friend-style expression for each
-        # TODO: Deduplicate against recommendation history
-        return []
+        candidates = (
+            self._normalize_discovered(discovered)
+            if discovered is not None
+            else self._load_unrecommended_content(limit=max(limit * 3, 20))
+        )
+        ranked = sorted(
+            candidates,
+            key=lambda item: (-item.relevance_score, -item.view_count, item.bvid),
+        )[:limit]
+
+        recommendations = [
+            Recommendation(
+                content=item,
+                confidence=item.relevance_score,
+                presented=False,
+            )
+            for item in ranked
+        ]
+        for item in recommendations:
+            self._database.insert_recommendation(
+                item.content.bvid,
+                confidence=item.confidence,
+                expression=item.expression,
+                topic=item.topic_label,
+                presented=0,
+            )
+        return recommendations
 
     async def generate_personal_topic(
         self,
@@ -117,3 +142,29 @@ class RecommendationEngine:
         """
         # TODO: Use LLM with soul context + content info
         return ""
+
+    @staticmethod
+    def _normalize_discovered(
+        discovered: list[DiscoveredContent],
+    ) -> list[DiscoveredContent]:
+        return list(discovered)
+
+    def _load_unrecommended_content(self, *, limit: int) -> list[DiscoveredContent]:
+        from openbiliclaw.discovery.engine import DiscoveredContent
+
+        rows = self._database.get_unrecommended_content(limit=limit)
+        return [
+            DiscoveredContent(
+                bvid=str(row.get("bvid", "")),
+                title=str(row.get("title", "")),
+                up_name=str(row.get("up_name", "")),
+                up_mid=int(row.get("up_mid", 0) or 0),
+                duration=int(row.get("duration", 0) or 0),
+                description=str(row.get("description", "")),
+                cover_url=str(row.get("cover_url", "")),
+                view_count=int(row.get("view_count", 0) or 0),
+                like_count=int(row.get("like_count", 0) or 0),
+                source_strategy=str(row.get("source", "")),
+            )
+            for row in rows
+        ]
