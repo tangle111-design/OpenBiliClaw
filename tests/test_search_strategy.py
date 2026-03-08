@@ -1,0 +1,181 @@
+"""Tests for search-based discovery."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import pytest
+
+from openbiliclaw.discovery.engine import DiscoveredContent
+from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
+
+
+def _build_profile() -> SoulProfile:
+    return SoulProfile(
+        personality_portrait="一个偏好深度内容、耐心较强、会主动寻找高信息密度表达的人。",
+        core_traits=["理性", "好奇", "克制"],
+        preferences=PreferenceLayer(
+            interests=[
+                InterestTag(name="纪录片", category="知识", weight=0.9),
+                InterestTag(name="摄影", category="创作", weight=0.8),
+            ],
+            favorite_up_users=["影视飓风"],
+        ),
+    )
+
+
+@dataclass
+class FakeLLMService:
+    content: str
+    calls: list[dict[str, object]] = field(default_factory=list)
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> object:
+        self.calls.append(
+            {
+                "system_instruction": system_instruction,
+                "user_input": user_input,
+                "history": history,
+            }
+        )
+        return _FakeResponse(self.content)
+
+
+@dataclass
+class _FakeResponse:
+    content: str
+
+
+@dataclass
+class FakeBilibiliClient:
+    results_by_query: dict[str, list[dict[str, object]]]
+    failing_queries: set[str] = field(default_factory=set)
+    calls: list[str] = field(default_factory=list)
+
+    async def search(
+        self,
+        keyword: str,
+        page: int = 1,
+        page_size: int = 20,
+        order: str = "totalrank",
+    ) -> list[dict[str, object]]:
+        self.calls.append(keyword)
+        if keyword in self.failing_queries:
+            raise RuntimeError(f"boom: {keyword}")
+        return self.results_by_query.get(keyword, [])
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_uses_llm_queries_and_searches_each_query() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    llm_service = FakeLLMService('{"queries": ["纪录片 原理", "摄影 构图"]}')
+    bilibili_client = FakeBilibiliClient(
+        {
+            "纪录片 原理": [
+                {
+                    "bvid": "BV1A",
+                    "title": "把纪录片讲透",
+                    "author": "知识区UP",
+                    "mid": 11,
+                    "pic": "cover-a.jpg",
+                    "duration": "12:30",
+                    "play": 1234,
+                    "description": "高信息密度讲解",
+                }
+            ],
+            "摄影 构图": [
+                {
+                    "bvid": "BV1B",
+                    "title": "摄影构图入门",
+                    "author": "影像UP",
+                    "mid": 22,
+                    "pic": "cover-b.jpg",
+                    "duration": "08:05",
+                    "play": 5678,
+                    "description": "构图与镜头语言",
+                }
+            ],
+        }
+    )
+
+    strategy = SearchStrategy(
+        llm_service=llm_service,
+        bilibili_client=bilibili_client,
+    )
+    results = await strategy.discover(_build_profile(), limit=20)
+
+    assert bilibili_client.calls == ["纪录片 原理", "摄影 构图"]
+    assert len(results) == 2
+    assert all(isinstance(item, DiscoveredContent) for item in results)
+    assert results[0].source_strategy == "search"
+    assert llm_service.calls
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_deduplicates_results_by_bvid() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    llm_service = FakeLLMService('{"queries": ["纪录片", "深度讲解"]}')
+    bilibili_client = FakeBilibiliClient(
+        {
+            "纪录片": [
+                {"bvid": "BV1A", "title": "纪录片 1", "author": "UP1", "mid": 1},
+                {"bvid": "BV1B", "title": "纪录片 2", "author": "UP2", "mid": 2},
+            ],
+            "深度讲解": [
+                {"bvid": "BV1A", "title": "纪录片 1", "author": "UP1", "mid": 1},
+                {"bvid": "BV1C", "title": "纪录片 3", "author": "UP3", "mid": 3},
+            ],
+        }
+    )
+
+    strategy = SearchStrategy(llm_service=llm_service, bilibili_client=bilibili_client)
+    results = await strategy.discover(_build_profile())
+
+    assert [item.bvid for item in results] == ["BV1A", "BV1B", "BV1C"]
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_falls_back_when_llm_returns_invalid_json() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    llm_service = FakeLLMService("not-json")
+    bilibili_client = FakeBilibiliClient(
+        {
+            "纪录片": [{"bvid": "BV1A", "title": "纪录片", "author": "UP1", "mid": 1}],
+            "摄影": [{"bvid": "BV1B", "title": "摄影", "author": "UP2", "mid": 2}],
+        }
+    )
+
+    strategy = SearchStrategy(llm_service=llm_service, bilibili_client=bilibili_client)
+    results = await strategy.discover(_build_profile())
+
+    assert bilibili_client.calls[:2] == ["纪录片", "摄影"]
+    assert [item.bvid for item in results] == ["BV1A", "BV1B"]
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_continues_when_single_query_fails() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    llm_service = FakeLLMService('{"queries": ["纪录片", "摄影"]}')
+    bilibili_client = FakeBilibiliClient(
+        {
+            "摄影": [{"bvid": "BV1B", "title": "摄影", "author": "UP2", "mid": 2}],
+        },
+        failing_queries={"纪录片"},
+    )
+
+    strategy = SearchStrategy(llm_service=llm_service, bilibili_client=bilibili_client)
+    results = await strategy.discover(_build_profile())
+
+    assert bilibili_client.calls == ["纪录片", "摄影"]
+    assert [item.bvid for item in results] == ["BV1B"]

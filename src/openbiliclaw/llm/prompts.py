@@ -233,3 +233,39 @@ def build_insight_prompt(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
+
+
+def build_search_queries_prompt(
+    *,
+    profile_summary: dict[str, object],
+) -> list[dict[str, str]]:
+    """Build a structured prompt for search query generation."""
+    system_prompt = """
+<task>
+你要为 B 站内容发现生成一组可搜索的关键词组合。
+</task>
+
+<rules>
+1. 输出必须是严格 JSON，不要附带解释。
+2. query 必须是适合 B 站搜索的短词或短组合，不要写成长句。
+3. 优先组合“兴趣主题 + 内容风格/需求”，避免过泛的词。
+4. queries 数量控制在 5 到 10 个。
+</rules>
+
+<output_schema>
+{
+  "queries": ["纪录片 原理", "摄影 构图", "历史 长视频 深度"]
+}
+</output_schema>
+""".strip()
+    user_prompt = "\n\n".join(
+        [
+            "<profile_summary>",
+            json.dumps(profile_summary, ensure_ascii=False, indent=2),
+            "</profile_summary>",
+        ]
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]

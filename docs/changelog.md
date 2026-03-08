@@ -4,6 +4,16 @@
 
 ---
 
+## M5: 内容发现引擎（进行中）
+
+### 5.1 搜索策略 — `discovery/m51-search-strategy`
+
+- `SearchStrategy` 从空壳升级为可运行策略：基于画像生成搜索词、调用 B 站搜索并返回 `DiscoveredContent`
+- 新增结构化搜索 query prompt，统一通过 `LLMService.complete_structured_task()` 生成 5 到 10 个 B 站搜索词
+- 增加本地 fallback query 生成：当 LLM 返回坏 JSON 或空结果时，从兴趣标签和核心特质回退
+- 对跨 query 搜索结果按 `bvid` 去重，并映射 `title` / `up_name` / `cover_url` / `duration` / `view_count` / `description`
+- 新增 discovery 层测试，覆盖 query 生成、fallback、单 query 失败不中断和 engine 注册运行
+
 ## M4: 记忆系统（进行中）
 
 ### 4.5 核心记忆加载 — `memory/m45-core-memory`
