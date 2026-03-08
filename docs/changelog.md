@@ -88,6 +88,16 @@
 
 ---
 
+## M6: 推荐引擎（进行中）
+
+### 6.1 推荐排序 — `recommendation/m61-ranking`
+
+- `RecommendationEngine.generate_recommendations()` 从 stub 升级为可运行排序入口
+- 支持两种来源：显式传入 `discovered`，或直接从 `content_cache` 读取未推荐内容
+- 新增 `Database.get_unrecommended_content()`、`insert_recommendation()`、`get_recommendations()`
+- 每次生成推荐后，立即写入最小推荐历史记录，避免下一批重复选中同一内容
+- 新增 recommendation/storage 测试，覆盖排序、缓存读取和去重闭环
+
 ## M3: Bilibili 接入层 ✅
 
 ### 3.3 agent-browser 集成 — `bili/m33-agent-browser`

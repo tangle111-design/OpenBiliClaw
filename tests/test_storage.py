@@ -152,3 +152,52 @@ class TestDatabase:
             assert stats == {"click": 1, "view": 2}
 
             db.close()
+
+    def test_get_unrecommended_content_excludes_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content(
+                "BV1A",
+                title="Video A",
+                up_name="UPA",
+                source="search",
+                view_count=100,
+            )
+            db.cache_content(
+                "BV1B",
+                title="Video B",
+                up_name="UPB",
+                source="trending",
+                view_count=200,
+            )
+            db.insert_recommendation("BV1A", confidence=0.91, presented=0)
+
+            items = db.get_unrecommended_content(limit=10)
+
+            assert [item["bvid"] for item in items] == ["BV1B"]
+
+            db.close()
+
+    def test_insert_and_get_recommendations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.insert_recommendation(
+                "BV1REC",
+                confidence=0.83,
+                expression="",
+                topic="",
+                presented=0,
+            )
+
+            rows = db.get_recommendations(limit=10)
+
+            assert len(rows) == 1
+            assert rows[0]["bvid"] == "BV1REC"
+            assert rows[0]["confidence"] == 0.83
+            assert rows[0]["presented"] == 0
+
+            db.close()
