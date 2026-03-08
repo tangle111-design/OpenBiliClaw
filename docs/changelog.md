@@ -8,6 +8,12 @@
 
 ## M7: CLI 体验 ✅
 
+### 7.1 discover 命令补平 — `cli/m71-discover-command`
+
+- `openbiliclaw discover` 从 stub 升级为真实命令：读取画像、执行 discovery engine、展示发现摘要与前 5 条预览
+- 发现结果继续由 `ContentDiscoveryEngine` 写入 `content_cache`，CLI 只负责编排和展示
+- 新增 CLI 测试，覆盖画像缺失、空发现结果和成功预览三条主路径
+
 ### 7.2 输出格式 — `cli/m72-output-format`
 
 - `cli.py` 抽出统一 Rich 渲染 helper：页面标题、状态面板、键值表、占位态、推荐卡片

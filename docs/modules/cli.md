@@ -30,7 +30,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `recommend` | 查看推荐 | ✅ |
 | `feedback <id> <like\|dislike>` | 对推荐提交反馈 | ✅ |
 | `profile` | 查看用户画像 | ✅ |
-| `discover` | 手动触发发现 | 🔲 stub |
+| `discover` | 手动触发发现 | ✅ |
 | `chat` | 苏格拉底式对话 | 🔲 stub |
 
 ## 详细说明
@@ -210,9 +210,33 @@ $ openbiliclaw feedback 7 dislike --note "太浅了"
   备注: 太浅了
 ```
 
+### `openbiliclaw discover`
+
+读取当前画像并执行一次真实内容发现，结果会写入 `content_cache`，并展示本次发现摘要与前几条预览。
+
+```bash
+$ openbiliclaw discover
+本次内容发现
+发现摘要
+  发现条数: 12
+  缓存状态: 已写入 content_cache
+
+发现 1
+  标题: 讲透城市空间与叙事结构
+  UP 主: 城市观察局
+  来源策略: search
+  相关性分数: 0.83
+```
+
+如果画像尚未初始化，会提示先执行：
+
+```bash
+openbiliclaw init
+```
+
 ### Stub 命令的输出约定
 
-`start`、`discover`、`chat` 目前仍是 stub，但已经统一使用“开发中”占位态输出，避免与真实错误混淆，并会附带建议的下一步命令。
+`start`、`chat` 目前仍是 stub，但已经统一使用“开发中”占位态输出，避免与真实错误混淆，并会附带建议的下一步命令。
 
 这条命令会同时：
 

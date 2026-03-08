@@ -85,6 +85,19 @@ def _print_recommendation_card(item: Any, index: int) -> None:
     _print_key_value_table(f"推荐 {index}", rows)
 
 
+def _print_discovered_content_preview(item: Any, index: int) -> None:
+    """Render one discovered content preview row."""
+    _print_key_value_table(
+        f"发现 {index}",
+        [
+            ("标题", item.title or "（暂无）"),
+            ("UP 主", item.up_name or "（未知）"),
+            ("来源策略", item.source_strategy or "（未知）"),
+            ("相关性分数", f"{float(item.relevance_score or 0.0):.2f}"),
+        ],
+    )
+
+
 def _initialize_logging(log_level_override: str | None = None) -> None:
     """Load config and initialize the logging system."""
     from openbiliclaw.config import load_config
@@ -513,12 +526,37 @@ def profile() -> None:
 @app.command()
 def discover() -> None:
     """手动触发内容发现."""
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
     _require_runtime_config()
-    _print_placeholder(
-        "内容发现",
-        "当前可先执行 `openbiliclaw init` 自动触发一次发现流程。",
+    soul_engine = _build_soul_engine()
+    try:
+        profile_data = asyncio.run(soul_engine.get_profile())
+    except SoulProfileNotInitializedError as exc:
+        _print_status_panel(
+            "warning",
+            "尚未初始化用户画像",
+            "请先执行 `openbiliclaw init` 拉取历史并生成初始画像。",
+        )
+        raise typer.Exit(code=1) from exc
+
+    discovery_engine = _build_discovery_engine()
+    discovered = asyncio.run(discovery_engine.discover(profile_data, limit=30))
+
+    _print_page_title("本次内容发现", "发现结果预览")
+    if not discovered:
+        _print_status_panel("info", "没有发现到新内容", "当前没有发现到新的可缓存内容。")
+        return
+
+    _print_key_value_table(
+        "发现摘要",
+        [
+            ("发现条数", str(len(discovered))),
+            ("缓存状态", "已写入 content_cache"),
+        ],
     )
-    # TODO: Trigger content discovery
+    for index, item in enumerate(discovered[:5], start=1):
+        _print_discovered_content_preview(item, index)
 
 
 @app.command()

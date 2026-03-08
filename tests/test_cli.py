@@ -334,17 +334,104 @@ def test_start_uses_placeholder_output(
     assert "功能开发中" in result.stdout
 
 
-def test_discover_uses_placeholder_output(
+def test_discover_prints_init_guidance_when_profile_missing(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner
 ) -> None:
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            raise SoulProfileNotInitializedError("missing")
+
     monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine(), raising=False)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["discover"])
+
+    assert result.exit_code == 1
+    assert "尚未初始化" in result.stdout
+    assert "openbiliclaw init" in result.stdout
+
+
+def test_discover_reports_empty_results(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeDiscoveryEngine:
+        async def discover(
+            self,
+            profile: SoulProfile,
+            strategies: list[str] | None = None,
+            limit: int = 30,
+        ) -> list[DiscoveredContent]:
+            return []
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine(), raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_discovery_engine",
+        lambda: FakeDiscoveryEngine(),
+        raising=False,
+    )
     monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
 
     result = runner.invoke(app, ["discover"])
 
     assert result.exit_code == 0
-    assert "内容发现" in result.stdout
-    assert "功能开发中" in result.stdout
+    assert "本次内容发现" in result.stdout
+    assert "没有发现到新内容" in result.stdout
+
+
+def test_discover_displays_preview_rows(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeDiscoveryEngine:
+        async def discover(
+            self,
+            profile: SoulProfile,
+            strategies: list[str] | None = None,
+            limit: int = 30,
+        ) -> list[DiscoveredContent]:
+            return [
+                DiscoveredContent(
+                    bvid="BV1DISC",
+                    title="讲透城市空间与叙事结构",
+                    up_name="城市观察局",
+                    source_strategy="search",
+                    relevance_score=0.83,
+                )
+            ]
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine(), raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_discovery_engine",
+        lambda: FakeDiscoveryEngine(),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["discover"])
+
+    assert result.exit_code == 0
+    assert "本次内容发现" in result.stdout
+    assert "发现条数" in result.stdout
+    assert "讲透城市空间与叙事结构" in result.stdout
+    assert "UP 主" in result.stdout
+    assert "城市观察局" in result.stdout
+    assert "来源策略" in result.stdout
+    assert "search" in result.stdout
+    assert "相关性分数" in result.stdout
 
 
 def test_chat_uses_placeholder_output(
