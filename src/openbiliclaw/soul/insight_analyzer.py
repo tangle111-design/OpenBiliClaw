@@ -123,9 +123,7 @@ class InsightAnalyzer:
 
     @staticmethod
     def _clamp_confidence(raw_value: object) -> float:
-        if isinstance(raw_value, bool):
-            value = float(raw_value)
-        elif isinstance(raw_value, (int, float)):
+        if isinstance(raw_value, bool | int | float):
             value = float(raw_value)
         elif isinstance(raw_value, str):
             try:

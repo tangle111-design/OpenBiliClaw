@@ -61,6 +61,19 @@ async def test_insight_analyzer_builds_hypotheses_from_awareness() -> None:
     assert registry.calls
 
 
+@pytest.mark.asyncio
+async def test_insight_analyzer_raises_on_invalid_json() -> None:
+    from openbiliclaw.soul.insight_analyzer import InsightAnalyzer, InsightGenerationError
+
+    analyzer = InsightAnalyzer(FakeRegistry("not-json"))
+    with pytest.raises(InsightGenerationError, match="invalid JSON"):
+        await analyzer.analyze(
+            awareness_notes=[],
+            preference={},
+            soul_profile={},
+        )
+
+
 def test_merge_insights_combines_matching_hypotheses() -> None:
     from openbiliclaw.soul.insight_analyzer import InsightAnalyzer
 
