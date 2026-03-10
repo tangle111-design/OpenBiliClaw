@@ -18,9 +18,13 @@ def test_registry_module_imports_without_google_genai(monkeypatch: pytest.Monkey
     assert module.build_llm_registry is not None
 
 
-def test_gemini_provider_raises_helpful_error_without_sdk() -> None:
+def test_gemini_provider_raises_helpful_error_without_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Using Gemini without google-genai installed should fail clearly."""
     module = importlib.import_module("openbiliclaw.llm.gemini_provider")
+    monkeypatch.setattr(module, "genai", None)
+    monkeypatch.setattr(module, "types", None)
 
     with pytest.raises(Exception, match="google-genai"):
         module.GeminiProvider(api_key="test-key")
