@@ -251,6 +251,57 @@ class TestDatabase:
 
             db.close()
 
+    def test_get_pool_candidates_skips_shown_and_feedbacked_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content(
+                "BV1FRESH",
+                title="新鲜候选",
+                up_name="UPA",
+                source="search",
+                relevance_score=0.91,
+                relevance_reason="你会想点开这种把事情讲透的内容。",
+            )
+            db.cache_content(
+                "BV1SHOWN",
+                title="已经展示",
+                up_name="UPB",
+                source="search",
+                relevance_score=0.95,
+                relevance_reason="这条已经展示过。",
+            )
+            db.cache_content(
+                "BV1FB",
+                title="已经反馈",
+                up_name="UPC",
+                source="search",
+                relevance_score=0.93,
+                relevance_reason="这条已经被反馈过。",
+            )
+            db.conn.execute(
+
+                    "UPDATE content_cache "
+                    "SET pool_status = 'shown', recommended_at = CURRENT_TIMESTAMP "
+                    "WHERE bvid = 'BV1SHOWN'"
+
+            )
+            db.conn.execute(
+
+                    "UPDATE content_cache "
+                    "SET pool_status = 'feedbacked', feedback_type = 'dislike', "
+                    "feedback_at = CURRENT_TIMESTAMP WHERE bvid = 'BV1FB'"
+
+            )
+            db.conn.commit()
+
+            items = db.get_pool_candidates(limit=10)
+
+            assert [item["bvid"] for item in items] == ["BV1FRESH"]
+
+            db.close()
+
     def test_insert_and_get_recommendations(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")

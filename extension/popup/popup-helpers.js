@@ -33,12 +33,13 @@ export function getConnectionBadgeState(online) {
 }
 
 export function normalizeRecommendation(item) {
+  const relevanceReason = normalizeText(item?.relevance_reason);
   return {
     id: Number(item?.id ?? 0),
     bvid: normalizeText(item?.bvid),
     title: normalizeText(item?.title) || DEFAULT_TITLE,
     up_name: normalizeText(item?.up_name) || DEFAULT_UP_NAME,
-    expression: normalizeText(item?.expression) || DEFAULT_EXPRESSION,
+    expression: normalizeText(item?.expression) || relevanceReason || DEFAULT_EXPRESSION,
     topic_label: normalizeText(item?.topic_label),
     presented: Boolean(item?.presented),
   };

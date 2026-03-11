@@ -127,6 +127,44 @@ class RecommendationEngine:
             )
         return recommendations
 
+    async def reshuffle_recommendations(
+        self,
+        *,
+        profile: SoulProfile,
+        limit: int = 5,
+    ) -> list[Recommendation]:
+        """Instantly pick a new batch from the discovery pool.
+
+        This path is intentionally fast: it does not wait for friend-style
+        expression generation and falls back to pool relevance reasons.
+        """
+        candidates = self._load_pool_candidates(limit=max(limit * 3, 20))
+        ranked = sorted(candidates, key=self._ranking_key)[:limit]
+        recommendations: list[Recommendation] = []
+        shown_bvids: list[str] = []
+
+        for item in ranked:
+            expression = item.relevance_reason.strip() or self._fallback_expression(item)
+            recommendation = Recommendation(
+                content=item,
+                confidence=item.relevance_score,
+                presented=False,
+                expression=expression,
+                topic_label="",
+            )
+            recommendation.recommendation_id = self._database.insert_recommendation(
+                item.bvid,
+                confidence=recommendation.confidence,
+                expression=recommendation.expression,
+                topic=recommendation.topic_label,
+                presented=0,
+            )
+            recommendations.append(recommendation)
+            shown_bvids.append(item.bvid)
+
+        self._database.mark_pool_items_shown(shown_bvids)
+        return recommendations
+
     async def generate_personal_topic(
         self,
         recommendations: list[Recommendation],
@@ -278,6 +316,31 @@ class RecommendationEngine:
         from openbiliclaw.discovery.engine import DiscoveredContent
 
         rows = self._database.get_unrecommended_content(limit=limit)
+        return [
+            DiscoveredContent(
+                bvid=str(row.get("bvid", "")),
+                title=str(row.get("title", "")),
+                up_name=str(row.get("up_name", "")),
+                up_mid=int(row.get("up_mid", 0) or 0),
+                duration=int(row.get("duration", 0) or 0),
+                description=str(row.get("description", "")),
+                cover_url=str(row.get("cover_url", "")),
+                view_count=int(row.get("view_count", 0) or 0),
+                like_count=int(row.get("like_count", 0) or 0),
+                source_strategy=str(row.get("source", "")),
+                relevance_score=float(row.get("relevance_score", 0.0) or 0.0),
+                relevance_reason=str(row.get("relevance_reason", "")),
+                candidate_tier=str(row.get("candidate_tier", "primary") or "primary"),
+                discovered_at=str(row.get("discovered_at", "")),
+                last_scored_at=str(row.get("last_scored_at", "")),
+            )
+            for row in rows
+        ]
+
+    def _load_pool_candidates(self, *, limit: int) -> list[DiscoveredContent]:
+        from openbiliclaw.discovery.engine import DiscoveredContent
+
+        rows = self._database.get_pool_candidates(limit=limit)
         return [
             DiscoveredContent(
                 bvid=str(row.get("bvid", "")),

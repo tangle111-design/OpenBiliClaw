@@ -47,6 +47,12 @@ class RecommendationListResponse(BaseModel):
     items: list[RecommendationOut]
 
 
+class RecommendationReshuffleResponse(BaseModel):
+    """Immediate recommendation reshuffle result."""
+
+    items: list[RecommendationOut]
+
+
 class RecommendationRefreshResponse(BaseModel):
     """Result of one explicit recommendation refresh request."""
 

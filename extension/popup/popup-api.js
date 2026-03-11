@@ -26,6 +26,10 @@ export async function refreshRecommendations() {
   return requestJson("/recommendations/refresh", { method: "POST" });
 }
 
+export async function reshuffleRecommendations() {
+  return requestJson("/recommendations/reshuffle", { method: "POST" });
+}
+
 export async function fetchRuntimeStatus() {
   return requestJson("/runtime-status", { method: "GET" });
 }

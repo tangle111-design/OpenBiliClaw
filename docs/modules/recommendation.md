@@ -23,6 +23,7 @@
 | 9.1 反馈处理 | ✅ | CLI、本地 API 与插件 popup 已统一写回推荐反馈与 `feedback` 事件 |
 | 9.2 画像更新 | ✅ | 反馈累计到阈值后会自动触发偏好层重分析与画像重建 |
 | 体验优化：动态“老B友”语气 | ✅ | 推荐文案不再固定套模板，而是根据画像、偏好和近期反馈动态调整信息密度、温度、梗感与直给程度 |
+| M106 候选池即时换一批 | ✅ | `content_cache` 现已作为 discovery pool 使用，popup 可秒级从池子里换一批新推荐 |
 
 ## 公开 API
 
@@ -49,6 +50,23 @@ items = await engine.generate_recommendations(
 - 推荐表达会先从当前画像、偏好摘要和近期反馈推断 `ToneProfile`，再生成更贴近用户口味的“老B友”式文案
 - CLI 展示后会把对应推荐记录标记为 `presented = 1`
 - `feedback` 命令会把 `feedback_type` / `feedback_note` / `feedback_at` 写回推荐记录
+
+### RecommendationEngine.reshuffle_recommendations
+
+```python
+items = await engine.reshuffle_recommendations(
+    profile=profile,
+    limit=5,
+)
+```
+
+行为说明：
+
+- 直接从 `content_cache` discovery pool 里挑选 `fresh` 候选，不等待新一轮 discover 完成
+- 过滤掉已展示、已明确反馈和已降级的候选
+- 优先按 `candidate_tier`、`relevance_score` 和最近评分时间排序
+- 如果候选还没有朋友式 `expression`，会优先使用入池时生成的 `relevance_reason`
+- 命中候选后会立即写入 `recommendations` 表，并把对应池子项标记为 `shown`
 
 ### Recommendation
 
@@ -108,3 +126,4 @@ Recommendation(
 7. **反馈驱动学习延迟触发**：推荐反馈不会逐条立刻重写画像，而是累计到阈值后统一重分析，降低噪声
 8. **推荐语气跟着用户变**：表达风格不只看内容匹配度，还会根据画像和近期反馈动态调节“老B友”程度，尽量减少机械解释感
 9. **缓存候选不能退化成只看播放量**：一旦从 `content_cache` 回读候选，也必须恢复 `relevance_score`、`candidate_tier` 和时间字段，保持与实时发现同一排序标准
+10. **候选池先可展示，再做文案增强**：`discover` 入池时就要带 `relevance_reason`，popup “换一批”先秒级从池子里出片，`expression` 只是增强层，不再阻塞展示

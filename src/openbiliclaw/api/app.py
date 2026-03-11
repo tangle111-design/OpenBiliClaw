@@ -29,6 +29,7 @@ from openbiliclaw.api.models import (
     RecommendationListResponse,
     RecommendationOut,
     RecommendationRefreshResponse,
+    RecommendationReshuffleResponse,
     RuntimeStatusResponse,
 )
 
@@ -40,6 +41,7 @@ def create_app(
     soul_engine: Any | None = None,
     dialogue: Any | None = None,
     runtime_controller: Any | None = None,
+    recommendation_engine: Any | None = None,
 ) -> FastAPI:
     """Create the local backend API app."""
     app = FastAPI(title="OpenBiliClaw API")
@@ -84,6 +86,8 @@ def create_app(
                 memory=memory_manager,
             )
         llm_service = LLMService(registry=llm_registry, memory=memory_manager)
+        if recommendation_engine is None:
+            recommendation_engine = RecommendationEngine(llm=llm_service, database=database)
         if runtime_controller is None:
             bilibili_client = BilibiliAPIClient(
                 cookie=resolve_runtime_cookie(
@@ -118,7 +122,6 @@ def create_app(
             discovery_engine.register_strategy(trending_strategy)
             discovery_engine.register_strategy(related_strategy)
             discovery_engine.register_strategy(explore_strategy)
-            recommendation_engine = RecommendationEngine(llm=llm_service, database=database)
             runtime_controller = ContinuousRefreshController(
                 memory_manager=memory_manager,
                 database=database,
@@ -226,6 +229,30 @@ def create_app(
                     presented=bool(row.get("presented", 0)),
                 )
                 for row in rows
+            ]
+        )
+
+    @app.post("/api/recommendations/reshuffle", response_model=RecommendationReshuffleResponse)
+    async def reshuffle_recommendations() -> RecommendationReshuffleResponse:
+        if recommendation_engine is None or soul_engine is None:
+            return RecommendationReshuffleResponse(items=[])
+        try:
+            profile = await soul_engine.get_profile()
+        except Exception:
+            return RecommendationReshuffleResponse(items=[])
+        items = await recommendation_engine.reshuffle_recommendations(profile=profile, limit=5)
+        return RecommendationReshuffleResponse(
+            items=[
+                RecommendationOut(
+                    id=int(item.recommendation_id),
+                    bvid=str(item.content.bvid),
+                    title=str(item.content.title),
+                    up_name=str(item.content.up_name),
+                    expression=str(item.expression),
+                    topic_label=str(item.topic_label),
+                    presented=bool(item.presented),
+                )
+                for item in items
             ]
         )
 

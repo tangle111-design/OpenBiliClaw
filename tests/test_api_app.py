@@ -241,6 +241,65 @@ class TestBackendAPI:
         }
         assert runtime.called == ["trigger"]
 
+    def test_reshuffle_recommendations_endpoint_returns_immediate_items(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeSoulEngine:
+            async def get_profile(self) -> dict[str, object]:
+                return {"profile": "ok"}
+
+        class FakeRecommendationEngine:
+            async def reshuffle_recommendations(
+                self,
+                *,
+                profile: object,
+                limit: int = 5,
+            ) -> list[object]:
+                assert profile == {"profile": "ok"}
+                assert limit == 5
+                from openbiliclaw.discovery.engine import DiscoveredContent
+                from openbiliclaw.recommendation.engine import Recommendation
+
+                return [
+                    Recommendation(
+                        content=DiscoveredContent(
+                            bvid="BV1NEW",
+                            title="新的一批",
+                            up_name="UPA",
+                        ),
+                        recommendation_id=11,
+                        expression="先给你捞一条新的。",
+                        topic_label="刚补进来的新东西",
+                        confidence=0.88,
+                        presented=False,
+                    )
+                ]
+
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=FakeSoulEngine(),
+            recommendation_engine=FakeRecommendationEngine(),
+        )
+        client = TestClient(app)
+
+        response = client.post("/api/recommendations/reshuffle")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "items": [
+                {
+                    "id": 11,
+                    "bvid": "BV1NEW",
+                    "title": "新的一批",
+                    "up_name": "UPA",
+                    "expression": "先给你捞一条新的。",
+                    "topic_label": "刚补进来的新东西",
+                    "presented": False,
+                }
+            ]
+        }
+
     def test_pending_notification_endpoint_returns_single_candidate(self) -> None:
         from fastapi.testclient import TestClient
 

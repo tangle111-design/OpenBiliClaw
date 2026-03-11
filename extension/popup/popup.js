@@ -11,8 +11,9 @@ import {
   checkBackendStatus,
   fetchProfileSummary,
   fetchRecommendations,
-  refreshRecommendations,
   fetchRuntimeStatus,
+  reshuffleRecommendations,
+  refreshRecommendations,
   sendChatMessage,
   submitFeedback,
 } from "./popup-api.js";
@@ -61,18 +62,12 @@ const elements = {
 function setRefreshButtonState(loading, message = "") {
   if (elements.refreshRecommendationsButton instanceof HTMLButtonElement) {
     elements.refreshRecommendationsButton.disabled = loading;
-    elements.refreshRecommendationsButton.textContent = loading ? "正在补货…" : "立即刷新";
+    elements.refreshRecommendationsButton.textContent = loading ? "正在换一批…" : "换一批";
   }
   if (elements.refreshRecommendationsStatus instanceof HTMLElement) {
     elements.refreshRecommendationsStatus.hidden = !message;
     elements.refreshRecommendationsStatus.textContent = message;
   }
-}
-
-function delay(ms) {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
 }
 
 function setHint(message) {
@@ -455,43 +450,29 @@ async function initializeRecommendations() {
 }
 
 async function handleManualRefresh() {
-  setRefreshButtonState(true, "正在补货…");
+  setRefreshButtonState(true, "正在给你换一批…");
   try {
-    const result = await refreshRecommendations();
-    if (result.reason === "not_initialized") {
+    const result = await reshuffleRecommendations();
+    if (!Array.isArray(result.items)) {
       setHint("先执行 openbiliclaw init，再回来刷新。");
       return;
     }
-    if (result.reason === "already_running" || result.state === "running") {
-      const finalStatus = await waitForManualRefresh();
-      state.profileLoaded = false;
-      await initializeRecommendations();
-      if (finalStatus?.manual_refresh_state === "failed") {
-        setHint(finalStatus.manual_refresh_message || "这次补货没跑通，稍后再试。");
-        return;
-      }
-      setHint(finalStatus?.manual_refresh_message || "刚给你补了一批新的。");
-      return;
-    }
-    setHint("这次没接到补货任务，稍后再试。");
+    state.recommendations = result.items;
+    state.runtimeStatus = await fetchRuntimeStatus().catch(() => state.runtimeStatus);
+    renderRecommendationState(
+      getPopupState({
+        online: state.online,
+        items: state.recommendations,
+        runtimeStatus: state.runtimeStatus,
+      }),
+    );
+    setHint(result.items.length > 0 ? "先给你换了一批新的，后台还在继续补货。" : "池子里这会儿还没刷出新的，稍后再试。");
+    void refreshRecommendations().catch(() => undefined);
   } catch {
-    setHint("这次没刷新成功，稍后再试。");
+    setHint("这次没换出来新的，稍后再试。");
   } finally {
     setRefreshButtonState(false);
   }
-}
-
-async function waitForManualRefresh() {
-  const maxAttempts = 30;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const status = normalizeRuntimeStatus(await fetchRuntimeStatus());
-    state.runtimeStatus = status;
-    if (status.manual_refresh_state !== "running") {
-      return status;
-    }
-    await delay(1000);
-  }
-  return state.runtimeStatus;
 }
 
 function bindTabs() {

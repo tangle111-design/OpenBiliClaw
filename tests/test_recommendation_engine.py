@@ -330,3 +330,36 @@ async def test_record_feedback_accepts_comment_feedback_type() -> None:
         assert row["feedback_type"] == "comment"
         assert row["feedback_note"] == "方向对，但讲得不够深。"
         assert row["feedback_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_reshuffle_recommendations_uses_pool_reason_without_waiting_expression() -> None:
+    class _ExplodingLLM(_DummyLLM):
+        async def complete_structured_task(self, **kwargs) -> LLMResponse:  # type: ignore[override]
+            raise RuntimeError("expression generation should not run in reshuffle path")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        db.cache_content(
+            "BV1POOL",
+            title="讲透地缘政治的链路",
+            up_name="观察站",
+            source="search",
+            relevance_score=0.89,
+            relevance_reason="这条会对上你最近那股想把来龙去脉搞明白的劲头。",
+        )
+        engine = RecommendationEngine(llm=_ExplodingLLM(), database=db)
+
+        recommendations = await engine.reshuffle_recommendations(
+            profile=_build_profile(),
+            limit=1,
+        )
+
+        assert len(recommendations) == 1
+        assert recommendations[0].content.bvid == "BV1POOL"
+        assert recommendations[0].expression == "这条会对上你最近那股想把来龙去脉搞明白的劲头。"
+        assert recommendations[0].topic_label == ""
+
+        history = db.get_recommendations(limit=10)
+        assert history[0]["expression"] == "这条会对上你最近那股想把来龙去脉搞明白的劲头。"

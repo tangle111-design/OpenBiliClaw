@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { refreshRecommendations } from "../popup/popup-api.js";
+import { reshuffleRecommendations } from "../popup/popup-api.js";
 
-test("refreshRecommendations posts to refresh endpoint", async () => {
+test("reshuffleRecommendations posts to reshuffle endpoint", async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options });
@@ -11,24 +11,38 @@ test("refreshRecommendations posts to refresh endpoint", async () => {
       ok: true,
       async json() {
         return {
-          ok: true,
-          accepted: true,
-          state: "running",
-          reason: "started",
+          items: [
+            {
+              id: 11,
+              bvid: "BV1NEW",
+              title: "新的一批",
+              up_name: "UPA",
+              expression: "先给你捞一条新的。",
+              topic_label: "",
+              presented: false,
+            },
+          ],
         };
       },
     };
   };
 
-  const result = await refreshRecommendations();
+  const result = await reshuffleRecommendations();
 
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/recommendations/refresh");
+  assert.equal(calls[0].url, "http://127.0.0.1:8420/api/recommendations/reshuffle");
   assert.equal(calls[0].options.method, "POST");
   assert.deepEqual(result, {
-    ok: true,
-    accepted: true,
-    state: "running",
-    reason: "started",
+    items: [
+      {
+        id: 11,
+        bvid: "BV1NEW",
+        title: "新的一批",
+        up_name: "UPA",
+        expression: "先给你捞一条新的。",
+        topic_label: "",
+        presented: false,
+      },
+    ],
   });
 });

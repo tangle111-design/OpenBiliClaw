@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS content_cache (
     last_scored_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     notification_sent INTEGER DEFAULT 0,
     notified_at TIMESTAMP,
+    pool_status TEXT DEFAULT 'fresh',
+    recommended_at TIMESTAMP,
+    feedback_type TEXT,
+    feedback_at TIMESTAMP,
     source      TEXT                 -- Which discovery strategy found it
 );
 
@@ -322,6 +326,43 @@ class Database:
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_pool_candidates(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Get fresh recommendation candidates directly from the discovery pool."""
+        cursor = self.conn.execute(
+            """
+            SELECT *
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(feedback_type, '') != 'dislike'
+            ORDER BY
+                CASE candidate_tier WHEN 'primary' THEN 0 ELSE 1 END ASC,
+                relevance_score DESC,
+                last_scored_at DESC,
+                view_count DESC,
+                bvid ASC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def mark_pool_items_shown(self, bvids: list[str]) -> None:
+        """Mark discovery-pool items as already shown in recommendations."""
+        clean_bvids = [item for item in bvids if item]
+        if not clean_bvids:
+            return
+        placeholders = ", ".join("?" for _ in clean_bvids)
+        self.conn.execute(
+            f"""
+            UPDATE content_cache
+            SET pool_status = 'shown',
+                recommended_at = CURRENT_TIMESTAMP
+            WHERE bvid IN ({placeholders})
+            """,
+            clean_bvids,
+        )
+        self.conn.commit()
+
     def get_latest_event_id(self) -> int:
         """Return the latest event primary key."""
         cursor = self.conn.execute("SELECT COALESCE(MAX(id), 0) AS latest_id FROM events")
@@ -497,6 +538,20 @@ class Database:
             """,
             (feedback_type, feedback_type, feedback_note, recommendation_id),
         )
+        self.conn.execute(
+            """
+            UPDATE content_cache
+            SET pool_status = 'feedbacked',
+                feedback_type = ?,
+                feedback_at = CURRENT_TIMESTAMP
+            WHERE bvid = (
+                SELECT bvid
+                FROM recommendations
+                WHERE id = ?
+            )
+            """,
+            (feedback_type, recommendation_id),
+        )
         self.conn.commit()
 
     def mark_recommendations_presented(self, recommendation_ids: list[int]) -> None:
@@ -549,6 +604,10 @@ class Database:
             "last_scored_at": "TIMESTAMP",
             "notification_sent": "INTEGER DEFAULT 0",
             "notified_at": "TIMESTAMP",
+            "pool_status": "TEXT DEFAULT 'fresh'",
+            "recommended_at": "TIMESTAMP",
+            "feedback_type": "TEXT",
+            "feedback_at": "TIMESTAMP",
         }
         for column_name, column_type in required_columns.items():
             if column_name in existing_columns:

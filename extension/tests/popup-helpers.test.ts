@@ -38,6 +38,21 @@ test("normalizeRecommendation fills stable fallback fields", () => {
   assert.equal(item.presented, false);
 });
 
+test("normalizeRecommendation falls back to relevance_reason before generic expression", () => {
+  const item = normalizeRecommendation({
+    id: 8,
+    bvid: "BV1reason",
+    title: "讲透链路",
+    up_name: "观察站",
+    expression: "",
+    relevance_reason: "这条会对上你最近那股想把事情一步步理顺的劲头。",
+    topic_label: "",
+    presented: 0,
+  });
+
+  assert.equal(item.expression, "这条会对上你最近那股想把事情一步步理顺的劲头。");
+});
+
 test("getPopupState distinguishes offline uninitialized refreshing empty and ready states", () => {
   assert.deepEqual(getPopupState({ online: false, items: [] }), {
     kind: "offline",
