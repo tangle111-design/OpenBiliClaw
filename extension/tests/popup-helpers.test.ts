@@ -52,6 +52,32 @@ test("normalizeRecommendation keeps cover empty when missing", () => {
   assert.equal(item.cover_url, "");
 });
 
+test("normalizeRecommendation upgrades protocol-relative and http covers to https", () => {
+  const protocolRelative = normalizeRecommendation({
+    id: 10,
+    bvid: "BV1proto",
+    title: "协议相对地址",
+    up_name: "阿B",
+    cover_url: "//i1.hdslb.com/bfs/archive/protocol.jpg",
+  });
+  const insecure = normalizeRecommendation({
+    id: 11,
+    bvid: "BV1http",
+    title: "http 地址",
+    up_name: "阿B",
+    cover_url: "http://i2.hdslb.com/bfs/archive/insecure.jpg",
+  });
+
+  assert.equal(
+    protocolRelative.cover_url,
+    "https://i1.hdslb.com/bfs/archive/protocol.jpg",
+  );
+  assert.equal(
+    insecure.cover_url,
+    "https://i2.hdslb.com/bfs/archive/insecure.jpg",
+  );
+});
+
 test("normalizeRecommendation falls back to relevance_reason before generic expression", () => {
   const item = normalizeRecommendation({
     id: 8,

@@ -19,6 +19,11 @@
 - popup 推荐卡片升级为“封面 + 文本信息 + 操作区”结构，换一批时可以直接先看封面再决定点不点
 - 封面缺失或加载失败时会回退到占位态，不影响换一批、打开视频和反馈流程
 
+### 封面地址规范化修复 — `extension/m109-cover-normalization`
+
+- popup 现在会把 `//i*.hdslb.com/...` 和 `http://i*.hdslb.com/...` 统一规范成 `https://...`
+- 修复了部分推荐卡片因为协议相对地址或不安全地址导致封面加载失败的问题
+
 ### 插件侧边栏模式 — `extension-sidepanel`
 
 - 扩展入口从 `action.default_popup` 切到 `side_panel.default_path`，点击扩展图标时会优先打开侧边栏
