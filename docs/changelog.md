@@ -6,6 +6,14 @@
 
 ## M8: 插件后端 API（进行中）
 
+### SQLite 修复与防损坏加固
+
+- 新增 `openbiliclaw db-repair`，会先检查完整性、拒绝带占用修复、备份 `db/db-wal`，再尝试恢复到 repaired 副本并切换正式库
+- `openbiliclaw start` 现在会在启动前检查数据库健康度；检测到损坏时会直接阻止启动，并提示先执行 `db-repair`
+- 运行时增加默认 24 小时冷备份策略，自动把健康数据库备份到 `data/backups/`，并按“最近 7 份日备 + 4 份周备”轮转
+- `Database` 的推荐更新写路径现已统一走带锁重试的写入口，减少 `database is locked` 后局部裸写带来的风险
+- CLI / API 的高流量路径开始共享同一个 SQLite 实例，避免同进程重复初始化多份连接
+
 ### Docker 一键后端部署支持
 
 - 新增 `Dockerfile`、`.dockerignore` 和单服务 `docker-compose.yml`，支持 `docker compose up -d` 启动后端

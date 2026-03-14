@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 import typer
@@ -26,6 +26,10 @@ app.add_typer(auth_app, name="auth")
 app.add_typer(browser_app, name="browser")
 console = Console()
 _APP_CONTEXT: dict[str, Any] = {}
+_RUNTIME_COMPONENTS: dict[str, Any] = {}
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _print_page_title(title: str, subtitle: str = "") -> None:
@@ -160,16 +164,14 @@ def _build_bilibili_client() -> Any:
 def _build_soul_engine() -> Any:
     """Build the configured soul engine with initialized memory storage."""
     from openbiliclaw.config import load_config
-    from openbiliclaw.memory.manager import MemoryManager
     from openbiliclaw.soul.engine import SoulEngine
 
     class _UnavailableLLM:
         async def complete(self, *args: Any, **kwargs: Any) -> Any:
             raise RuntimeError("LLM registry is unavailable for this command.")
 
-    config = load_config()
-    memory = MemoryManager(config.data_path)
-    memory.initialize()
+    load_config()
+    memory = _build_memory_manager()
     try:
         llm = _build_registry()
     except Exception:
@@ -179,17 +181,11 @@ def _build_soul_engine() -> Any:
 
 def _build_recommendation_engine() -> Any:
     """Build the recommendation engine with core-memory-aware LLM access."""
-    from openbiliclaw.config import load_config
     from openbiliclaw.llm.service import LLMService
-    from openbiliclaw.memory.manager import MemoryManager
     from openbiliclaw.recommendation.engine import RecommendationEngine
-    from openbiliclaw.storage.database import Database
 
-    config = load_config()
-    memory = MemoryManager(config.data_path)
-    memory.initialize()
-    database = Database(config.data_path / "openbiliclaw.db")
-    database.initialize()
+    memory = _build_memory_manager()
+    database = _get_runtime_database()
     llm_service = LLMService(registry=_build_registry(), memory=memory)
     return RecommendationEngine(llm=llm_service, database=database)
 
@@ -215,15 +211,19 @@ def _build_memory_manager() -> Any:
     from openbiliclaw.config import load_config
     from openbiliclaw.memory.manager import MemoryManager
 
+    cached = _RUNTIME_COMPONENTS.get("memory_manager")
+    if cached is not None:
+        return cached
+
     config = load_config()
-    memory = MemoryManager(config.data_path)
+    memory = MemoryManager(config.data_path, database=_get_runtime_database())
     memory.initialize()
+    _RUNTIME_COMPONENTS["memory_manager"] = memory
     return memory
 
 
 def _build_discovery_engine() -> Any:
     """Build the discovery engine with currently implemented strategies."""
-    from openbiliclaw.config import load_config
     from openbiliclaw.discovery.engine import ContentDiscoveryEngine
     from openbiliclaw.discovery.strategies.strategies import (
         ExploreStrategy,
@@ -232,14 +232,9 @@ def _build_discovery_engine() -> Any:
         TrendingStrategy,
     )
     from openbiliclaw.llm.service import LLMService
-    from openbiliclaw.memory.manager import MemoryManager
-    from openbiliclaw.storage.database import Database
 
-    config = load_config()
-    memory = MemoryManager(config.data_path)
-    memory.initialize()
-    database = Database(config.data_path / "openbiliclaw.db")
-    database.initialize()
+    memory = _build_memory_manager()
+    database = _get_runtime_database()
     bilibili_client = _build_bilibili_client()
     llm_service = LLMService(registry=_build_registry(), memory=memory)
 
@@ -266,6 +261,67 @@ def _build_discovery_engine() -> Any:
     engine.register_strategy(related_strategy)
     engine.register_strategy(explore_strategy)
     return engine
+
+
+def _get_runtime_database() -> Any:
+    """Build or return the shared runtime database instance."""
+    cached = _RUNTIME_COMPONENTS.get("database")
+    if cached is not None:
+        return cached
+
+    from openbiliclaw.config import load_config
+    from openbiliclaw.storage.database import Database
+
+    config = load_config()
+    database = Database(config.data_path / "openbiliclaw.db")
+    database.initialize()
+    _RUNTIME_COMPONENTS["database"] = database
+    return database
+
+
+def _runtime_database_path() -> Path:
+    from openbiliclaw.config import load_config
+
+    config = load_config()
+    return config.data_path / "openbiliclaw.db"
+
+
+def _runtime_backup_dir() -> Path:
+    return _runtime_database_path().parent / "backups"
+
+
+def _maybe_create_runtime_database_backup() -> None:
+    from openbiliclaw.storage.maintenance import maybe_create_scheduled_backup
+
+    db_path = _runtime_database_path()
+    if not db_path.exists():
+        return
+    maybe_create_scheduled_backup(db_path, _runtime_backup_dir())
+
+
+def _ensure_runtime_database_healthy() -> None:
+    from openbiliclaw.storage.maintenance import check_database_integrity
+
+    db_path = _runtime_database_path()
+    if not db_path.exists():
+        return
+    report = check_database_integrity(db_path)
+    if report.healthy:
+        return
+    _print_status_panel(
+        "error",
+        "数据库损坏",
+        "检测到本地数据库损坏，请先执行 `openbiliclaw db-repair` 再启动服务。",
+    )
+    if report.error:
+        console.print(report.error)
+    raise typer.Exit(code=1)
+
+
+def _run_db_repair() -> Any:
+    from openbiliclaw.storage.maintenance import repair_database
+
+    return repair_database(_runtime_database_path(), backup_dir=_runtime_backup_dir())
 
 
 def _history_item_to_event(item: dict[str, Any]) -> dict[str, Any]:
@@ -360,12 +416,29 @@ def _require_runtime_config() -> None:
 def start() -> None:
     """启动 OpenBiliClaw Agent."""
     _print_page_title("启动 OpenBiliClaw", "本地 API 服务")
+    _ensure_runtime_database_healthy()
     _print_status_panel(
         "info",
         "API 服务",
         "正在启动本地后端，默认监听 127.0.0.1:8420。",
     )
+    _maybe_create_runtime_database_backup()
     _run_api_server(host="127.0.0.1", port=8420)
+
+
+@app.command("db-repair")
+def db_repair() -> None:
+    """检查并修复本地 SQLite 数据库。"""
+    result = _run_db_repair()
+    console.print(result.message)
+    if getattr(result, "db_backup", None) is not None:
+        console.print(f"备份文件: {result.db_backup}")
+    if getattr(result, "wal_backup", None) is not None:
+        console.print(f"WAL 备份: {result.wal_backup}")
+    if getattr(result, "repaired_db", None) is not None:
+        console.print(f"恢复副本: {result.repaired_db}")
+    if result.status in {"in_use", "failed"}:
+        raise typer.Exit(code=1)
 
 
 @app.command()

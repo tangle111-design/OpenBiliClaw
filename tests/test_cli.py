@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from openbiliclaw import cli as cli_module
@@ -325,12 +326,19 @@ def test_start_uses_placeholder_output(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner
 ) -> None:
     called: dict[str, object] = {}
+    backup_calls: list[str] = []
 
     def fake_run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         called["host"] = host
         called["port"] = port
 
     monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_maybe_create_runtime_database_backup",
+        lambda: backup_calls.append("called"),
+        raising=False,
+    )
     monkeypatch.setattr(cli_module, "_run_api_server", fake_run_api_server, raising=False)
     monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
 
@@ -339,7 +347,186 @@ def test_start_uses_placeholder_output(
     assert result.exit_code == 0
     assert "启动 OpenBiliClaw" in result.stdout
     assert "API 服务" in result.stdout
+    assert backup_calls == ["called"]
     assert called == {"host": "127.0.0.1", "port": 8420}
+
+
+def test_start_refuses_unhealthy_database(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    server_calls: list[str] = []
+    backup_calls: list[str] = []
+
+    def fake_run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
+        server_calls.append(f"{host}:{port}")
+
+    def fake_ensure_runtime_database_healthy() -> None:
+        raise typer.Exit(code=1)
+
+    monkeypatch.setattr(
+        cli_module,
+        "_ensure_runtime_database_healthy",
+        fake_ensure_runtime_database_healthy,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_maybe_create_runtime_database_backup",
+        lambda: backup_calls.append("called"),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_run_api_server", fake_run_api_server, raising=False)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["start"])
+
+    assert result.exit_code == 1
+    assert backup_calls == []
+    assert server_calls == []
+
+
+def test_db_repair_reports_healthy_database(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    class _Result:
+        status = "healthy"
+        message = "数据库完整，无需修复。"
+        repaired_db = None
+        db_backup = None
+        wal_backup = None
+
+    monkeypatch.setattr(cli_module, "_run_db_repair", lambda: _Result(), raising=False)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["db-repair"])
+
+    assert result.exit_code == 0
+    assert "数据库完整，无需修复。" in result.stdout
+
+
+def test_db_repair_rejects_database_in_use(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    class _Result:
+        status = "in_use"
+        message = "数据库仍在被这些进程占用：python:86577"
+        repaired_db = None
+        db_backup = None
+        wal_backup = None
+
+    monkeypatch.setattr(cli_module, "_run_db_repair", lambda: _Result(), raising=False)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["db-repair"])
+
+    assert result.exit_code == 1
+    assert "python:86577" in result.stdout
+
+
+def test_db_repair_reports_successful_rebuild(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    class _Result:
+        status = "repaired"
+        message = "数据库已恢复并完成切换。"
+        repaired_db = tmp_path / "openbiliclaw.repaired.db"
+        db_backup = tmp_path / "backups" / "openbiliclaw-20260315-020000.db"
+        wal_backup = None
+
+    monkeypatch.setattr(cli_module, "_run_db_repair", lambda: _Result(), raising=False)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["db-repair"])
+
+    assert result.exit_code == 0
+    assert "数据库已恢复并完成切换。" in result.stdout
+    assert "openbiliclaw.repaired.db" in result.stdout
+
+
+def test_runtime_builders_share_database_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    import openbiliclaw.discovery.engine as discovery_module
+    import openbiliclaw.discovery.strategies.strategies as strategy_module
+    import openbiliclaw.llm.service as llm_service_module
+    import openbiliclaw.memory.manager as memory_module
+    import openbiliclaw.recommendation.engine as recommendation_module
+    import openbiliclaw.storage.database as database_module
+
+    created_databases: list[object] = []
+    created_memories: list[object] = []
+
+    class FakeDatabase:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+            self.initialized = 0
+            created_databases.append(self)
+
+        def initialize(self) -> None:
+            self.initialized += 1
+
+    class FakeMemoryManager:
+        def __init__(self, data_path: Path, database: object | None = None) -> None:
+            self.data_path = data_path
+            self.database = database
+            self.initialized = 0
+            created_memories.append(self)
+
+        def initialize(self) -> None:
+            self.initialized += 1
+
+    class FakeLLMService:
+        def __init__(self, *, registry: object, memory: object) -> None:
+            self.registry = registry
+            self.memory = memory
+
+    class FakeRecommendationEngine:
+        def __init__(self, *, llm: object, database: object) -> None:
+            self.llm = llm
+            self.database = database
+
+    class FakeDiscoveryEngine:
+        def __init__(self, *, llm_service: object, database: object) -> None:
+            self.llm_service = llm_service
+            self.database = database
+            self.strategies: list[object] = []
+
+        def register_strategy(self, strategy: object) -> None:
+            self.strategies.append(strategy)
+
+    class FakeStrategy:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    fake_config = SimpleNamespace(
+        data_path=Path("/tmp/openbiliclaw-test-data"),
+        bilibili=SimpleNamespace(cookie=""),
+    )
+
+    monkeypatch.setattr(cli_module, "_RUNTIME_COMPONENTS", {}, raising=False)
+    monkeypatch.setattr(cli_module, "_build_registry", lambda: "registry", raising=False)
+    monkeypatch.setattr(cli_module, "_build_bilibili_client", lambda: "client", raising=False)
+    monkeypatch.setattr("openbiliclaw.config.load_config", lambda: fake_config)
+    monkeypatch.setattr(database_module, "Database", FakeDatabase)
+    monkeypatch.setattr(memory_module, "MemoryManager", FakeMemoryManager)
+    monkeypatch.setattr(llm_service_module, "LLMService", FakeLLMService)
+    monkeypatch.setattr(recommendation_module, "RecommendationEngine", FakeRecommendationEngine)
+    monkeypatch.setattr(discovery_module, "ContentDiscoveryEngine", FakeDiscoveryEngine)
+    monkeypatch.setattr(strategy_module, "SearchStrategy", FakeStrategy)
+    monkeypatch.setattr(strategy_module, "TrendingStrategy", FakeStrategy)
+    monkeypatch.setattr(strategy_module, "RelatedChainStrategy", FakeStrategy)
+    monkeypatch.setattr(strategy_module, "ExploreStrategy", FakeStrategy)
+
+    recommendation_engine = cli_module._build_recommendation_engine()
+    discovery_engine = cli_module._build_discovery_engine()
+
+    assert len(created_databases) == 1
+    assert created_databases[0].initialized == 1
+    assert len(created_memories) == 1
+    assert created_memories[0].initialized == 1
+    assert created_memories[0].database is created_databases[0]
+    assert recommendation_engine.database is created_databases[0]
+    assert discovery_engine.database is created_databases[0]
 
 
 def test_discover_prints_init_guidance_when_profile_missing(

@@ -54,5 +54,16 @@ OpenBiliClaw 采用分层架构设计，从上到下依次为：
 
 ### Storage (`storage/`)
 - SQLite 数据库管理
-- 向量索引
+- 冷备份、完整性检查与显式修复
 - 候选质量信号持久化与数据迁移
+
+## 运行时数据库约束
+
+本地 API 与 CLI 的高频运行路径现在遵循两条约束：
+
+1. **同进程共享单个 SQLite 实例**
+   `MemoryManager`、`RecommendationEngine`、`ContentDiscoveryEngine` 会优先复用同一个 `Database`，避免一轮运行里多次 `Database(...).initialize()` 争锁。
+2. **启动前先检查、运行中按周期冷备**
+   `openbiliclaw start` 会在启动前检查数据库完整性；若健康且超过默认 24 小时未备份，会先生成一份冷备到 `data/backups/`。
+
+数据库修复不在启动路径里自动执行，高风险恢复统一通过 `openbiliclaw db-repair` 触发。

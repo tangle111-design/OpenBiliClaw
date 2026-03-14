@@ -86,10 +86,10 @@ class MemoryManager:
     understanding flows down to guide interpretation.
     """
 
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, *, database: Database | None = None) -> None:
         self._data_dir = data_dir
         self._layers: dict[str, MemoryLayer] = {}
-        self._database = Database(data_dir / "openbiliclaw.db")
+        self._database = database or Database(data_dir / "openbiliclaw.db")
         self._feedback_state_path = data_dir / "memory" / "feedback_state.json"
         self._account_sync_state_path = data_dir / "memory" / "account_sync_state.json"
         self._discovery_runtime_state_path = data_dir / "memory" / "discovery_runtime.json"

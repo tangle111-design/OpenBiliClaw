@@ -467,6 +467,41 @@ class TestDatabase:
 
             db.close()
 
+    def test_update_recommendation_content_retries_when_database_is_locked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            class _LockingConnection:
+                def __init__(self) -> None:
+                    self.calls = 0
+                    self.commits = 0
+
+                def execute(self, sql: str, params: tuple[object, ...]) -> object:
+                    self.calls += 1
+                    if self.calls == 1:
+                        raise sqlite3.OperationalError("database is locked")
+
+                    class _Cursor:
+                        lastrowid = 0
+
+                    return _Cursor()
+
+                def commit(self) -> None:
+                    self.commits += 1
+
+            fake_conn = _LockingConnection()
+            db._conn = fake_conn  # type: ignore[assignment]
+
+            db.update_recommendation_content(
+                7,
+                expression="这条更贴你最近的状态。",
+                topic="最近更吃这一路",
+            )
+
+            assert fake_conn.calls == 2
+            assert fake_conn.commits == 1
+
     def test_mark_recommendations_presented_sets_presented_and_timestamp(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")
@@ -485,6 +520,37 @@ class TestDatabase:
             assert rows[1]["presented_at"] is not None
 
             db.close()
+
+    def test_mark_recommendations_presented_retries_when_database_is_locked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            class _LockingConnection:
+                def __init__(self) -> None:
+                    self.calls = 0
+                    self.commits = 0
+
+                def execute(self, sql: str, params: list[object]) -> object:
+                    self.calls += 1
+                    if self.calls == 1:
+                        raise sqlite3.OperationalError("database is locked")
+
+                    class _Cursor:
+                        lastrowid = 0
+
+                    return _Cursor()
+
+                def commit(self) -> None:
+                    self.commits += 1
+
+            fake_conn = _LockingConnection()
+            db._conn = fake_conn  # type: ignore[assignment]
+
+            db.mark_recommendations_presented([1, 2])
+
+            assert fake_conn.calls == 2
+            assert fake_conn.commits == 1
 
     def test_get_recommendation_by_id_returns_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -538,6 +604,41 @@ class TestDatabase:
 
             db.close()
 
+    def test_update_recommendation_feedback_retries_when_database_is_locked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            class _LockingConnection:
+                def __init__(self) -> None:
+                    self.calls = 0
+                    self.commits = 0
+
+                def execute(self, sql: str, params: tuple[object, ...]) -> object:
+                    self.calls += 1
+                    if self.calls == 1:
+                        raise sqlite3.OperationalError("database is locked")
+
+                    class _Cursor:
+                        lastrowid = 0
+
+                    return _Cursor()
+
+                def commit(self) -> None:
+                    self.commits += 1
+
+            fake_conn = _LockingConnection()
+            db._conn = fake_conn  # type: ignore[assignment]
+
+            db.update_recommendation_feedback(
+                7,
+                feedback_type="dislike",
+                feedback_note="太浅了",
+            )
+
+            assert fake_conn.calls == 3
+            assert fake_conn.commits == 2
+
     def test_notification_candidate_prefers_unpresented_unnotified_high_confidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")
@@ -562,3 +663,140 @@ class TestDatabase:
             assert low_id > 0
 
             db.close()
+
+
+class TestDatabaseMaintenance:
+    def test_check_database_integrity_reports_healthy_database(self, tmp_path: Path) -> None:
+        from openbiliclaw.storage.maintenance import check_database_integrity
+
+        db = Database(tmp_path / "healthy.db")
+        db.initialize()
+        db.insert_event("view", title="健康检查")
+        db.close()
+
+        report = check_database_integrity(tmp_path / "healthy.db")
+
+        assert report.healthy is True
+        assert report.error == ""
+
+    def test_create_database_backup_copies_db_and_wal(self, tmp_path: Path) -> None:
+        from openbiliclaw.storage.maintenance import create_database_backup
+
+        db_path = tmp_path / "openbiliclaw.db"
+        db_path.write_text("db", encoding="utf-8")
+        wal_path = tmp_path / "openbiliclaw.db-wal"
+        wal_path.write_text("wal", encoding="utf-8")
+
+        backup = create_database_backup(
+            db_path,
+            tmp_path / "backups",
+            timestamp="20260315-020000",
+        )
+
+        assert backup.db_backup.read_text(encoding="utf-8") == "db"
+        assert backup.wal_backup is not None
+        assert backup.wal_backup.read_text(encoding="utf-8") == "wal"
+
+    def test_rotate_database_backups_keeps_recent_daily_and_weekly_sets(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from openbiliclaw.storage.maintenance import rotate_database_backups
+
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        for index in range(10):
+            stamp = f"202603{index + 1:02d}-020000"
+            (backup_dir / f"openbiliclaw-{stamp}.db").write_text("db", encoding="utf-8")
+
+        rotate_database_backups(
+            backup_dir,
+            keep_daily=3,
+            keep_weekly=2,
+            now=datetime(2026, 3, 15, 2, 0, 0),
+        )
+
+        kept = sorted(path.name for path in backup_dir.glob("*.db"))
+        assert len(kept) == 5
+
+    def test_repair_database_returns_healthy_status_without_modifying_healthy_db(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from openbiliclaw.storage.maintenance import repair_database
+
+        db = Database(tmp_path / "openbiliclaw.db")
+        db.initialize()
+        db.insert_event("view", title="还不用修")
+        db.close()
+        before = (tmp_path / "openbiliclaw.db").read_bytes()
+
+        result = repair_database(
+            tmp_path / "openbiliclaw.db",
+            backup_dir=tmp_path / "backups",
+        )
+
+        assert result.status == "healthy"
+        assert result.repaired_db is None
+        assert (tmp_path / "openbiliclaw.db").read_bytes() == before
+
+    def test_repair_database_refuses_when_database_is_in_use(self, tmp_path: Path) -> None:
+        from openbiliclaw.storage.maintenance import repair_database
+
+        db_path = tmp_path / "openbiliclaw.db"
+        db_path.write_text("broken", encoding="utf-8")
+
+        result = repair_database(
+            db_path,
+            backup_dir=tmp_path / "backups",
+            holders=["python:86577"],
+        )
+
+        assert result.status == "in_use"
+        assert "python:86577" in result.message
+
+    def test_repair_database_keeps_original_when_recovery_fails(self, tmp_path: Path) -> None:
+        from openbiliclaw.storage.maintenance import repair_database
+
+        db_path = tmp_path / "openbiliclaw.db"
+        db_path.write_text("broken", encoding="utf-8")
+        original = db_path.read_bytes()
+
+        result = repair_database(
+            db_path,
+            backup_dir=tmp_path / "backups",
+            holders=[],
+            integrity_error="database disk image is malformed",
+            recovered_sql=None,
+        )
+
+        assert result.status == "failed"
+        assert db_path.read_bytes() == original
+        assert result.repaired_db is None
+
+    def test_repair_database_builds_repaired_copy_when_recovery_sql_is_available(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from openbiliclaw.storage.maintenance import repair_database
+
+        db_path = tmp_path / "openbiliclaw.db"
+        db_path.write_text("broken", encoding="utf-8")
+
+        result = repair_database(
+            db_path,
+            backup_dir=tmp_path / "backups",
+            holders=[],
+            integrity_error="database disk image is malformed",
+            recovered_sql=(
+                "CREATE TABLE events (id INTEGER PRIMARY KEY, title TEXT);"
+                "INSERT INTO events (id, title) VALUES (1, '恢复成功');"
+            ),
+        )
+
+        assert result.status == "repaired"
+        assert result.repaired_db is not None
+        repaired = sqlite3.connect(result.repaired_db)
+        row = repaired.execute("SELECT title FROM events").fetchone()
+        repaired.close()
+        assert row == ("恢复成功",)

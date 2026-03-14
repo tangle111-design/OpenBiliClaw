@@ -39,6 +39,10 @@ from openbiliclaw.memory.manager import MemoryManager
 memory = MemoryManager(data_dir=Path("data"))
 memory.initialize()  # 创建目录 + 初始化 SQLite + 加载各层
 
+# 运行时可注入共享 Database，避免同进程里重复建立 SQLite 连接
+memory = MemoryManager(data_dir=Path("data"), database=shared_database)
+memory.initialize()
+
 # 写入事件
 await memory.propagate_event({
     "event_type": "view",           # view|pause|seek|search|favorite|like|coin|comment|click|scroll|hover|snapshot|feedback
@@ -258,6 +262,7 @@ data_dir = "data"  # 记忆 JSON 文件存储在 data/memory/ 下
 
 1. **SQLite 事件层 + JSON 上层**：事件量大用 DB，画像数据量小用 JSON 文件
 2. **兴趣衰减**：`weight × 0.9^weeks`，低于 0.05 自动移除，避免陈旧标签污染画像
+3. **运行时共享 SQLite 实例**：CLI / API 高流量路径优先复用同一个 `Database`，减少锁冲突和重复初始化
 3. **合并策略**：按 `(name, category)` 双键去重，权重取 max，`first_seen` 保持不变
 4. **核心记忆裁剪**：`get_core_memory()` 只暴露稳定摘要，不把整层原始 JSON 直接塞进 prompt
 5. **统一 Prompt 注入**：`render_core_memory_prompt()` 和 `LLMService` 统一为画像、偏好、觉察、洞察链路注入用户上下文

@@ -549,7 +549,7 @@ class Database:
         topic: str,
     ) -> None:
         """Update the generated expression fields of a recommendation."""
-        self.conn.execute(
+        self._execute_write(
             """
             UPDATE recommendations
             SET expression = ?, topic = ?
@@ -557,7 +557,6 @@ class Database:
             """,
             (expression, topic, recommendation_id),
         )
-        self.conn.commit()
 
     def get_recommendation_by_id(self, recommendation_id: int) -> dict[str, Any] | None:
         """Return a single recommendation row by primary key."""
@@ -583,7 +582,7 @@ class Database:
         feedback_note: str = "",
     ) -> None:
         """Update the current feedback state of a recommendation."""
-        self.conn.execute(
+        self._execute_write(
             """
             UPDATE recommendations
             SET feedback = ?,
@@ -594,7 +593,7 @@ class Database:
             """,
             (feedback_type, feedback_type, feedback_note, recommendation_id),
         )
-        self.conn.execute(
+        self._execute_write(
             """
             UPDATE content_cache
             SET pool_status = 'feedbacked',
@@ -608,14 +607,13 @@ class Database:
             """,
             (feedback_type, recommendation_id),
         )
-        self.conn.commit()
 
     def mark_recommendations_presented(self, recommendation_ids: list[int]) -> None:
         """Mark recommendations as presented and set their presented timestamp."""
         if not recommendation_ids:
             return
         placeholders = ", ".join("?" for _ in recommendation_ids)
-        self.conn.execute(
+        self._execute_write(
             f"""
             UPDATE recommendations
             SET presented = 1,
@@ -624,7 +622,6 @@ class Database:
             """,
             recommendation_ids,
         )
-        self.conn.commit()
 
     def close(self) -> None:
         """Close the database connection."""

@@ -26,6 +26,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `browser open <url>` | 通过浏览器打开页面 | ✅ |
 | `browser content <url>` | 获取页面文本内容 | ✅ |
 | `start` | 启动本地 API 服务 | ✅ |
+| `db-repair` | 检查、备份并修复本地 SQLite 数据库 | ✅ |
 | `init` | 首次初始化 | ✅ |
 | `recommend` | 查看推荐 | ✅ |
 | `feedback <id> <like\|dislike\|comment>` | 对推荐提交反馈 | ✅ |
@@ -258,6 +259,45 @@ openbiliclaw init
 ### `openbiliclaw start`
 
 启动本地后端 API 服务，默认监听 `127.0.0.1:8420`，供浏览器插件或本地调试调用。
+
+启动前会先做两件事：
+
+1. 检查 `data/openbiliclaw.db` 是否完整；如果检测到损坏，会拒绝启动并提示先执行 `openbiliclaw db-repair`
+2. 在数据库健康且距离上次冷备超过 24 小时时，自动生成一份冷备到 `data/backups/`
+
+```bash
+$ openbiliclaw start
+启动 OpenBiliClaw
+API 服务
+  正在启动本地后端，默认监听 127.0.0.1:8420。
+```
+
+如果数据库已损坏：
+
+```bash
+$ openbiliclaw start
+数据库损坏
+检测到本地数据库损坏，请先执行 `openbiliclaw db-repair` 再启动服务。
+```
+
+### `openbiliclaw db-repair`
+
+显式检查并修复本地 SQLite 数据库。命令遵循“先检查、先备份、后修复”的顺序：
+
+1. 运行完整性检查
+2. 若数据库正在被进程占用则拒绝继续
+3. 备份 `openbiliclaw.db` 与可选的 `openbiliclaw.db-wal`
+4. 尝试恢复到新的 repaired 副本
+5. 验证 repaired 副本通过后，再切换正式库
+
+```bash
+$ openbiliclaw db-repair
+数据库已恢复并完成切换。
+备份文件: data/backups/openbiliclaw-20260315-020000.db
+恢复副本: data/openbiliclaw.repaired.db
+```
+
+如果数据库本来就是健康的，命令会直接退出并提示无需修复；如果仍被运行中服务占用，会返回非零退出码并列出占用进程。
 
 启动后除了现有候选池刷新 loop，还会常驻一个低频账户同步 loop：
 - 定期检查观看历史

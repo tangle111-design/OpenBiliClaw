@@ -3,12 +3,83 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from openbiliclaw.api.app import create_app
 
 
 class TestBackendAPI:
     """Route-level tests for the plugin backend API."""
+
+    def test_create_app_bootstrap_shares_database_with_memory_manager(
+        self,
+        monkeypatch,
+    ) -> None:
+        from types import SimpleNamespace
+
+        import openbiliclaw.api.app as app_module
+        import openbiliclaw.bilibili.api as bilibili_api_module
+        import openbiliclaw.llm.service as llm_service_module
+        import openbiliclaw.memory.manager as memory_module
+        import openbiliclaw.storage.database as database_module
+
+        created_databases: list[object] = []
+        created_memories: list[object] = []
+
+        class FakeDatabase:
+            def __init__(self, path) -> None:
+                self.path = path
+                self.initialized = 0
+                created_databases.append(self)
+
+            def initialize(self) -> None:
+                self.initialized += 1
+
+        class FakeMemoryManager:
+            def __init__(self, data_path, database=None) -> None:
+                self.data_path = data_path
+                self.database = database
+                self.initialized = 0
+                created_memories.append(self)
+
+            def initialize(self) -> None:
+                self.initialized += 1
+
+        class FakeLLMService:
+            def __init__(self, *, registry: object, memory: object) -> None:
+                self.registry = registry
+                self.memory = memory
+
+        class FakeBilibiliClient:
+            def __init__(self, *, cookie: str) -> None:
+                self.cookie = cookie
+
+        fake_config = SimpleNamespace(
+            data_path=Path("/tmp/openbiliclaw-test-data"),
+            bilibili=SimpleNamespace(cookie=""),
+        )
+
+        monkeypatch.setattr("openbiliclaw.config.load_config", lambda: fake_config)
+        monkeypatch.setattr("openbiliclaw.llm.build_llm_registry", lambda config: "registry")
+        monkeypatch.setattr("openbiliclaw.bilibili.auth.resolve_runtime_cookie", lambda **_: "")
+        monkeypatch.setattr(database_module, "Database", FakeDatabase)
+        monkeypatch.setattr(memory_module, "MemoryManager", FakeMemoryManager)
+        monkeypatch.setattr(llm_service_module, "LLMService", FakeLLMService)
+        monkeypatch.setattr(bilibili_api_module, "BilibiliAPIClient", FakeBilibiliClient)
+
+        app_module.create_app(
+            soul_engine=object(),
+            recommendation_engine=object(),
+            runtime_controller=object(),
+            account_sync_service=object(),
+            dialogue=object(),
+        )
+
+        assert len(created_databases) == 1
+        assert created_databases[0].initialized == 1
+        assert len(created_memories) == 1
+        assert created_memories[0].initialized == 1
+        assert created_memories[0].database is created_databases[0]
 
     def test_health_endpoint_returns_ok(self) -> None:
         from fastapi.testclient import TestClient

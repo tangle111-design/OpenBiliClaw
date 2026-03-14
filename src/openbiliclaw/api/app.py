@@ -109,12 +109,15 @@ def create_app(
 
         config = load_config()
         llm_registry = build_llm_registry(config)
-        if memory_manager is None:
-            memory_manager = MemoryManager(config.data_path)
-            memory_manager.initialize()
+        created_runtime_database = False
         if database is None:
             database = Database(config.data_path / "openbiliclaw.db")
             database.initialize()
+            created_runtime_database = True
+        if memory_manager is None:
+            shared_database = database if created_runtime_database else None
+            memory_manager = MemoryManager(config.data_path, database=shared_database)
+            memory_manager.initialize()
         if soul_engine is None:
             soul_engine = SoulEngine(
                 llm=llm_registry,  # type: ignore[arg-type]
