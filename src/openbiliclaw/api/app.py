@@ -6,7 +6,7 @@ import asyncio
 from contextlib import suppress
 from typing import Any, cast
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from openbiliclaw.api.models import (
@@ -212,7 +212,10 @@ def create_app(
                 await account_sync_task
 
     @app.get("/api/profile-summary", response_model=ProfileSummaryResponse)
-    async def profile_summary() -> ProfileSummaryResponse:
+    async def profile_summary(
+        limit: int = Query(default=3, ge=1, le=20),
+        cursor: str = "",
+    ) -> ProfileSummaryResponse:
         try:
             profile = await soul_engine.get_profile()
         except Exception:
@@ -220,6 +223,8 @@ def create_app(
 
         top_interests = [item.name for item in profile.preferences.interests[:5] if item.name]
         cognition_updates = []
+        has_more_cognition_updates = False
+        next_cognition_cursor = ""
         load_cognition_updates = getattr(memory_manager, "load_cognition_updates", None)
         if callable(load_cognition_updates):
             raw_updates = [
@@ -227,7 +232,17 @@ def create_app(
                 for item in load_cognition_updates()
                 if isinstance(item, dict) and str(item.get("summary", "")).strip()
             ]
+            # Keep unread updates ahead of already-notified ones, newest first within each group.
+            raw_updates.sort(key=lambda item: str(item.get("created_at", "")).strip(), reverse=True)
             raw_updates.sort(key=lambda item: bool(item.get("notified", False)))
+            try:
+                start = max(int(cursor), 0)
+            except ValueError:
+                start = 0
+            end = start + limit
+            sliced_updates = raw_updates[start:end]
+            has_more_cognition_updates = end < len(raw_updates)
+            next_cognition_cursor = str(end) if has_more_cognition_updates else ""
             cognition_updates = [
                 {
                     "summary": str(item.get("summary", "")).strip(),
@@ -237,8 +252,8 @@ def create_app(
                     "source": str(item.get("source", "")).strip(),
                     "created_at": str(item.get("created_at", "")).strip(),
                 }
-                for item in raw_updates
-            ][:3]
+                for item in sliced_updates
+            ]
         return ProfileSummaryResponse(
             initialized=True,
             personality_portrait=profile.personality_portrait,
@@ -246,6 +261,8 @@ def create_app(
             deep_needs=profile.deep_needs[:5],
             top_interests=top_interests,
             recent_cognition_updates=cognition_updates,
+            has_more_cognition_updates=has_more_cognition_updates,
+            next_cognition_cursor=next_cognition_cursor,
         )
 
     @app.post("/api/events", response_model=EventIngestResponse)

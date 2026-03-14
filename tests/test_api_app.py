@@ -697,7 +697,131 @@ class TestBackendAPI:
                     "created_at": "",
                 },
             ],
+            "has_more_cognition_updates": False,
+            "next_cognition_cursor": "",
         }
+
+    def test_profile_summary_endpoint_paginates_cognition_history(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def load_cognition_updates(self) -> list[dict[str, object]]:
+                return [
+                    {
+                        "id": "cog-1",
+                        "kind": "interest_added",
+                        "summary": "第一条更新",
+                        "impact": "第一条影响",
+                        "reasoning": "第一条原因",
+                        "evidence": "第一条证据",
+                        "source": "feedback",
+                        "created_at": "2026-03-15T09:00:00",
+                        "notified": False,
+                    },
+                    {
+                        "id": "cog-2",
+                        "kind": "interest_added",
+                        "summary": "第二条更新",
+                        "impact": "第二条影响",
+                        "reasoning": "第二条原因",
+                        "evidence": "第二条证据",
+                        "source": "chat",
+                        "created_at": "2026-03-15T08:00:00",
+                        "notified": False,
+                    },
+                    {
+                        "id": "cog-3",
+                        "kind": "profile_shift",
+                        "summary": "第三条更新",
+                        "created_at": "2026-03-14T22:00:00",
+                        "notified": False,
+                    },
+                    {
+                        "id": "cog-4",
+                        "kind": "profile_shift",
+                        "summary": "第四条更新",
+                        "impact": "第四条影响",
+                        "reasoning": "第四条原因",
+                        "evidence": "第四条证据",
+                        "source": "refresh",
+                        "created_at": "2026-03-13T21:00:00",
+                        "notified": True,
+                    },
+                ]
+
+        class FakeProfile:
+            personality_portrait = "这是一个喜欢把问题想透、信息密度偏高的用户。"
+            core_traits = ["理性", "好奇"]
+            deep_needs = ["理解世界", "持续成长"]
+            preferences = type(
+                "Preferences",
+                (),
+                {
+                    "interests": [
+                        type("Interest", (), {"name": "国际新闻"})(),
+                        type("Interest", (), {"name": "深度分析"})(),
+                    ]
+                },
+            )()
+
+        class FakeSoulEngine:
+            async def get_profile(self) -> FakeProfile:
+                return FakeProfile()
+
+        app = create_app(
+            soul_engine=FakeSoulEngine(),
+            memory_manager=FakeMemoryManager(),
+            database=object(),
+        )
+        client = TestClient(app)
+
+        first_page = client.get("/api/profile-summary?limit=3")
+
+        assert first_page.status_code == 200
+        assert first_page.json()["recent_cognition_updates"] == [
+            {
+                "summary": "第一条更新",
+                "impact": "第一条影响",
+                "reasoning": "第一条原因",
+                "evidence": "第一条证据",
+                "source": "feedback",
+                "created_at": "2026-03-15T09:00:00",
+            },
+            {
+                "summary": "第二条更新",
+                "impact": "第二条影响",
+                "reasoning": "第二条原因",
+                "evidence": "第二条证据",
+                "source": "chat",
+                "created_at": "2026-03-15T08:00:00",
+            },
+            {
+                "summary": "第三条更新",
+                "impact": "",
+                "reasoning": "",
+                "evidence": "",
+                "source": "",
+                "created_at": "2026-03-14T22:00:00",
+            },
+        ]
+        assert first_page.json()["has_more_cognition_updates"] is True
+        assert first_page.json()["next_cognition_cursor"] == "3"
+
+        second_page = client.get("/api/profile-summary?limit=3&cursor=3")
+
+        assert second_page.status_code == 200
+        assert second_page.json()["recent_cognition_updates"] == [
+            {
+                "summary": "第四条更新",
+                "impact": "第四条影响",
+                "reasoning": "第四条原因",
+                "evidence": "第四条证据",
+                "source": "refresh",
+                "created_at": "2026-03-13T21:00:00",
+            }
+        ]
+        assert second_page.json()["has_more_cognition_updates"] is False
+        assert second_page.json()["next_cognition_cursor"] == ""
 
     def test_profile_summary_endpoint_handles_missing_profile(self) -> None:
         from fastapi.testclient import TestClient
