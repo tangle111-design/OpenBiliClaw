@@ -1,5 +1,6 @@
 """Tests for the Storage database module."""
 
+import sqlite3
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -99,6 +100,25 @@ class TestDatabase:
             row = db.get_cached_content(limit=1)[0]
 
             assert row["topic_key"] == "国际时事:地缘政治"
+
+            db.close()
+
+    def test_cache_content_persists_style_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content(
+                "BV1STYLE",
+                title="杀戮尖塔2 实机演示",
+                up_name="游戏研究所",
+                source="related_chain",
+                style_key="game_strategy",
+            )
+
+            row = db.get_cached_content(limit=1)[0]
+
+            assert row["style_key"] == "game_strategy"
 
             db.close()
 
@@ -347,6 +367,26 @@ class TestDatabase:
 
             db.close()
 
+    def test_get_pool_candidates_returns_style_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content(
+                "BV1STYLEPOOL",
+                title="智慧城市空镜素材",
+                up_name="视觉资料库",
+                source="explore",
+                relevance_score=0.84,
+                style_key="visual_showcase",
+            )
+
+            items = db.get_pool_candidates(limit=10)
+
+            assert items[0]["style_key"] == "visual_showcase"
+
+            db.close()
+
     def test_insert_and_get_recommendations(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")
@@ -368,6 +408,38 @@ class TestDatabase:
             assert rows[0]["presented"] == 0
 
             db.close()
+
+    def test_insert_recommendation_retries_when_database_is_locked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            class _LockingConnection:
+                def __init__(self) -> None:
+                    self.calls = 0
+                    self.commits = 0
+
+                def execute(self, sql: str, params: tuple[object, ...]) -> object:
+                    self.calls += 1
+                    if self.calls == 1:
+                        raise sqlite3.OperationalError("database is locked")
+
+                    class _Cursor:
+                        lastrowid = 7
+
+                    return _Cursor()
+
+                def commit(self) -> None:
+                    self.commits += 1
+
+            fake_conn = _LockingConnection()
+            db._conn = fake_conn  # type: ignore[assignment]
+
+            recommendation_id = db.insert_recommendation("BV1LOCK", confidence=0.6)
+
+            assert recommendation_id == 7
+            assert fake_conn.calls == 2
+            assert fake_conn.commits == 1
 
     def test_update_recommendation_content_persists_expression_and_topic(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -305,7 +305,23 @@ class RecommendationEngine:
     @staticmethod
     def _fallback_expression(content: DiscoveredContent) -> str:
         title = content.title or "这条内容"
-        return f"我感觉《{title}》会比较对你胃口，它应该能接住你最近那股想继续往深处看的状态。"
+        style_key = content.style_key.strip()
+        if style_key == "game_strategy":
+            return f"《{title}》偏你会点开的那种机制/攻略向，不只是热闹，重点是真有东西能翻。"
+        if style_key == "news_brief":
+            return f"《{title}》这条胜在信息来得快，而且不是纯复读，适合你先抓重点。"
+        if style_key == "practical_guide":
+            return f"《{title}》偏实操一点，信息是能直接拿来用的，不会只有概念。"
+        if style_key == "story_doc":
+            return f"《{title}》这条没那么硬，但会把故事和信息一起带出来，适合你换口气的时候看。"
+        if style_key == "visual_showcase":
+            return f"《{title}》更偏轻一点，适合你换换脑子，但内容不空。"
+        if style_key == "deep_dive":
+            return f"《{title}》还是你常吃那一路，偏讲透来龙去脉，不会只给结论。"
+        return (
+            f"《{title}》这条大概率还是对你胃口，重点是它不空，"
+            "能接住你最近那股想继续往深处看的状态。"
+        )
 
     @staticmethod
     def _fallback_topic_label(profile: SoulProfile) -> str:
@@ -325,23 +341,41 @@ class RecommendationEngine:
             return ranked[:limit]
 
         per_topic_cap = max(1, limit // 2)
+        per_style_cap = max(1, limit // 2)
         selected: list[DiscoveredContent] = []
         deferred: list[DiscoveredContent] = []
         topic_counts: dict[str, int] = {}
+        style_counts: dict[str, int] = {}
+        seen_styles: set[str] = set()
 
         for item in ranked:
             tokens = cls._diversity_tokens(item)
+            style_token = cls._style_token(item)
             if tokens and any(topic_counts.get(token, 0) >= per_topic_cap for token in tokens):
+                deferred.append(item)
+                continue
+            if style_token and style_counts.get(style_token, 0) >= per_style_cap:
+                deferred.append(item)
+                continue
+            if style_token and style_token in seen_styles and len(seen_styles) < min(limit, 4):
                 deferred.append(item)
                 continue
             selected.append(item)
             for token in tokens:
                 topic_counts[token] = topic_counts.get(token, 0) + 1
+            if style_token:
+                seen_styles.add(style_token)
+                style_counts[style_token] = style_counts.get(style_token, 0) + 1
             if len(selected) >= limit:
                 return selected
 
         for item in deferred:
+            style_token = cls._style_token(item)
+            if style_token and style_counts.get(style_token, 0) >= per_style_cap:
+                continue
             selected.append(item)
+            if style_token:
+                style_counts[style_token] = style_counts.get(style_token, 0) + 1
             if len(selected) >= limit:
                 break
         return selected[:limit]
@@ -370,6 +404,10 @@ class RecommendationEngine:
         }
 
     @staticmethod
+    def _style_token(item: DiscoveredContent) -> str:
+        return RecommendationEngine._normalize_topic_token(item.style_key)
+
+    @staticmethod
     def _normalize_topic_token(value: str) -> str:
         text = value.strip().lower()
         if not text:
@@ -394,6 +432,7 @@ class RecommendationEngine:
                 like_count=int(row.get("like_count", 0) or 0),
                 tags=self._parse_tags(row.get("tags", "[]")),
                 topic_key=str(row.get("topic_key", "")),
+                style_key=str(row.get("style_key", "")),
                 source_strategy=str(row.get("source", "")),
                 relevance_score=float(row.get("relevance_score", 0.0) or 0.0),
                 relevance_reason=str(row.get("relevance_reason", "")),
@@ -421,6 +460,7 @@ class RecommendationEngine:
                 like_count=int(row.get("like_count", 0) or 0),
                 tags=self._parse_tags(row.get("tags", "[]")),
                 topic_key=str(row.get("topic_key", "")),
+                style_key=str(row.get("style_key", "")),
                 source_strategy=str(row.get("source", "")),
                 relevance_score=float(row.get("relevance_score", 0.0) or 0.0),
                 relevance_reason=str(row.get("relevance_reason", "")),

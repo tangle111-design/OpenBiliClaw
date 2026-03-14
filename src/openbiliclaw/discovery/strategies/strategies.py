@@ -250,6 +250,11 @@ class SearchStrategy(DiscoveryStrategy):
             view_count=self._to_int(item.get("play", 0)),
             topic_key=self._topic_key_from_query(query),
             description=self._clean_text(str(item.get("description", ""))),
+            style_key=ContentDiscoveryEngine.infer_style_key(
+                title=self._clean_text(str(item.get("title", ""))),
+                description=self._clean_text(str(item.get("description", ""))),
+                source_strategy=self.name,
+            ),
             source_strategy=self.name,
             relevance_score=max(0.0, 0.2 - query_index * 0.02 - item_index * 0.005),
         )
@@ -403,6 +408,13 @@ class TrendingStrategy(DiscoveryStrategy):
             like_count=like_count,
             description=SearchStrategy._clean_text(
                 str(item.get("description", item.get("desc", "")))
+            ),
+            style_key=ContentDiscoveryEngine.infer_style_key(
+                title=SearchStrategy._clean_text(str(item.get("title", ""))),
+                description=SearchStrategy._clean_text(
+                    str(item.get("description", item.get("desc", "")))
+                ),
+                source_strategy=self.name,
             ),
             source_strategy=self.name,
         )
@@ -640,6 +652,13 @@ class RelatedChainStrategy(DiscoveryStrategy):
             topic_key=seed_topic_key,
             description=SearchStrategy._clean_text(
                 str(item.get("desc", item.get("description", "")))
+            ),
+            style_key=ContentDiscoveryEngine.infer_style_key(
+                title=SearchStrategy._clean_text(str(item.get("title", ""))),
+                description=SearchStrategy._clean_text(
+                    str(item.get("desc", item.get("description", "")))
+                ),
+                source_strategy=self.name,
             ),
             source_strategy=self.name,
         )

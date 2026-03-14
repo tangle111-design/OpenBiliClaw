@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from datetime import datetime
 
 logger = logging.getLogger(__name__)
+_LOCK_RETRY_ATTEMPTS = 5
+_LOCK_RETRY_SLEEP_SECONDS = 0.1
 
 # Schema version for migrations
 _SCHEMA_VERSION = 2
@@ -40,6 +43,7 @@ CREATE TABLE IF NOT EXISTS content_cache (
     duration    INTEGER,
     tags        TEXT,                 -- JSON array
     topic_key   TEXT DEFAULT '',
+    style_key   TEXT DEFAULT '',
     description TEXT,
     cover_url   TEXT,
     view_count  INTEGER DEFAULT 0,
@@ -95,9 +99,10 @@ class Database:
     def initialize(self) -> None:
         """Initialize the database and run migrations if needed."""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path))
+        self._conn = sqlite3.connect(str(self._db_path), timeout=30.0)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout = 30000")
         self._conn.executescript(_SCHEMA_SQL)
         self._ensure_recommendation_feedback_columns()
         self._ensure_content_cache_runtime_columns()
@@ -118,6 +123,30 @@ class Database:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         return self._conn
 
+    def _execute_write(
+        self,
+        sql: str,
+        params: tuple[Any, ...] | list[Any] = (),
+    ) -> sqlite3.Cursor:
+        """Execute a write with short retry on transient SQLite locks."""
+        attempts = _LOCK_RETRY_ATTEMPTS
+        while True:
+            try:
+                cursor = self.conn.execute(sql, params)
+                self.conn.commit()
+                return cursor
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                if "database is locked" not in message or attempts <= 1:
+                    raise
+                attempts -= 1
+                logger.warning(
+                    "SQLite write locked, retrying (%s attempts left): %s",
+                    attempts,
+                    sql.splitlines()[0].strip() if sql.strip() else "<empty-sql>",
+                )
+                time.sleep(_LOCK_RETRY_SLEEP_SECONDS)
+
     def insert_event(self, event_type: str, **kwargs: Any) -> int:
         """Insert a behavioral event.
 
@@ -130,7 +159,7 @@ class Database:
         """
         import json
 
-        cursor = self.conn.execute(
+        cursor = self._execute_write(
             "INSERT INTO events (event_type, url, title, context, metadata) VALUES (?, ?, ?, ?, ?)",
             (
                 event_type,
@@ -140,7 +169,6 @@ class Database:
                 json.dumps(kwargs.get("metadata", {}), ensure_ascii=False),
             ),
         )
-        self.conn.commit()
         return cursor.lastrowid or 0
 
     def get_recent_events(self, limit: int = 100) -> list[dict[str, Any]]:
@@ -232,7 +260,7 @@ class Database:
         """
         import json
 
-        self.conn.execute(
+        self._execute_write(
             """
             INSERT INTO content_cache (
                 bvid,
@@ -242,6 +270,7 @@ class Database:
                 duration,
                 tags,
                 topic_key,
+                style_key,
                 description,
                 cover_url,
                 view_count,
@@ -252,7 +281,7 @@ class Database:
                 last_scored_at,
                 source
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
             ON CONFLICT(bvid) DO UPDATE SET
                 title = excluded.title,
                 up_name = excluded.up_name,
@@ -260,6 +289,7 @@ class Database:
                 duration = excluded.duration,
                 tags = excluded.tags,
                 topic_key = excluded.topic_key,
+                style_key = excluded.style_key,
                 description = excluded.description,
                 cover_url = excluded.cover_url,
                 view_count = excluded.view_count,
@@ -278,6 +308,7 @@ class Database:
                 kwargs.get("duration", 0),
                 json.dumps(kwargs.get("tags", []), ensure_ascii=False),
                 kwargs.get("topic_key", ""),
+                kwargs.get("style_key", ""),
                 kwargs.get("description", ""),
                 kwargs.get("cover_url", ""),
                 kwargs.get("view_count", 0),
@@ -288,7 +319,6 @@ class Database:
                 kwargs.get("source", ""),
             ),
         )
-        self.conn.commit()
 
     def get_cached_content(self, limit: int = 100) -> list[dict[str, Any]]:
         """Get cached discovered content ordered by basic quality signals."""
@@ -380,7 +410,7 @@ class Database:
         if not clean_bvids:
             return
         placeholders = ", ".join("?" for _ in clean_bvids)
-        self.conn.execute(
+        self._execute_write(
             f"""
             UPDATE content_cache
             SET pool_status = 'shown',
@@ -389,7 +419,6 @@ class Database:
             """,
             clean_bvids,
         )
-        self.conn.commit()
 
     def get_latest_event_id(self) -> int:
         """Return the latest event primary key."""
@@ -428,14 +457,13 @@ class Database:
         presented: int = 0,
     ) -> int:
         """Insert a recommendation history record."""
-        cursor = self.conn.execute(
+        cursor = self._execute_write(
             """
             INSERT INTO recommendations (bvid, expression, topic, confidence, presented)
             VALUES (?, ?, ?, ?, ?)
             """,
             (bvid, expression, topic, confidence, presented),
         )
-        self.conn.commit()
         return cursor.lastrowid or 0
 
     def get_recommendations(self, limit: int = 100) -> list[dict[str, Any]]:
@@ -503,7 +531,7 @@ class Database:
 
     def mark_notification_sent(self, bvid: str) -> None:
         """Mark one cached item as already notified."""
-        self.conn.execute(
+        self._execute_write(
             """
             UPDATE content_cache
             SET notification_sent = 1,
@@ -512,7 +540,6 @@ class Database:
             """,
             (bvid,),
         )
-        self.conn.commit()
 
     def update_recommendation_content(
         self,
@@ -672,4 +699,8 @@ class Database:
         if "topic_key" not in existing_columns:
             self.conn.execute(
                 "ALTER TABLE content_cache ADD COLUMN topic_key TEXT DEFAULT ''"
+            )
+        if "style_key" not in existing_columns:
+            self.conn.execute(
+                "ALTER TABLE content_cache ADD COLUMN style_key TEXT DEFAULT ''"
             )

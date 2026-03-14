@@ -437,9 +437,14 @@ class SoulEngine:
         for candidate in candidates:
             if not self._candidate_ready_for_immediate_dialogue_cognition(candidate):
                 continue
-            summary, kind, impact, reasoning, evidence, context_line = self._build_immediate_dialogue_cognition(
-                candidate
-            )
+            (
+                summary,
+                kind,
+                impact,
+                reasoning,
+                evidence,
+                context_line,
+            ) = self._build_immediate_dialogue_cognition(candidate)
             if not summary:
                 continue
             if any(
@@ -795,7 +800,9 @@ class SoulEngine:
 
     @staticmethod
     def _build_expand_hint(*, impact: str, reasoning: str, evidence: str) -> str:
-        return "expandable" if any((impact.strip(), reasoning.strip(), evidence.strip())) else "summary_only"
+        if any((impact.strip(), reasoning.strip(), evidence.strip())):
+            return "expandable"
+        return "summary_only"
 
     @staticmethod
     def _build_feedback_context_line(title: str) -> str:

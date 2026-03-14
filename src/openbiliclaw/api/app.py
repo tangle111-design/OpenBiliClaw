@@ -43,7 +43,7 @@ SOURCE_LABELS = {
 }
 
 
-def _normalize_cognition_update(item: dict[str, object]) -> dict[str, str]:
+def _normalize_cognition_update(item: dict[str, object]) -> CognitionUpdateSummary:
     impact = str(item.get("impact", "")).strip()
     reasoning = str(item.get("reasoning", "")).strip()
     evidence = str(item.get("evidence", "")).strip()
@@ -52,17 +52,17 @@ def _normalize_cognition_update(item: dict[str, object]) -> dict[str, str]:
     expand_hint = str(item.get("expand_hint", "")).strip()
     if expand_hint not in {"expandable", "summary_only"}:
         expand_hint = "expandable" if any((impact, reasoning, evidence)) else "summary_only"
-    return {
-        "summary": str(item.get("summary", "")).strip(),
-        "context_line": str(item.get("context_line", "")).strip() or "基于最近几条相关内容",
-        "impact": impact,
-        "reasoning": reasoning,
-        "evidence": evidence,
-        "source": source,
-        "source_label": source_label,
-        "expand_hint": expand_hint,
-        "created_at": str(item.get("created_at", "")).strip(),
-    }
+    return CognitionUpdateSummary(
+        summary=str(item.get("summary", "")).strip(),
+        context_line=str(item.get("context_line", "")).strip() or "基于最近几条相关内容",
+        impact=impact,
+        reasoning=reasoning,
+        evidence=evidence,
+        source=source,
+        source_label=source_label,
+        expand_hint=expand_hint,
+        created_at=str(item.get("created_at", "")).strip(),
+    )
 
 
 def create_app(

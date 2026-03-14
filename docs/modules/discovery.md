@@ -27,6 +27,7 @@
 | 5.6 发现引擎编排 | ✅ | 并发执行策略 + 高分去重 + SQLite 缓存写入 |
 | 候选供给升级 | ✅ | 主发现不足时触发 backfill，并把相关性 / 候选层级写入缓存 |
 | M118 topic_key 与池子层压缩 | ✅ | Search / Related 现在会给候选带稳定 `topic_key`，发现引擎会先压缩同 topic 重复项，再写入 discovery pool |
+| M119 style_key 风格标注 | ✅ | discovery 入池时会按标题/描述轻规则补 `style_key`，为推荐层的风格多样性约束提供稳定信号 |
 
 ## 公开 API
 
@@ -186,6 +187,7 @@ item = DiscoveredContent(
 - `relevance_score`
 - `relevance_reason`
 - `topic_key`
+- `style_key`
 - `candidate_tier`
 - `discovered_at`
 - `last_scored_at`
@@ -203,3 +205,4 @@ item = DiscoveredContent(
 9. **引擎层仍不负责依赖创建**：`ContentDiscoveryEngine` 接收外部注入的 `llm_service` / `database`，策略继续显式注入 client/service
 10. **补货是显式分层而不是无脑放宽**：主发现优先，backfill 只在候选不足时介入，并通过 `candidate_tier` 保留来源语义
 11. **池子层先做一次轻压缩**：topic 多样性不能只在推荐层补救，发现结果在写入 `content_cache` 前也会先压一轮同 topic 重复项，防止单一 seed chain 灌满候选池
+12. **风格信号先在入池时做轻标注**：`style_key` 不追求完美分类，但必须足够稳定，保证推荐层能区分“硬核解析 / 新闻快讯 / 故事纪录 / 游戏攻略”等内容风格

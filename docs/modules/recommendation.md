@@ -27,6 +27,7 @@
 | M107 候选池容量与状态展示 | ✅ | runtime 会按 `pool_target_count` 持续补货，popup 会展示可换数量、最近补货数量和补货方向 |
 | M117 同批多样性约束 | ✅ | 同一批推荐不再只按分数直取前 N，而会对重复 topic 做限流，让一批里更容易同时出现不同方向 |
 | M118 topic_key 多样性强化 | ✅ | discovery pool 现在会持久化 `topic_key`，推荐层会优先按 `topic_key` 分桶再回填，减少同一 seed chain 或同类 query 连续刷屏 |
+| M119 风格多样性与快速文案增强 | ✅ | `reshuffle` 现在会同时约束 `topic_key + style_key`，并把快速 fallback 文案润色成更自然的老B友短句 |
 
 ## 公开 API
 
@@ -69,8 +70,9 @@ items = await engine.reshuffle_recommendations(
 - 过滤掉已展示、已明确反馈和已降级的候选
 - 优先按 `candidate_tier`、`relevance_score` 和最近评分时间排序
 - 同一批会优先按 `topic_key` 分桶，每个 topic 先出 1 条，再按分数回填
+- 同一批还会对 `style_key` 做软均摊，尽量避免连续塞满“硬核解析 / 游戏攻略 / 新闻快讯”中的某一类
 - 如果候选缺少 `topic_key`，才退回 `tags` 和标题/来源兜底做软限流
-- 如果候选还没有朋友式 `expression`，会优先使用入池时生成的 `relevance_reason`
+- 如果候选还没有朋友式 `expression`，会优先使用按 `style_key` 润色过的快速 fallback 文案，而不是直接裸用 `relevance_reason`
 - 命中候选后会立即写入 `recommendations` 表，并把对应池子项标记为 `shown`
 - runtime 会把 discovery pool 持续补到 `pool_target_count` 附近，保证 popup “换一批”尽量随时有货
 
@@ -217,3 +219,5 @@ Recommendation(
 10. **候选池先可展示，再做文案增强**：`discover` 入池时就要带 `relevance_reason`，popup “换一批”先秒级从池子里出片，`expression` 只是增强层，不再阻塞展示
 11. **同批推荐需要显式做多样性约束**：高分不是唯一目标，排序后仍要对重复 topic/tag 做软限流，避免一批里全是同一类内容
 12. **多样性要优先吃稳定 topic_key**：只靠 `tags` 不够稳，推荐层现在会优先使用 discovery 入池时生成的 `topic_key` 做分桶，再退回 `tags`
+13. **topic 多样性还不够，要再控风格**：用户体感里的“全是很干很学术”往往不是同一 topic，而是同一种内容风格，所以 `reshuffle` 现在会同时约束 `style_key`
+14. **快速换一批也要有说话味道**：快路径可以不等完整 `expression`，但不能直接退化成生硬说明句；当前 fallback 会按 `style_key` 生成更自然的短文案

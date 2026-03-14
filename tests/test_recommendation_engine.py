@@ -366,6 +366,94 @@ async def test_reshuffle_recommendations_uses_pool_reason_without_waiting_expres
 
 
 @pytest.mark.asyncio
+async def test_reshuffle_recommendations_spreads_styles_before_backfill() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        db.cache_content(
+            "BVGAME1",
+            title="杀戮尖塔2 全英雄基础流派攻略",
+            up_name="卡牌研究所",
+            source="related_chain",
+            relevance_score=0.96,
+            relevance_reason="这条偏你会点开的机制拆解。",
+            style_key="game_strategy",
+            topic_key="游戏:杀戮尖塔2",
+        )
+        db.cache_content(
+            "BVGAME2",
+            title="杀戮尖塔2 17分钟实机演示",
+            up_name="IGN",
+            source="related_chain",
+            relevance_score=0.95,
+            relevance_reason="这条还是同一类游戏机制内容。",
+            style_key="game_strategy",
+            topic_key="游戏:杀戮尖塔2",
+        )
+        db.cache_content(
+            "BVNEWS1",
+            title="美国关税政策又有新变化",
+            up_name="国际观察",
+            source="trending",
+            relevance_score=0.91,
+            relevance_reason="这条信息来得快，而且不是纯复读。",
+            style_key="news_brief",
+            topic_key="国际时事:贸易",
+        )
+        db.cache_content(
+            "BVDOC1",
+            title="塔可夫斯基《潜行者》到底讲了什么",
+            up_name="猫鲨Catshark",
+            source="explore",
+            relevance_score=0.9,
+            relevance_reason="这条会把故事和信息一起带出来。",
+            style_key="story_doc",
+            topic_key="科幻:电影",
+        )
+        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
+
+        recommendations = await engine.reshuffle_recommendations(
+            profile=_build_profile(),
+            limit=3,
+        )
+
+        picked = [item.content.bvid for item in recommendations]
+
+        assert "BVGAME1" in picked
+        assert "BVGAME2" not in picked
+        assert "BVNEWS1" in picked
+        assert "BVDOC1" in picked
+
+
+@pytest.mark.asyncio
+async def test_reshuffle_recommendations_uses_style_aware_fallback_expression() -> None:
+    class _ExplodingLLM(_DummyLLM):
+        async def complete_structured_task(self, **kwargs) -> LLMResponse:  # type: ignore[override]
+            raise RuntimeError("expression generation should not run in reshuffle path")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        db.cache_content(
+            "BVSTYLE",
+            title="杀戮尖塔2 角色强度排行",
+            up_name="卡牌研究所",
+            source="related_chain",
+            relevance_score=0.89,
+            relevance_reason="",
+            style_key="game_strategy",
+        )
+        engine = RecommendationEngine(llm=_ExplodingLLM(), database=db)
+
+        recommendations = await engine.reshuffle_recommendations(
+            profile=_build_profile(),
+            limit=1,
+        )
+
+        assert "机制/攻略向" in recommendations[0].expression
+
+
+@pytest.mark.asyncio
 async def test_reshuffle_recommendations_spreads_topic_keys_before_backfill() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")

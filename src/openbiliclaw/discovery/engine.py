@@ -47,6 +47,7 @@ class DiscoveredContent:
     like_count: int = 0
     tags: list[str] = field(default_factory=list)
     topic_key: str = ""
+    style_key: str = ""
     description: str = ""
     source_strategy: str = ""  # Which strategy found this
     relevance_score: float = 0.0  # 0.0 - 1.0 (based on user soul)
@@ -342,6 +343,7 @@ class ContentDiscoveryEngine:
                     duration=int(row.get("duration", 0) or 0),
                     tags=[],
                     topic_key=str(row.get("topic_key", "")),
+                    style_key=str(row.get("style_key", "")),
                     description=str(row.get("description", "")),
                     cover_url=str(row.get("cover_url", "")),
                     view_count=int(row.get("view_count", 0) or 0),
@@ -383,14 +385,22 @@ class ContentDiscoveryEngine:
         selected: list[DiscoveredContent] = []
         deferred: list[DiscoveredContent] = []
         seen_topics: set[str] = set()
+        style_counts: dict[str, int] = {}
+        per_style_cap = max(1, limit // 3)
         for item in results:
             topic_key = ContentDiscoveryEngine._topic_bucket(item)
+            style_key = ContentDiscoveryEngine._style_bucket(item)
             if topic_key and topic_key in seen_topics:
+                deferred.append(item)
+                continue
+            if style_key and style_counts.get(style_key, 0) >= per_style_cap:
                 deferred.append(item)
                 continue
             selected.append(item)
             if topic_key:
                 seen_topics.add(topic_key)
+            if style_key:
+                style_counts[style_key] = style_counts.get(style_key, 0) + 1
             if len(selected) >= limit:
                 return selected[:limit]
 
@@ -411,9 +421,55 @@ class ContentDiscoveryEngine:
         return ""
 
     @staticmethod
+    def _style_bucket(item: DiscoveredContent) -> str:
+        return ContentDiscoveryEngine._normalize_topic_token(item.style_key)
+
+    @staticmethod
     def _normalize_topic_token(value: str) -> str:
         compact = re.sub(r"\s+", "", value.strip().lower())
         return compact[:32]
+
+    @staticmethod
+    def infer_style_key(
+        *,
+        title: str,
+        description: str = "",
+        reason: str = "",
+        source_strategy: str = "",
+    ) -> str:
+        text = " ".join([title, description, reason]).lower()
+        game_tokens = ("攻略", "机制", "强度", "实机", "联机", "mod", "杀戮尖塔", "爬塔")
+        news_tokens = ("突发", "最新", "局势", "锐评", "发布", "快讯", "回应", "自焚")
+        guide_tokens = ("教程", "入门", "购买前", "怎么做", "建议", "指南", "统计")
+        story_tokens = ("纪录片", "故事", "电影", "小说史", "讲了一个怎样", "短片")
+        visual_tokens = ("空镜", "混剪", "素材", "视觉", "智慧城市")
+        deep_tokens = (
+            "讲透",
+            "底层逻辑",
+            "为什么",
+            "如何诞生",
+            "实验经济学",
+            "大模型",
+            "人工智能",
+            "科幻",
+        )
+        if any(token in text for token in game_tokens):
+            return "game_strategy"
+        if any(token in text for token in news_tokens):
+            return "news_brief"
+        if any(token in text for token in guide_tokens):
+            return "practical_guide"
+        if any(token in text for token in story_tokens):
+            return "story_doc"
+        if any(token in text for token in visual_tokens):
+            return "visual_showcase"
+        if any(token in text for token in deep_tokens):
+            return "deep_dive"
+        if source_strategy in {"trending"}:
+            return "news_brief"
+        if source_strategy in {"explore"}:
+            return "story_doc"
+        return "light_chat"
 
     def _cache_results(self, results: list[DiscoveredContent]) -> None:
         if self._database is None or not results:
@@ -428,6 +484,7 @@ class ContentDiscoveryEngine:
                     duration=item.duration,
                     tags=item.tags,
                     topic_key=item.topic_key,
+                    style_key=item.style_key,
                     description=item.description,
                     cover_url=item.cover_url,
                     view_count=item.view_count,

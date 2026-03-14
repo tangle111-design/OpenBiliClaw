@@ -6,6 +6,14 @@
 
 ## M8: 插件后端 API（进行中）
 
+### Docker 一键后端部署支持
+
+- 新增 `Dockerfile`、`.dockerignore` 和单服务 `docker-compose.yml`，支持 `docker compose up -d` 启动后端
+- CLI `start` 现在支持 `--host` / `--port`，同时新增 `serve-api` 作为容器友好的显式启动入口
+- 默认 compose 会挂载根目录 `config.toml`、`data/` 和 `logs/`，既适合本地单机，也可直接复用到服务器部署
+- 修复安装包运行时的根目录解析问题，容器内现在会正确读取 `/app/config.toml` 并把数据写入 `/app/data`
+- 容器启动时现在会自动探测宿主机 Clash HTTP 代理；默认探测 `host.docker.internal:7897`，可达则透传代理，不可达则继续直连
+
 ### 同批推荐多样性约束
 
 - `generate_recommendations()` 和 `reshuffle_recommendations()` 现在不会只按分数直取前 N
@@ -18,6 +26,12 @@
 - `SearchStrategy` 会把 query 派生的 `topic_key` 写入候选，`RelatedChainStrategy` 会把 seed chain 继承成 `topic_key`
 - `generate_recommendations()` 和 `reshuffle_recommendations()` 现在优先按 `topic_key` 分桶，每个 topic 先出 1 条，再按分数回填
 - `ContentDiscoveryEngine` 在写入 discovery pool 前会先压一轮同 topic 重复项，减少单一相关推荐链把池子灌满的情况
+
+### 风格多样性与快速文案增强
+
+- discovery 入池时会按标题、描述和基础理由轻规则补 `style_key`，区分 `deep_dive / news_brief / game_strategy / practical_guide / story_doc / visual_showcase / light_chat`
+- `reshuffle_recommendations()` 现在会同时约束 `topic_key + style_key`，避免一批里虽然 topic 不同，但全是同一种“很干很学术”的内容风格
+- 快速换一批的 fallback 文案不再直接裸用 `relevance_reason`，而会按 `style_key` 生成更自然的老B友短句
 
 ### popup 动态状态卡与活动历史
 

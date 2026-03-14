@@ -472,7 +472,10 @@ async def test_learn_from_dialogue_records_immediate_cognition_for_strong_single
     assert "我最近更想知道国际新闻到底是怎么一步步走成现在这样的。" in str(
         cognition_updates[0]["evidence"]
     )
-    assert cognition_updates[0]["context_line"] == "来自最近这轮聊天：想把国际新闻背后的因果链看明白"
+    assert (
+        cognition_updates[0]["context_line"]
+        == "来自最近这轮聊天：想把国际新闻背后的因果链看明白"
+    )
     assert cognition_updates[0]["source_label"] == "聊天"
     assert cognition_updates[0]["expand_hint"] == "expandable"
 
@@ -651,7 +654,9 @@ async def test_learn_from_dialogue_rebuilds_profile_after_candidate_reaches_thre
     kinds = {str(item["kind"]) for item in cognition_updates}
     assert "interest_added" in kinds
     assert any("国际时事" in str(item["summary"]) for item in cognition_updates)
-    interest_update = next(item for item in cognition_updates if str(item["kind"]) == "interest_added")
+    interest_update = next(
+        item for item in cognition_updates if str(item["kind"]) == "interest_added"
+    )
     assert interest_update["context_line"] == "基于最近主题：国际时事"
     assert interest_update["source_label"] == "聊天"
     assert interest_update["expand_hint"] == "expandable"
@@ -730,7 +735,9 @@ async def test_process_feedback_batch_rebuilds_profile_when_preference_changes_s
     kinds = {str(item["kind"]) for item in cognition_updates}
     assert "dislike_added" in kinds
     assert "profile_shift" in kinds
-    dislike_update = next(item for item in cognition_updates if str(item["kind"]) == "dislike_added")
+    dislike_update = next(
+        item for item in cognition_updates if str(item["kind"]) == "dislike_added"
+    )
     assert dislike_update["context_line"] == "基于最近主题：标题党"
     assert dislike_update["source_label"] == "推荐反馈"
     assert dislike_update["expand_hint"] == "expandable"
