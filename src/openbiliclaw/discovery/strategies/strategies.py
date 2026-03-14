@@ -129,6 +129,7 @@ class SearchStrategy(DiscoveryStrategy):
                 for item_index, item in enumerate(search_results):
                     content = self._map_search_result(
                         item,
+                        query=query,
                         query_index=query_index,
                         item_index=item_index + (page - 1) * self.page_size,
                     )
@@ -232,6 +233,7 @@ class SearchStrategy(DiscoveryStrategy):
         self,
         item: dict[str, object],
         *,
+        query: str,
         query_index: int,
         item_index: int,
     ) -> DiscoveredContent | None:
@@ -246,10 +248,15 @@ class SearchStrategy(DiscoveryStrategy):
             cover_url=str(item.get("pic", "")),
             duration=self._parse_duration(item.get("duration", 0)),
             view_count=self._to_int(item.get("play", 0)),
+            topic_key=self._topic_key_from_query(query),
             description=self._clean_text(str(item.get("description", ""))),
             source_strategy=self.name,
             relevance_score=max(0.0, 0.2 - query_index * 0.02 - item_index * 0.005),
         )
+
+    @staticmethod
+    def _topic_key_from_query(query: str) -> str:
+        return re.sub(r"\s+", "", query).strip().lower()
 
     @staticmethod
     def _clean_text(value: str) -> str:
@@ -452,19 +459,20 @@ class RelatedChainStrategy(DiscoveryStrategy):
             Discovered content list.
         """
         evaluator = ContentDiscoveryEngine(llm_service=self.llm_service)
-        seed_bvids = await self._select_seed_bvids(profile)
-        if not seed_bvids:
+        seed_descriptors = await self._select_seed_descriptors(profile)
+        if not seed_descriptors:
             return []
 
         results: list[DiscoveredContent] = []
-        seen_bvids = set(seed_bvids)
+        seen_bvids = {seed_bvid for seed_bvid, _ in seed_descriptors}
         visited_source_bvids: set[str] = set()
-        frontier: list[tuple[str, int, int]] = [
-            (seed_bvid, 1, seed_index) for seed_index, seed_bvid in enumerate(seed_bvids)
+        frontier: list[tuple[str, int, int, str]] = [
+            (seed_bvid, 1, seed_index, topic_key)
+            for seed_index, (seed_bvid, topic_key) in enumerate(seed_descriptors)
         ]
 
         while frontier:
-            seed_bvid, depth, seed_index = frontier.pop(0)
+            seed_bvid, depth, seed_index, seed_topic_key = frontier.pop(0)
             if seed_bvid in visited_source_bvids:
                 continue
             visited_source_bvids.add(seed_bvid)
@@ -475,7 +483,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
                 continue
 
             for item in related_items[: self.related_per_seed]:
-                content = self._map_related_item(item)
+                content = self._map_related_item(item, seed_topic_key=seed_topic_key)
                 if content is None or content.bvid in seen_bvids:
                     continue
                 seen_bvids.add(content.bvid)
@@ -486,22 +494,22 @@ class RelatedChainStrategy(DiscoveryStrategy):
                     continue
                 results.append(content)
                 if depth < self.max_depth:
-                    frontier.append((content.bvid, depth + 1, seed_index))
+                    frontier.append((content.bvid, depth + 1, seed_index, seed_topic_key))
                 if len(results) >= limit:
                     return results
 
         results.sort(key=lambda item: item.relevance_score, reverse=True)
         return results
 
-    async def _select_seed_bvids(self, profile: SoulProfile) -> list[str]:
-        seeds: list[str] = []
+    async def _select_seed_descriptors(self, profile: SoulProfile) -> list[tuple[str, str]]:
+        seeds: list[tuple[str, str]] = []
         seen: set[str] = set()
 
         for bvid in self._event_seed_bvids():
             if bvid in seen:
                 continue
             seen.add(bvid)
-            seeds.append(bvid)
+            seeds.append((bvid, self._topic_key_from_seed_bvid(bvid)))
             if len(seeds) >= self.max_seeds:
                 return seeds
 
@@ -509,7 +517,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
             if bvid in seen:
                 continue
             seen.add(bvid)
-            seeds.append(bvid)
+            seeds.append((bvid, self._topic_key_from_seed_bvid(bvid)))
             if len(seeds) >= self.max_seeds:
                 return seeds
 
@@ -531,7 +539,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
                 if item.bvid in seen or not item.bvid:
                     continue
                 seen.add(item.bvid)
-                seeds.append(item.bvid)
+                seeds.append((item.bvid, self._topic_key_from_seed_bvid(item.bvid)))
                 if len(seeds) >= self.max_seeds:
                     return seeds
 
@@ -597,7 +605,12 @@ class RelatedChainStrategy(DiscoveryStrategy):
         match = re.search(r"/video/(BV[\w]+)", url)
         return match.group(1) if match else ""
 
-    def _map_related_item(self, item: dict[str, object]) -> DiscoveredContent | None:
+    def _map_related_item(
+        self,
+        item: dict[str, object],
+        *,
+        seed_topic_key: str,
+    ) -> DiscoveredContent | None:
         bvid = str(item.get("bvid", "")).strip()
         if not bvid:
             return None
@@ -624,11 +637,16 @@ class RelatedChainStrategy(DiscoveryStrategy):
             duration=SearchStrategy._parse_duration(item.get("duration", 0)),
             view_count=view_count,
             like_count=like_count,
+            topic_key=seed_topic_key,
             description=SearchStrategy._clean_text(
                 str(item.get("desc", item.get("description", "")))
             ),
             source_strategy=self.name,
         )
+
+    @staticmethod
+    def _topic_key_from_seed_bvid(seed_bvid: str) -> str:
+        return f"related:{seed_bvid.strip().lower()}"
 
     @staticmethod
     def _seed_bonus(seed_index: int) -> float:
@@ -705,6 +723,7 @@ class ExploreStrategy(DiscoveryStrategy):
                         bilibili_client=self.bilibili_client,
                     )._map_search_result(
                         item,
+                        query=query,
                         query_index=0,
                         item_index=item_index,
                     )

@@ -83,6 +83,25 @@ class TestDatabase:
 
             db.close()
 
+    def test_cache_content_persists_topic_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content(
+                "BV1TOPIC",
+                title="讲透中东局势",
+                up_name="国际观察",
+                source="search",
+                topic_key="国际时事:地缘政治",
+            )
+
+            row = db.get_cached_content(limit=1)[0]
+
+            assert row["topic_key"] == "国际时事:地缘政治"
+
+            db.close()
+
     def test_get_cached_content_returns_cached_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")
@@ -305,6 +324,26 @@ class TestDatabase:
 
             assert [item["bvid"] for item in items] == ["BV1FRESH"]
             assert db.count_pool_candidates() == 1
+
+            db.close()
+
+    def test_get_pool_candidates_returns_topic_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content(
+                "BV1POOL",
+                title="AI 模型能力边界",
+                up_name="技术拆机局",
+                source="search",
+                relevance_score=0.91,
+                topic_key="AI:大模型",
+            )
+
+            items = db.get_pool_candidates(limit=10)
+
+            assert items[0]["topic_key"] == "AI:大模型"
 
             db.close()
 

@@ -17,6 +17,7 @@ from openbiliclaw.api.models import (
     ChatResponse,
     CognitionUpdateSeenIn,
     CognitionUpdateSeenResponse,
+    CognitionUpdateSummary,
     EventIngestResponse,
     FeedbackIn,
     FeedbackResponse,
@@ -244,14 +245,14 @@ def create_app(
             has_more_cognition_updates = end < len(raw_updates)
             next_cognition_cursor = str(end) if has_more_cognition_updates else ""
             cognition_updates = [
-                {
-                    "summary": str(item.get("summary", "")).strip(),
-                    "impact": str(item.get("impact", "")).strip(),
-                    "reasoning": str(item.get("reasoning", "")).strip(),
-                    "evidence": str(item.get("evidence", "")).strip(),
-                    "source": str(item.get("source", "")).strip(),
-                    "created_at": str(item.get("created_at", "")).strip(),
-                }
+                CognitionUpdateSummary(
+                    summary=str(item.get("summary", "")).strip(),
+                    impact=str(item.get("impact", "")).strip(),
+                    reasoning=str(item.get("reasoning", "")).strip(),
+                    evidence=str(item.get("evidence", "")).strip(),
+                    source=str(item.get("source", "")).strip(),
+                    created_at=str(item.get("created_at", "")).strip(),
+                )
                 for item in sliced_updates
             ]
         return ProfileSummaryResponse(

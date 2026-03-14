@@ -26,6 +26,7 @@
 | 5.5 内容评估 | ✅ | `evaluate_content()` 已被四类发现策略复用 |
 | 5.6 发现引擎编排 | ✅ | 并发执行策略 + 高分去重 + SQLite 缓存写入 |
 | 候选供给升级 | ✅ | 主发现不足时触发 backfill，并把相关性 / 候选层级写入缓存 |
+| M118 topic_key 与池子层压缩 | ✅ | Search / Related 现在会给候选带稳定 `topic_key`，发现引擎会先压缩同 topic 重复项，再写入 discovery pool |
 
 ## 公开 API
 
@@ -85,6 +86,7 @@ items = await strategy.discover(profile, limit=20)
 - 正常模式默认抓每个 query 的第一页；backfill 变体会放大 query 数和页数
 - 对多个 query 的搜索结果按 `bvid` 去重
 - 将结果映射为 `DiscoveredContent`
+- 会把 query 派生的 `topic_key` 一起写入候选，供后续池子压缩和推荐分桶使用
 
 ### TrendingStrategy
 
@@ -133,6 +135,7 @@ items = await strategy.discover(profile, limit=20)
 - 对每个种子调用 `get_related_videos()`，沿相关推荐链最多扩展 2 层
 - 全局按 `bvid` 去重，并排除原始种子本身
 - 所有候选统一复用 `evaluate_content()` 打分并按阈值过滤
+- 每条相关推荐会继承 seed chain 对应的 `topic_key`，避免同一条相关推荐链在池子和推荐批次里刷满
 
 ### ExploreStrategy
 
@@ -182,6 +185,7 @@ item = DiscoveredContent(
 - `source_strategy`
 - `relevance_score`
 - `relevance_reason`
+- `topic_key`
 - `candidate_tier`
 - `discovered_at`
 - `last_scored_at`
@@ -198,3 +202,4 @@ item = DiscoveredContent(
 8. **发现引擎承担最终收口职责**：策略负责找内容，引擎负责并发调度、去重排序、分层补货和缓存写入
 9. **引擎层仍不负责依赖创建**：`ContentDiscoveryEngine` 接收外部注入的 `llm_service` / `database`，策略继续显式注入 client/service
 10. **补货是显式分层而不是无脑放宽**：主发现优先，backfill 只在候选不足时介入，并通过 `candidate_tier` 保留来源语义
+11. **池子层先做一次轻压缩**：topic 多样性不能只在推荐层补救，发现结果在写入 `content_cache` 前也会先压一轮同 topic 重复项，防止单一 seed chain 灌满候选池

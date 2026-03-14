@@ -366,6 +366,62 @@ async def test_reshuffle_recommendations_uses_pool_reason_without_waiting_expres
 
 
 @pytest.mark.asyncio
+async def test_reshuffle_recommendations_spreads_topic_keys_before_backfill() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        db.cache_content(
+            "BVINT1",
+            title="讲透中东局势的来龙去脉",
+            up_name="国际观察",
+            source="search",
+            relevance_score=0.96,
+            relevance_reason="这条会接住你最近那股想把国际时事看透的劲头。",
+            topic_key="国际时事:地缘政治",
+        )
+        db.cache_content(
+            "BVINT2",
+            title="伊朗问题的底层链路",
+            up_name="世界现场",
+            source="related_chain",
+            relevance_score=0.95,
+            relevance_reason="这条延续了你最近盯国际新闻时那种爱追因果的状态。",
+            topic_key="国际时事:地缘政治",
+        )
+        db.cache_content(
+            "BVTECH1",
+            title="OpenAI 新模型到底强在哪",
+            up_name="技术拆机局",
+            source="search",
+            relevance_score=0.91,
+            relevance_reason="这条会对上你最近想把模型能力边界搞清楚的劲头。",
+            topic_key="AI:大模型",
+        )
+        db.cache_content(
+            "BVDOC1",
+            title="城市纪录片里的空间叙事",
+            up_name="纪录片研究所",
+            source="explore",
+            relevance_score=0.9,
+            relevance_reason="这条会接住你那种喜欢从具体细节里看见大结构的状态。",
+            topic_key="纪录片:城市",
+        )
+        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
+
+        recommendations = await engine.reshuffle_recommendations(
+            profile=_build_profile(),
+            limit=3,
+        )
+
+        picked = [item.content.bvid for item in recommendations]
+
+        assert "BVINT1" in picked
+        assert "BVINT2" not in picked
+        assert "BVTECH1" in picked
+        assert "BVDOC1" in picked
+
+
+@pytest.mark.asyncio
 async def test_reshuffle_recommendations_spreads_topics_in_same_batch() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")

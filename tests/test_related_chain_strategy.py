@@ -144,6 +144,8 @@ async def test_related_chain_uses_event_seeds_first() -> None:
 
     assert client.related_calls == ["BV1SEED", "BV1SEED2"]
     assert [item.bvid for item in results] == ["BV1A", "BV1B"]
+    assert results[0].topic_key == "related:bv1seed"
+    assert results[1].topic_key == "related:bv1seed2"
     assert memory.calls[0]["event_types"] == ["view", "favorite", "like"]
 
 

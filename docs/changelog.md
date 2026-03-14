@@ -12,6 +12,13 @@
 - 同一批里会对重复 `tags/topic` 做软限流，尽量避免连续出现太多同一方向的内容
 - 候选不足时仍会回填高分内容，保证多样性约束不会把推荐数量卡没
 
+### topic_key 多样性强化
+
+- `content_cache` 现在会持久化稳定 `topic_key`，推荐层不再只靠空 `tags` 猜 topic
+- `SearchStrategy` 会把 query 派生的 `topic_key` 写入候选，`RelatedChainStrategy` 会把 seed chain 继承成 `topic_key`
+- `generate_recommendations()` 和 `reshuffle_recommendations()` 现在优先按 `topic_key` 分桶，每个 topic 先出 1 条，再按分数回填
+- `ContentDiscoveryEngine` 在写入 discovery pool 前会先压一轮同 topic 重复项，减少单一相关推荐链把池子灌满的情况
+
 ### popup 动态状态卡与活动历史
 
 - popup 底部提示区现在升级为两行可展开动态卡，默认显示“现在在忙什么 / 最近一次关键变化”

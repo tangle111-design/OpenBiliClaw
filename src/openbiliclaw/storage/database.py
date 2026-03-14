@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS content_cache (
     up_mid      INTEGER,
     duration    INTEGER,
     tags        TEXT,                 -- JSON array
+    topic_key   TEXT DEFAULT '',
     description TEXT,
     cover_url   TEXT,
     view_count  INTEGER DEFAULT 0,
@@ -101,6 +102,7 @@ class Database:
         self._ensure_recommendation_feedback_columns()
         self._ensure_content_cache_runtime_columns()
         self._ensure_content_cache_relevance_columns()
+        self._ensure_content_cache_topic_columns()
 
         # Set schema version
         self._conn.execute(
@@ -239,6 +241,7 @@ class Database:
                 up_mid,
                 duration,
                 tags,
+                topic_key,
                 description,
                 cover_url,
                 view_count,
@@ -249,13 +252,14 @@ class Database:
                 last_scored_at,
                 source
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
             ON CONFLICT(bvid) DO UPDATE SET
                 title = excluded.title,
                 up_name = excluded.up_name,
                 up_mid = excluded.up_mid,
                 duration = excluded.duration,
                 tags = excluded.tags,
+                topic_key = excluded.topic_key,
                 description = excluded.description,
                 cover_url = excluded.cover_url,
                 view_count = excluded.view_count,
@@ -273,6 +277,7 @@ class Database:
                 kwargs.get("up_mid", 0),
                 kwargs.get("duration", 0),
                 json.dumps(kwargs.get("tags", []), ensure_ascii=False),
+                kwargs.get("topic_key", ""),
                 kwargs.get("description", ""),
                 kwargs.get("cover_url", ""),
                 kwargs.get("view_count", 0),
@@ -656,4 +661,15 @@ class Database:
                 continue
             self.conn.execute(
                 f"ALTER TABLE content_cache ADD COLUMN {column_name} {column_type}"
+            )
+
+    def _ensure_content_cache_topic_columns(self) -> None:
+        """Backfill topic bucketing fields for existing content-cache rows."""
+        existing_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(content_cache)").fetchall()
+        }
+        if "topic_key" not in existing_columns:
+            self.conn.execute(
+                "ALTER TABLE content_cache ADD COLUMN topic_key TEXT DEFAULT ''"
             )

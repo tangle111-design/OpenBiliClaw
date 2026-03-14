@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
@@ -45,6 +46,7 @@ class DiscoveredContent:
     view_count: int = 0
     like_count: int = 0
     tags: list[str] = field(default_factory=list)
+    topic_key: str = ""
     description: str = ""
     source_strategy: str = ""  # Which strategy found this
     relevance_score: float = 0.0  # 0.0 - 1.0 (based on user soul)
@@ -143,7 +145,10 @@ class ContentDiscoveryEngine:
             profile=profile,
             limit=effective_limit,
         )
-        final_results = self._merge_and_rank(primary_results)[:effective_limit]
+        final_results = self._compress_topic_repeats(
+            self._merge_and_rank(primary_results),
+            limit=effective_limit,
+        )
 
         primary_target = min(self._target_primary_count, effective_limit)
         if len(final_results) < primary_target:
@@ -153,9 +158,10 @@ class ContentDiscoveryEngine:
                 limit=effective_limit,
                 existing=final_results,
             )
-            final_results = self._merge_and_rank(
-                [*final_results, *backfill_results]
-            )[:effective_limit]
+            final_results = self._compress_topic_repeats(
+                self._merge_and_rank([*final_results, *backfill_results]),
+                limit=effective_limit,
+            )
 
         self._cache_results(final_results)
         return final_results
@@ -335,6 +341,7 @@ class ContentDiscoveryEngine:
                     up_mid=int(row.get("up_mid", 0) or 0),
                     duration=int(row.get("duration", 0) or 0),
                     tags=[],
+                    topic_key=str(row.get("topic_key", "")),
                     description=str(row.get("description", "")),
                     cover_url=str(row.get("cover_url", "")),
                     view_count=int(row.get("view_count", 0) or 0),
@@ -364,6 +371,50 @@ class ContentDiscoveryEngine:
         )
         return merged
 
+    @staticmethod
+    def _compress_topic_repeats(
+        results: list[DiscoveredContent],
+        *,
+        limit: int,
+    ) -> list[DiscoveredContent]:
+        if limit <= 1 or len(results) <= 1:
+            return results[:limit]
+
+        selected: list[DiscoveredContent] = []
+        deferred: list[DiscoveredContent] = []
+        seen_topics: set[str] = set()
+        for item in results:
+            topic_key = ContentDiscoveryEngine._topic_bucket(item)
+            if topic_key and topic_key in seen_topics:
+                deferred.append(item)
+                continue
+            selected.append(item)
+            if topic_key:
+                seen_topics.add(topic_key)
+            if len(selected) >= limit:
+                return selected[:limit]
+
+        for item in deferred:
+            selected.append(item)
+            if len(selected) >= limit:
+                break
+        return selected[:limit]
+
+    @staticmethod
+    def _topic_bucket(item: DiscoveredContent) -> str:
+        if item.topic_key.strip():
+            return ContentDiscoveryEngine._normalize_topic_token(item.topic_key)
+        for tag in item.tags:
+            token = ContentDiscoveryEngine._normalize_topic_token(tag)
+            if token:
+                return token
+        return ""
+
+    @staticmethod
+    def _normalize_topic_token(value: str) -> str:
+        compact = re.sub(r"\s+", "", value.strip().lower())
+        return compact[:32]
+
     def _cache_results(self, results: list[DiscoveredContent]) -> None:
         if self._database is None or not results:
             return
@@ -376,6 +427,7 @@ class ContentDiscoveryEngine:
                     up_mid=item.up_mid,
                     duration=item.duration,
                     tags=item.tags,
+                    topic_key=item.topic_key,
                     description=item.description,
                     cover_url=item.cover_url,
                     view_count=item.view_count,

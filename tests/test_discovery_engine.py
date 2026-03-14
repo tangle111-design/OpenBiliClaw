@@ -312,6 +312,57 @@ async def test_discovery_engine_keeps_highest_scored_duplicate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_discovery_engine_compresses_repeated_topic_keys_in_pool() -> None:
+    class _UnlimitedStrategy(_RecordingStrategy):
+        async def discover(
+            self, profile: SoulProfile, limit: int = 20
+        ) -> list[DiscoveredContent]:
+            self._started.append(self._name)
+            return list(self._result)
+
+    engine = ContentDiscoveryEngine()
+    engine.register_strategy(
+        _UnlimitedStrategy(
+            "search",
+            [
+                DiscoveredContent(
+                    bvid="BV1INTA",
+                    title="中东局势 A",
+                    relevance_score=0.96,
+                    source_strategy="search",
+                    topic_key="国际时事:地缘政治",
+                ),
+                DiscoveredContent(
+                    bvid="BV1INTB",
+                    title="中东局势 B",
+                    relevance_score=0.95,
+                    source_strategy="related_chain",
+                    topic_key="国际时事:地缘政治",
+                ),
+                DiscoveredContent(
+                    bvid="BV1AI",
+                    title="模型能力边界",
+                    relevance_score=0.9,
+                    source_strategy="search",
+                    topic_key="AI:大模型",
+                ),
+                DiscoveredContent(
+                    bvid="BV1DOC",
+                    title="城市纪录片",
+                    relevance_score=0.89,
+                    source_strategy="explore",
+                    topic_key="纪录片:城市",
+                ),
+            ],
+        )
+    )
+
+    results = await engine.discover(_build_profile(), limit=3)
+
+    assert [item.bvid for item in results] == ["BV1INTA", "BV1AI", "BV1DOC"]
+
+
+@pytest.mark.asyncio
 async def test_discovery_engine_caches_final_results() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")

@@ -116,6 +116,8 @@ async def test_search_strategy_uses_llm_queries_and_searches_each_query() -> Non
     assert len(results) == 2
     assert all(isinstance(item, DiscoveredContent) for item in results)
     assert results[0].source_strategy == "search"
+    assert results[0].topic_key == "纪录片原理"
+    assert results[1].topic_key == "摄影构图"
     assert llm_service.calls
 
 

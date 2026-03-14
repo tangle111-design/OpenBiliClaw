@@ -348,6 +348,10 @@ class RecommendationEngine:
 
     @staticmethod
     def _diversity_tokens(item: DiscoveredContent) -> set[str]:
+        topic_key = RecommendationEngine._normalize_topic_token(item.topic_key)
+        if topic_key:
+            return {topic_key}
+
         tokens = {
             RecommendationEngine._normalize_topic_token(tag)
             for tag in item.tags
@@ -389,6 +393,7 @@ class RecommendationEngine:
                 view_count=int(row.get("view_count", 0) or 0),
                 like_count=int(row.get("like_count", 0) or 0),
                 tags=self._parse_tags(row.get("tags", "[]")),
+                topic_key=str(row.get("topic_key", "")),
                 source_strategy=str(row.get("source", "")),
                 relevance_score=float(row.get("relevance_score", 0.0) or 0.0),
                 relevance_reason=str(row.get("relevance_reason", "")),
@@ -415,6 +420,7 @@ class RecommendationEngine:
                 view_count=int(row.get("view_count", 0) or 0),
                 like_count=int(row.get("like_count", 0) or 0),
                 tags=self._parse_tags(row.get("tags", "[]")),
+                topic_key=str(row.get("topic_key", "")),
                 source_strategy=str(row.get("source", "")),
                 relevance_score=float(row.get("relevance_score", 0.0) or 0.0),
                 relevance_reason=str(row.get("relevance_reason", "")),
