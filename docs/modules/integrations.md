@@ -13,6 +13,10 @@
 - 统一初始化依赖
 - 把 adapter operation 包装成可注册的 skill descriptor
 
+如果你需要给 OpenClaw 或新维护者一份最短安装与初始化说明，直接看：
+
+- [OpenClaw 接入最短指南](../openclaw-quickstart.md)
+
 ## 已实现功能
 
 | 任务 | 状态 | 说明 |
@@ -100,6 +104,13 @@ CLI bridge 返回稳定 JSON：
 - `skills/openbiliclaw-adapter/SKILL.md`
 
 这是按 OpenClaw 官方 skill 目录约定提供的真实 skill pack。它不会直接实现业务逻辑，而是指导 OpenClaw 通过上面的 CLI bridge 调用 adapter。
+
+`SKILL.md` 现在同时包含：
+
+- 项目安装前置步骤
+- 首次 `openbiliclaw init` 初始化要求
+- `doctor` 自检命令
+- 常规推荐应优先走快路径的调用规则
 
 ### DTO 与错误类型
 

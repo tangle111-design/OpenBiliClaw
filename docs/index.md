@@ -10,6 +10,7 @@
 - [记忆系统设计](memory-design.md) — 多层网状记忆架构详解
 - [变更日志](changelog.md) — 各里程碑交付记录
 - [手动端到端联调](manual-e2e.md) — CLI、插件与 SQLite 的真实联调步骤
+- [OpenClaw 接入最短指南](openclaw-quickstart.md) — 安装、初始化、skill 发现与 CLI bridge 自检
 
 ## 模块文档
 

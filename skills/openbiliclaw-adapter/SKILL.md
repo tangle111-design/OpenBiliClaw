@@ -8,6 +8,31 @@ user-invocable: true
 
 Use this skill when you are inside the OpenBiliClaw workspace and need current OpenBiliClaw state or want to push feedback back into the learning loop.
 
+## Environment Bootstrap
+
+If the workspace is not ready yet, bootstrap it before calling the adapter:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cp config.example.toml config.toml
+```
+
+Then initialize OpenBiliClaw once:
+
+```bash
+openbiliclaw init
+```
+
+If `config.toml` is still missing API Key or B 站 Cookie and the terminal is interactive, `openbiliclaw init` will guide the operator through setup. After init, verify the adapter bridge:
+
+```bash
+uv run python -m openbiliclaw.integrations.openclaw.cli doctor
+```
+
+For a longer setup guide, read `docs/openclaw-quickstart.md`.
+
 ## Command Bridge
 
 Always call the adapter through the JSON CLI bridge:

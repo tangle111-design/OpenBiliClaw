@@ -15,6 +15,7 @@
 - OpenClaw `recommend` 现已默认走快路径，不再无条件触发 runtime refresh；如需显式刷新，可使用 `--refresh-if-needed`
 - 显式 refresh 超时或失败时，OpenClaw adapter 现会自动回退到缓存推荐，避免交互入口长时间挂住
 - 新增 adapter / skill 单元测试，并补充集成层文档、架构说明和导航入口
+- 新增 `docs/openclaw-quickstart.md`，并在 `skills/openbiliclaw-adapter/SKILL.md` 中补充安装、首次 `openbiliclaw init` 和 `doctor` 自检指引，方便 OpenClaw 直接落地接入
 
 ### 推荐换一批批量与补货余量调整
 
