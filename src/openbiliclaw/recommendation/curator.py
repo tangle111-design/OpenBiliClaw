@@ -25,13 +25,17 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ScoringWeights:
-    """Tuneable weights for the composite rec_score."""
+    """Tuneable weights for the composite rec_score.
 
-    relevance: float = 0.40
+    Serendipity is weighted higher (0.20) to ensure cross-domain explore
+    content surfaces in recommendations, not just high-relevance safe picks.
+    """
+
+    relevance: float = 0.30
     freshness: float = 0.20
     topic_fatigue: float = 0.15
     source_monotony: float = 0.15
-    serendipity: float = 0.10
+    serendipity: float = 0.20
 
 
 @dataclass(frozen=True)
@@ -215,8 +219,16 @@ class PoolCurator:
 
     @staticmethod
     def _serendipity_bonus(source_strategy: str) -> float:
-        """Bonus for cross-domain exploration content."""
-        return 1.0 if source_strategy == "explore" else 0.0
+        """Bonus for content that brings surprise/novelty.
+
+        explore gets full bonus (cross-domain discovery),
+        trending gets partial bonus (popular but potentially new topics).
+        """
+        if source_strategy == "explore":
+            return 1.0
+        if source_strategy == "trending":
+            return 0.5
+        return 0.0
 
     @staticmethod
     def _feedback_adjustment(
