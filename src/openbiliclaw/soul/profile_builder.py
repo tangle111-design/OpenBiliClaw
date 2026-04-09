@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -10,8 +11,16 @@ from openbiliclaw.llm.base import LLMProviderError, LLMResponse
 from openbiliclaw.llm.prompts import build_soul_profile_prompt
 from openbiliclaw.llm.service import LLMServiceError
 
+from .preference_analyzer import _salvage_truncated_json
 from .profile import SoulProfile
 from .tone import build_tone_profile
+
+logger = logging.getLogger(__name__)
+
+# Initial soul profile (portrait + traits + MBTI + values + drivers) can easily
+# exceed the 4096-token default, especially when the personality_portrait is
+# written out in Chinese. Give plenty of headroom.
+_PROFILE_MAX_TOKENS = 16384
 
 
 class SupportsCoreMemoryTask(Protocol):
@@ -63,6 +72,8 @@ class ProfileBuilder:
             response = await self.registry.complete_structured_task(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
+                max_tokens=_PROFILE_MAX_TOKENS,
+                temperature=0.5,
             )
         except (LLMProviderError, LLMServiceError) as exc:
             raise SoulProfileBuildError(str(exc)) from exc
@@ -85,10 +96,38 @@ class ProfileBuilder:
         text = content.strip()
         if not text:
             raise SoulProfileBuildError("LLM returned an empty soul profile.")
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.startswith("json"):
+                text = text[4:].strip()
+
+        parsed: object
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise SoulProfileBuildError("LLM returned invalid JSON for soul profile.") from exc
+            salvaged = _salvage_truncated_json(text)
+            if salvaged is None:
+                preview = content.strip()[:400]
+                tail = content.strip()[-400:]
+                logger.error(
+                    "soul profile JSON parse failed at %s; "
+                    "total_chars=%d head=%r tail=%r",
+                    exc,
+                    len(content),
+                    preview,
+                    tail,
+                )
+                raise SoulProfileBuildError(
+                    f"LLM returned invalid JSON for soul profile "
+                    f"({exc}); raw_len={len(content)} head={preview!r}"
+                ) from exc
+            logger.warning(
+                "soul profile response was truncated; salvaged %d keys from %d chars",
+                len(salvaged),
+                len(text),
+            )
+            parsed = salvaged
+
         if not isinstance(parsed, dict):
             raise SoulProfileBuildError("LLM soul profile response must be a JSON object.")
         self._validate_payload(parsed)
