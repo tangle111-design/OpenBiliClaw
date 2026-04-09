@@ -1346,3 +1346,224 @@ class TestBackendAPI:
         response = client.post("/api/chat", json={"message": "   "})
 
         assert response.status_code == 422
+
+    def test_recommendation_click_endpoint_ingests_strong_signal(self) -> None:
+        """POST /api/recommendation-click should push a strong signal through the pipeline."""
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                self.events.append(event)
+
+        class FakeDatabase:
+            def get_recommendation_by_id(
+                self, recommendation_id: int,
+            ) -> dict[str, object] | None:
+                if recommendation_id != 99:
+                    return None
+                return {
+                    "id": 99,
+                    "bvid": "BV1REC99",
+                    "title": "深入理解Transformer",
+                    "topic_label": "AI技术",
+                    "up_name": "ML教程君",
+                }
+
+        class SpyPipeline:
+            def __init__(self) -> None:
+                self.ingested: list[object] = []
+
+            async def ingest(self, signal: object) -> object:
+                self.ingested.append(signal)
+
+                from openbiliclaw.soul.pipeline import (
+                    IngestResult,
+                    LayerUpdateResult,
+                    OnionLayer,
+                )
+
+                return IngestResult(
+                    signals_accepted=1,
+                    layers_buffered=["interest", "surface"],
+                    layers_updated=[
+                        LayerUpdateResult(
+                            layer=OnionLayer.INTEREST,
+                            changed=True,
+                            changes=["新增兴趣: AI"],
+                        ),
+                        LayerUpdateResult(
+                            layer=OnionLayer.SURFACE,
+                            changed=False,
+                        ),
+                    ],
+                )
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.pipeline = SpyPipeline()
+
+        memory = FakeMemoryManager()
+        database = FakeDatabase()
+        soul_engine = FakeSoulEngine()
+        app = create_app(
+            memory_manager=memory,
+            database=database,
+            soul_engine=soul_engine,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/recommendation-click",
+            json={"recommendation_id": 99},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["bvid"] == "BV1REC99"
+        assert "interest" in body["layers_updated"]
+        assert "surface" in body["layers_updated"]
+
+        # Click should have been persisted as an event and ingested as a signal.
+        assert memory.events, "Click should be persisted as an event"
+        assert memory.events[0]["event_type"] == "click"
+        assert memory.events[0]["metadata"]["bvid"] == "BV1REC99"
+        assert memory.events[0]["metadata"]["recommendation_id"] == 99
+
+        assert len(soul_engine.pipeline.ingested) == 1
+        ingested_signal = soul_engine.pipeline.ingested[0]
+        from openbiliclaw.soul.pipeline import SignalType
+
+        assert ingested_signal.signal_type == SignalType.RECOMMENDATION_CLICK
+        assert ingested_signal.payload["bvid"] == "BV1REC99"
+        # Database lookup should have hydrated title/topic/up_name.
+        assert ingested_signal.payload["title"] == "深入理解Transformer"
+        assert ingested_signal.payload["topic_label"] == "AI技术"
+        assert ingested_signal.payload["up_name"] == "ML教程君"
+
+    def test_recommendation_click_endpoint_accepts_bvid_without_db_lookup(self) -> None:
+        """When no recommendation_id is supplied, use the bvid from the payload directly."""
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                self.events.append(event)
+
+        class FakeDatabase:
+            def get_recommendation_by_id(
+                self, recommendation_id: int,
+            ) -> dict[str, object] | None:
+                return None  # should not be called
+
+        class SpyPipeline:
+            def __init__(self) -> None:
+                self.ingested: list[object] = []
+
+            async def ingest(self, signal: object) -> object:
+                self.ingested.append(signal)
+                from openbiliclaw.soul.pipeline import IngestResult
+
+                return IngestResult(signals_accepted=1)
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.pipeline = SpyPipeline()
+
+        memory = FakeMemoryManager()
+        soul_engine = FakeSoulEngine()
+        app = create_app(
+            memory_manager=memory,
+            database=FakeDatabase(),
+            soul_engine=soul_engine,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/recommendation-click",
+            json={"bvid": "BV1DIRECT", "title": "直接点击"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["bvid"] == "BV1DIRECT"
+        assert len(soul_engine.pipeline.ingested) == 1
+        assert soul_engine.pipeline.ingested[0].payload["bvid"] == "BV1DIRECT"
+        assert soul_engine.pipeline.ingested[0].payload["title"] == "直接点击"
+
+    def test_recommendation_click_endpoint_rejects_missing_bvid(self) -> None:
+        """Without a bvid (either from payload or DB lookup), return 422."""
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                pass
+
+        class FakeDatabase:
+            def get_recommendation_by_id(
+                self, recommendation_id: int,
+            ) -> dict[str, object] | None:
+                return None  # unknown recommendation
+
+        app = create_app(
+            memory_manager=FakeMemoryManager(),
+            database=FakeDatabase(),
+            soul_engine=None,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/recommendation-click",
+            json={"recommendation_id": 999},
+        )
+
+        assert response.status_code == 422
+        assert "bvid" in response.json()["detail"].lower()
+
+    def test_recommendation_click_endpoint_survives_pipeline_exception(self) -> None:
+        """If the pipeline raises during ingest, the endpoint should still return 200.
+
+        A click is user-visible — we must never propagate a backend failure back
+        to the extension popup. The click is already persisted via propagate_event.
+        """
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                self.events.append(event)
+
+        class BrokenPipeline:
+            async def ingest(self, signal: object) -> object:
+                raise RuntimeError("pipeline is broken")
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.pipeline = BrokenPipeline()
+
+        memory = FakeMemoryManager()
+        app = create_app(
+            memory_manager=memory,
+            database=object(),
+            soul_engine=FakeSoulEngine(),
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/recommendation-click",
+            json={"bvid": "BVresilient", "title": "即便后端出错也不应阻塞"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        # Click should still have been persisted as an event.
+        assert len(memory.events) == 1
+        assert memory.events[0]["metadata"]["bvid"] == "BVresilient"
+        # But layers_updated should be empty because ingest raised.
+        assert response.json()["layers_updated"] == []

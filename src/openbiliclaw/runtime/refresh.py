@@ -43,10 +43,26 @@ class SupportsEventDatabase(Protocol):
         min_confidence: float = 0.82,
     ) -> dict[str, Any] | None: ...
     def mark_notification_sent(self, bvid: str) -> None: ...
+    def get_delight_candidate(
+        self,
+        *,
+        min_delight_score: float = 0.85,
+    ) -> dict[str, Any] | None: ...
+    def mark_delight_notified(self, bvid: str) -> None: ...
+    def count_delight_candidates(
+        self,
+        *,
+        min_delight_score: float = 0.85,
+    ) -> int: ...
 
 
 class SupportsProfileEngine(Protocol):
     async def get_profile(self) -> Any: ...
+
+    # Optional: the soul engine exposes a ProfileUpdatePipeline that the
+    # refresh loop ticks periodically. The attribute may be missing on
+    # older test doubles, so callers should `getattr(..., "pipeline", None)`.
+    pipeline: Any
 
 
 class SupportsDiscoveryEngine(Protocol):
@@ -89,6 +105,7 @@ class ContinuousRefreshController:
     trending_refresh_hours: int = 3
     explore_refresh_hours: int = 12
     notification_cooldown_hours: int = 2
+    delight_cooldown_hours: int = 4
     check_interval_seconds: int = 60
     discovery_limit: int = 30
     pool_target_count: int = 300
@@ -124,6 +141,11 @@ class ContinuousRefreshController:
         last_refresh_at = (
             max(parsed_refresh_values).isoformat() if parsed_refresh_values else ""
         )
+        pending_delight_count = 0
+        with suppress(Exception):
+            pending_delight_count = self.database.count_delight_candidates(
+                min_delight_score=0.85,
+            )
         return {
             "initialized": self._is_initialized(),
             "recommendation_count": self.database.count_recommendations(),
@@ -140,6 +162,10 @@ class ContinuousRefreshController:
             "recent_pool_topics": self._list_state_value(state, "recent_pool_topics"),
             "manual_refresh_state": self._manual_refresh_state,
             "manual_refresh_message": self._manual_refresh_message,
+            "pending_delight_count": pending_delight_count,
+            "last_delight_notification_at": str(
+                state.get("last_delight_notification_at", "")
+            ),
         }
 
     async def refresh_if_needed(self) -> dict[str, object]:
@@ -223,12 +249,68 @@ class ContinuousRefreshController:
         state["last_notification_at"] = self._now().isoformat()
         self.memory_manager.save_discovery_runtime_state(state)
 
+    def get_pending_delight(self) -> dict[str, object] | None:
+        """Return one proactive delight candidate for browser notification."""
+        state = self.memory_manager.load_discovery_runtime_state()
+        last_delight_at = self._parse_iso_datetime(
+            str(state.get("last_delight_notification_at", ""))
+        )
+        if last_delight_at is not None and self._now() - last_delight_at < timedelta(
+            hours=self.delight_cooldown_hours
+        ):
+            return None
+        candidate = self.database.get_delight_candidate(min_delight_score=0.85)
+        if candidate is None:
+            return None
+        return {
+            "bvid": str(candidate.get("bvid", "")),
+            "title": str(candidate.get("title", "")),
+            "delight_reason": str(candidate.get("delight_reason", "")),
+            "delight_score": float(candidate.get("delight_score", 0.0) or 0.0),
+            "delight_hook": str(candidate.get("delight_hook", "")),
+            "cover_url": str(candidate.get("cover_url", "")),
+        }
+
+    def mark_delight_sent(self, bvid: str) -> None:
+        """Persist delight notification delivery markers."""
+        self.database.mark_delight_notified(bvid)
+        state = self.memory_manager.load_discovery_runtime_state()
+        state["last_delight_notification_at"] = self._now().isoformat()
+        self.memory_manager.save_discovery_runtime_state(state)
+
     async def run_forever(self) -> None:
-        """Run the refresh loop until cancelled."""
+        """Run the refresh loop until cancelled.
+
+        Each iteration runs three independent tasks in sequence:
+          1. ``refresh_if_needed()`` — replenishes the discovery pool
+          2. ``soul_engine.pipeline.tick()`` — drives time-gated profile work:
+             buffer flushes, speculator promotion, and the half-day cognition
+             cycle (awareness + insight regeneration)
+          3. sleep until next iteration
+
+        Each call is wrapped in ``suppress(Exception)`` so a failure in any
+        task does not break the loop or stall the others.
+        """
         while True:
             with suppress(Exception):
                 await self.refresh_if_needed()
+            with suppress(Exception):
+                await self._tick_soul_pipeline()
             await asyncio.sleep(self.check_interval_seconds)
+
+    async def _tick_soul_pipeline(self) -> None:
+        """Invoke ProfileUpdatePipeline.tick() if the soul engine exposes one.
+
+        Splitting this into a helper makes it cheap to call from tests
+        and from a manual single-iteration loop runner.
+        """
+        pipeline = getattr(self.soul_engine, "pipeline", None)
+        if pipeline is None:
+            return
+        tick_fn = getattr(pipeline, "tick", None)
+        if not callable(tick_fn):
+            return
+        await tick_fn()
 
     def _pending_signal_events_count(self, state: dict[str, object]) -> int:
         return len(
@@ -381,6 +463,7 @@ class ContinuousRefreshController:
                 profile=profile,
                 limit=_MAX_DISCOVERY_BACKFILL_PER_REFRESH,
             )
+            await self._publish_delight_if_available()
 
         now = self._now().isoformat()
         latest_event_id = self.database.get_latest_event_id()
@@ -429,6 +512,25 @@ class ContinuousRefreshController:
         publish = getattr(self.event_hub, "publish", None)
         if callable(publish):
             await publish(event)
+
+    async def _publish_delight_if_available(self) -> None:
+        """Check for a pending delight candidate and push it via WebSocket."""
+        candidate = self.get_pending_delight()
+        if candidate is None:
+            return
+        await self._publish_event(
+            {
+                "type": "delight.candidate",
+                "phase": "ready",
+                "message": "发现了一条你可能会意外喜欢的内容",
+                "bvid": candidate.get("bvid", ""),
+                "title": candidate.get("title", ""),
+                "delight_reason": candidate.get("delight_reason", ""),
+                "delight_score": candidate.get("delight_score", 0.0),
+                "delight_hook": candidate.get("delight_hook", ""),
+                "cover_url": candidate.get("cover_url", ""),
+            }
+        )
 
     def _strategy_message(self, strategies: list[str]) -> str:
         if strategies == ["search", "related_chain"]:

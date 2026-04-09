@@ -137,6 +137,36 @@ class PendingCognitionUpdateResponse(BaseModel):
     item: PendingCognitionUpdateOut | None = None
 
 
+class PendingDelightOut(BaseModel):
+    """One proactive delight recommendation."""
+
+    bvid: str
+    title: str = ""
+    delight_reason: str = ""
+    delight_score: float = 0.0
+    delight_hook: str = ""
+    cover_url: str = ""
+
+
+class PendingDelightResponse(BaseModel):
+    """Wrapper for a pending delight candidate."""
+
+    item: PendingDelightOut | None = None
+
+
+class DelightAckIn(BaseModel):
+    """Acknowledge delivery of a delight notification."""
+
+    bvid: str
+
+
+class DelightAckResponse(BaseModel):
+    """Response after marking a delight notification as delivered."""
+
+    ok: bool
+    bvid: str
+
+
 class NotificationAckIn(BaseModel):
     """Acknowledge one browser notification delivery."""
 
@@ -245,6 +275,25 @@ class ContextModeOut(BaseModel):
     session_type: str = ""
 
 
+class AwarenessNoteOut(BaseModel):
+    """A single awareness observation from the soul layer."""
+
+    date: str = ""
+    observation: str = ""
+    trend: str = ""
+    emotion_guess: str = ""
+
+
+class InsightHypothesisOut(BaseModel):
+    """An active insight or hypothesis about the user."""
+
+    hypothesis: str = ""
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float = 0.5
+    validated: bool = False
+    created_at: str = ""
+
+
 class ProfileSummaryResponse(BaseModel):
     """Full soul profile exposed to the popup — all five Onion layers."""
 
@@ -274,6 +323,8 @@ class ProfileSummaryResponse(BaseModel):
     recent_cognition_updates: list[CognitionUpdateSummary] = Field(default_factory=list)
     has_more_cognition_updates: bool = False
     next_cognition_cursor: str = ""
+    active_insights: list[InsightHypothesisOut] = Field(default_factory=list)
+    recent_awareness: list[AwarenessNoteOut] = Field(default_factory=list)
 
 
 class EventIngestResponse(BaseModel):
@@ -296,6 +347,24 @@ class FeedbackResponse(BaseModel):
     ok: bool
     recommendation_id: int
     feedback_type: str
+
+
+class RecommendationClickIn(BaseModel):
+    """Payload for a recommendation click-through from the extension popup."""
+
+    recommendation_id: int | None = None
+    bvid: str = ""
+    title: str = ""
+    topic_label: str = ""
+    up_name: str = ""
+
+
+class RecommendationClickResponse(BaseModel):
+    """Response after ingesting a recommendation click-through."""
+
+    ok: bool
+    bvid: str
+    layers_updated: list[str]
 
 
 class ChatIn(BaseModel):

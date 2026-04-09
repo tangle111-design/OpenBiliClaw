@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import datetime
 
 from openbiliclaw.runtime.refresh import ContinuousRefreshController
@@ -79,6 +80,19 @@ class _FakeDatabase:
         return 0
 
     def evict_stale_pool_items(self, *, max_age_days: int = 14) -> int:
+        return 0
+
+    def get_delight_candidate(
+        self, *, min_delight_score: float = 0.85,
+    ) -> dict[str, object] | None:
+        return None
+
+    def mark_delight_notified(self, bvid: str) -> None:
+        pass
+
+    def count_delight_candidates(
+        self, *, min_delight_score: float = 0.85,
+    ) -> int:
         return 0
 
 class _FakeSoulEngine:
@@ -569,3 +583,159 @@ async def test_trigger_manual_refresh_sets_running_state() -> None:
     await asyncio.sleep(0.05)
     status = controller.get_runtime_status()
     assert status["manual_refresh_state"] == "success"
+
+
+# ===========================================================================
+# Pipeline tick wiring — verifies the refresh loop drives ProfileUpdatePipeline.tick()
+# ===========================================================================
+
+
+class _SpyPipeline:
+    """Records every call to tick() so the runtime test can assert wiring."""
+
+    def __init__(self) -> None:
+        self.tick_calls: int = 0
+
+    async def tick(self) -> None:
+        self.tick_calls += 1
+
+
+class _BrokenPipeline:
+    async def tick(self) -> None:
+        raise RuntimeError("pipeline tick simulated failure")
+
+
+class _FakeSoulEngineWithPipeline:
+    def __init__(self, pipeline: object | None) -> None:
+        self.pipeline = pipeline
+
+    async def get_profile(self) -> dict[str, object]:
+        return {"profile": "ok"}
+
+
+def _build_minimal_controller(
+    soul_engine: object,
+) -> ContinuousRefreshController:
+    """Build a controller with the minimum scaffolding needed to call _tick_soul_pipeline."""
+    return ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(events=[]),
+        soul_engine=soul_engine,  # type: ignore[arg-type]
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+    )
+
+
+async def test_runtime_tick_helper_invokes_pipeline_tick() -> None:
+    """_tick_soul_pipeline should call soul_engine.pipeline.tick() once."""
+    spy = _SpyPipeline()
+    engine = _FakeSoulEngineWithPipeline(spy)
+    controller = _build_minimal_controller(engine)
+
+    await controller._tick_soul_pipeline()
+    assert spy.tick_calls == 1
+
+    await controller._tick_soul_pipeline()
+    assert spy.tick_calls == 2
+
+
+async def test_runtime_tick_helper_no_pipeline_attribute_is_noop() -> None:
+    """If the soul engine has no .pipeline, the helper should silently no-op."""
+    engine = _FakeSoulEngine()  # original fake — no .pipeline
+    controller = _build_minimal_controller(engine)
+
+    # Should not raise
+    await controller._tick_soul_pipeline()
+
+
+async def test_runtime_tick_helper_pipeline_without_tick_is_noop() -> None:
+    """If pipeline exists but lacks a tick() method, helper should no-op."""
+
+    class _NoTickPipeline:
+        pass
+
+    engine = _FakeSoulEngineWithPipeline(_NoTickPipeline())
+    controller = _build_minimal_controller(engine)
+
+    # Should not raise
+    await controller._tick_soul_pipeline()
+
+
+async def test_run_forever_drives_pipeline_tick_and_refresh() -> None:
+    """Single iteration of run_forever should call BOTH refresh_if_needed AND tick."""
+    spy = _SpyPipeline()
+    engine = _FakeSoulEngineWithPipeline(spy)
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(events=[]),
+        soul_engine=engine,  # type: ignore[arg-type]
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        check_interval_seconds=3600,  # long sleep so we can cancel cleanly
+    )
+
+    # Run one full iteration of the loop and cancel the second sleep
+    task = asyncio.create_task(controller.run_forever())
+    # Yield enough times for the first iteration to complete and reach asyncio.sleep
+    for _ in range(20):
+        await asyncio.sleep(0)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert spy.tick_calls >= 1, (
+        f"Expected pipeline.tick() to be called at least once. Got: {spy.tick_calls}"
+    )
+
+
+async def test_run_forever_continues_when_pipeline_tick_raises() -> None:
+    """A failing pipeline.tick() must not break the refresh loop."""
+    broken = _BrokenPipeline()
+    engine = _FakeSoulEngineWithPipeline(broken)
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(events=[]),
+        soul_engine=engine,  # type: ignore[arg-type]
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        check_interval_seconds=3600,
+    )
+
+    task = asyncio.create_task(controller.run_forever())
+    for _ in range(20):
+        await asyncio.sleep(0)
+    # Loop should still be alive — neither cancelled nor exception-killed
+    assert not task.done(), (
+        "run_forever must absorb pipeline.tick() exceptions and keep looping"
+    )
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+
+async def test_run_forever_continues_when_refresh_raises() -> None:
+    """A failing refresh_if_needed() must not break the loop or block tick()."""
+    spy = _SpyPipeline()
+    engine = _FakeSoulEngineWithPipeline(spy)
+
+    class _BrokenMemory(_FakeMemoryManager):
+        def load_discovery_runtime_state(self) -> dict[str, object]:
+            raise RuntimeError("memory broken")
+
+    controller = ContinuousRefreshController(
+        memory_manager=_BrokenMemory(),
+        database=_FakeDatabase(events=[]),
+        soul_engine=engine,  # type: ignore[arg-type]
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        check_interval_seconds=3600,
+    )
+
+    task = asyncio.create_task(controller.run_forever())
+    for _ in range(20):
+        await asyncio.sleep(0)
+    # tick() should still have been called even though refresh raised
+    assert spy.tick_calls >= 1
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task

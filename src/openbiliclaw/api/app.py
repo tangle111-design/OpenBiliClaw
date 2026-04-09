@@ -19,6 +19,8 @@ from openbiliclaw.api.models import (
     CognitionUpdateSeenIn,
     CognitionUpdateSeenResponse,
     CognitionUpdateSummary,
+    DelightAckIn,
+    DelightAckResponse,
     EventIngestResponse,
     FeedbackIn,
     FeedbackResponse,
@@ -27,10 +29,14 @@ from openbiliclaw.api.models import (
     NotificationAckResponse,
     PendingCognitionUpdateOut,
     PendingCognitionUpdateResponse,
+    PendingDelightOut,
+    PendingDelightResponse,
     PendingNotificationOut,
     PendingNotificationResponse,
     ProfileSummaryResponse,
     RecommendationAppendIn,
+    RecommendationClickIn,
+    RecommendationClickResponse,
     RecommendationListResponse,
     RecommendationOut,
     RecommendationRefreshResponse,
@@ -141,6 +147,11 @@ def create_app(
                 llm=llm_service, database=database, curator=curator,
                 embedding_service=_emb_service,
             )
+            # Share the embedding service with the soul pipeline so
+            # semantic pool purges can run on newly-learned dislikes.
+            set_emb = getattr(soul_engine, "set_embedding_service", None)
+            if callable(set_emb):
+                set_emb(_emb_service)
         bilibili_client = BilibiliAPIClient(
             cookie=resolve_runtime_cookie(
                 data_dir=config.data_path,
@@ -314,7 +325,9 @@ def create_app(
             return ProfileSummaryResponse(initialized=False)
 
         from openbiliclaw.api.models import (
+            AwarenessNoteOut,
             ContextModeOut,
+            InsightHypothesisOut,
             InterestDomainOut,
             InterestSpecificOut,
             MBTIDimensionOut,
@@ -448,6 +461,29 @@ def create_app(
         except Exception:
             logger.debug("Failed to load speculative state for profile summary")
 
+        active_insights_out = [
+            InsightHypothesisOut(
+                hypothesis=str(getattr(ins, "hypothesis", "")),
+                evidence=[str(e) for e in getattr(ins, "evidence", [])],
+                confidence=float(getattr(ins, "confidence", 0.5)),
+                validated=bool(getattr(ins, "validated", False)),
+                created_at=str(getattr(ins, "created_at", "")),
+            )
+            for ins in getattr(profile, "active_insights", [])[:6]
+            if str(getattr(ins, "hypothesis", "")).strip()
+        ]
+
+        recent_awareness_out = [
+            AwarenessNoteOut(
+                date=str(getattr(note, "date", "")),
+                observation=str(getattr(note, "observation", "")),
+                trend=str(getattr(note, "trend", "")),
+                emotion_guess=str(getattr(note, "emotion_guess", "")),
+            )
+            for note in getattr(profile, "recent_awareness", [])[:8]
+            if str(getattr(note, "observation", "")).strip()
+        ]
+
         return ProfileSummaryResponse(
             initialized=True,
             personality_portrait=profile.personality_portrait,
@@ -475,6 +511,8 @@ def create_app(
             recent_cognition_updates=cognition_updates,
             has_more_cognition_updates=has_more_cognition_updates,
             next_cognition_cursor=next_cognition_cursor,
+            active_insights=active_insights_out,
+            recent_awareness=recent_awareness_out,
         )
 
     @app.post("/api/events", response_model=EventIngestResponse)
@@ -710,6 +748,26 @@ def create_app(
         save_cognition_updates(updates)
         return CognitionUpdateSeenResponse(ok=True, id=update_id)
 
+    @app.get("/api/delight/pending", response_model=PendingDelightResponse)
+    async def pending_delight() -> PendingDelightResponse:
+        get_pending_delight = getattr(runtime_controller, "get_pending_delight", None)
+        item = get_pending_delight() if callable(get_pending_delight) else None
+        if item is None:
+            return PendingDelightResponse(item=None)
+        return PendingDelightResponse(item=PendingDelightOut(**item))
+
+    @app.post("/api/delight/sent", response_model=DelightAckResponse)
+    async def mark_delight_sent(payload: DelightAckIn) -> DelightAckResponse:
+        bvid = payload.bvid.strip()
+        if not bvid:
+            raise HTTPException(status_code=422, detail="Delight bvid is required.")
+        mark_sent = getattr(runtime_controller, "mark_delight_sent", None)
+        if callable(mark_sent):
+            mark_sent(bvid)
+        else:
+            database.mark_delight_notified(bvid)
+        return DelightAckResponse(ok=True, bvid=bvid)
+
     @app.post("/api/notifications/sent", response_model=NotificationAckResponse)
     async def mark_notification_sent(payload: NotificationAckIn) -> NotificationAckResponse:
         bvid = payload.bvid.strip()
@@ -777,6 +835,87 @@ def create_app(
             ok=True,
             recommendation_id=payload.recommendation_id,
             feedback_type=feedback_type,
+        )
+
+    @app.post(
+        "/api/recommendation-click",
+        response_model=RecommendationClickResponse,
+    )
+    async def recommendation_click(
+        payload: RecommendationClickIn,
+    ) -> RecommendationClickResponse:
+        """Ingest a recommendation click-through as a strong profile signal.
+
+        The click is evidence that the user actively chose to watch a
+        recommended video. It is treated as a strong signal that bypasses
+        the pipeline's min_signals gate and updates Interest + Surface
+        immediately. If the recommendation_id resolves to a stored card,
+        its metadata (title, topic, up_name) is pulled from the database
+        so the payload reaches the pipeline even when the extension sends
+        only a bare BV id.
+        """
+        from openbiliclaw.soul.pipeline import signal_from_recommendation_click
+
+        recommendation: dict[str, object] | None = None
+        if payload.recommendation_id is not None:
+            recommendation = database.get_recommendation_by_id(
+                payload.recommendation_id,
+            )
+
+        bvid = (payload.bvid or "").strip()
+        title = (payload.title or "").strip()
+        topic_label = (payload.topic_label or "").strip()
+        up_name = (payload.up_name or "").strip()
+
+        if recommendation is not None:
+            bvid = bvid or str(recommendation.get("bvid", "")).strip()
+            title = title or str(recommendation.get("title", "")).strip()
+            topic_label = topic_label or str(
+                recommendation.get("topic_label", "")
+            ).strip()
+            up_name = up_name or str(recommendation.get("up_name", "")).strip()
+
+        if not bvid:
+            raise HTTPException(status_code=422, detail="bvid is required.")
+
+        # Persist the click as an event so history/query paths can see it.
+        with suppress(Exception):
+            await memory_manager.propagate_event(
+                {
+                    "event_type": "click",
+                    "title": title,
+                    "metadata": {
+                        "recommendation_id": payload.recommendation_id,
+                        "bvid": bvid,
+                        "topic_label": topic_label,
+                        "up_name": up_name,
+                        "source": "recommendation_click",
+                    },
+                }
+            )
+
+        # Push a strong signal into the profile update pipeline.
+        layers_updated: list[str] = []
+        pipeline = getattr(soul_engine, "pipeline", None) if soul_engine else None
+        if pipeline is not None:
+            signal = signal_from_recommendation_click(
+                bvid=bvid,
+                title=title,
+                recommendation_id=payload.recommendation_id,
+                topic_label=topic_label,
+                up_name=up_name,
+            )
+            try:
+                ingest_result = await pipeline.ingest(signal)
+            except Exception:
+                logger.exception("Failed to ingest recommendation_click signal")
+            else:
+                layers_updated = [r.layer.value for r in ingest_result.layers_updated]
+
+        return RecommendationClickResponse(
+            ok=True,
+            bvid=bvid,
+            layers_updated=layers_updated,
         )
 
     return app
