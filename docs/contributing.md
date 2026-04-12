@@ -6,7 +6,7 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/OpenBiliClaw/OpenBiliClaw.git
+git clone https://github.com/whiteguo233/OpenBiliClaw.git
 cd OpenBiliClaw
 
 # 推荐：使用 uv

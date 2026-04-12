@@ -54,7 +54,7 @@ from typing import Any
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8420
-DEFAULT_REPO_URL = "https://github.com/OpenBiliClaw/OpenBiliClaw.git"
+DEFAULT_REPO_URL = "https://github.com/whiteguo233/OpenBiliClaw.git"
 DEFAULT_HEALTH_PATH = "/api/health"
 HEALTH_TIMEOUT_SECONDS = 90
 HEALTH_POLL_INTERVAL = 2.0

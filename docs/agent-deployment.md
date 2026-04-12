@@ -38,7 +38,7 @@ cd ~/workspace/openbiliclaw-new
 ### 2. 获取代码
 
 - 如果当前目录已经是 OpenBiliClaw 仓库（存在 `pyproject.toml` 和 `config.example.toml`），直接用当前目录。
-- 否则确认当前目录为空，然后 `git clone https://github.com/OpenBiliClaw/OpenBiliClaw.git .`。
+- 否则确认当前目录为空，然后 `git clone https://github.com/whiteguo233/OpenBiliClaw.git .`。
 - 永远不要 `rm -rf` 一个非空目录。
 
 ### 3. 定位已有的 OpenBiliClaw 安装（关键）

@@ -122,13 +122,13 @@ OpenBiliClaw/
 **One terminal command (recommended):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OpenBiliClaw/OpenBiliClaw/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scripts/install.sh | bash
 ```
 
 **Paste to an AI coding agent (Claude Code / Codex CLI / OpenClaw / Cursor etc.):**
 
 ```text
-Please follow https://raw.githubusercontent.com/OpenBiliClaw/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
+Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
 ```
 
 Works on macOS, Linux and WSL2 (native Windows is not supported — install WSL2). The only prerequisites are `git` and `python3` (3.11+). The linked `agent-install.md` tells the agent to run the one-line `install.sh` above, which then auto-clones the repo, discovers any existing install under `~/workspace/OpenBiliClaw`, `~/OpenBiliClaw`, `~/projects/OpenBiliClaw` or `~/code/OpenBiliClaw` and reuses its LLM API keys + Bilibili cookie, starts the backend, runs a health check, and prints a self-contained **Status / Missing / Next action** block for the agent to consume.
@@ -139,7 +139,7 @@ Works on macOS, Linux and WSL2 (native Windows is not supported — install WSL2
 
 ```bash
 # Clone
-git clone https://github.com/OpenBiliClaw/OpenBiliClaw.git
+git clone https://github.com/whiteguo233/OpenBiliClaw.git
 cd OpenBiliClaw
 
 # Using uv (recommended)

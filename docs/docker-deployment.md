@@ -12,7 +12,7 @@
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/OpenBiliClaw/OpenBiliClaw.git
+git clone https://github.com/whiteguo233/OpenBiliClaw.git
 cd OpenBiliClaw
 
 # 2. 启动容器

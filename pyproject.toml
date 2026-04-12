@@ -57,9 +57,9 @@ eval = [
 openbiliclaw = "openbiliclaw.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/OpenBiliClaw/OpenBiliClaw"
-Repository = "https://github.com/OpenBiliClaw/OpenBiliClaw"
-Issues = "https://github.com/OpenBiliClaw/OpenBiliClaw/issues"
+Homepage = "https://github.com/whiteguo233/OpenBiliClaw"
+Repository = "https://github.com/whiteguo233/OpenBiliClaw"
+Issues = "https://github.com/whiteguo233/OpenBiliClaw/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/openbiliclaw"]

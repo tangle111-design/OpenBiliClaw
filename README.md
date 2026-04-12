@@ -176,13 +176,13 @@ OpenBiliClaw/
 **终端一条命令(推荐):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OpenBiliClaw/OpenBiliClaw/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scripts/install.sh | bash
 ```
 
 **复制粘贴给 AI 智能体(Claude Code / Codex CLI / OpenClaw / Cursor 等):**
 
 ```text
-请按照 https://raw.githubusercontent.com/OpenBiliClaw/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
+请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
 ```
 
 支持 macOS / Linux / WSL2(Windows 请先装 WSL2)。依赖只有 `git` 和 `python3`(3.11+)。`agent-install.md` 会让智能体跑上面那条 `install.sh` 一键命令,脚本会自动克隆仓库、在 `~/workspace/OpenBiliClaw` / `~/OpenBiliClaw` / `~/projects/OpenBiliClaw` / `~/code/OpenBiliClaw` 里发现已有安装并复用 LLM API Key 和 B 站 Cookie、起后端、做健康检查,最后打印一个自包含的 Status / Missing / Next action 状态块给智能体消费。
@@ -193,7 +193,7 @@ curl -fsSL https://raw.githubusercontent.com/OpenBiliClaw/OpenBiliClaw/main/scri
 
 ```bash
 # 克隆项目
-git clone https://github.com/OpenBiliClaw/OpenBiliClaw.git
+git clone https://github.com/whiteguo233/OpenBiliClaw.git
 cd OpenBiliClaw
 
 # 使用 uv (推荐)

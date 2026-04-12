@@ -3,7 +3,7 @@
 # OpenBiliClaw one-command installer.
 #
 # Usage:
-#     curl -fsSL https://raw.githubusercontent.com/OpenBiliClaw/OpenBiliClaw/main/scripts/install.sh | bash
+#     curl -fsSL https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/scripts/install.sh | bash
 #
 # Environment overrides:
 #     INSTALL_DIR      Target directory (default: $HOME/OpenBiliClaw)
@@ -26,7 +26,7 @@
 
 set -euo pipefail
 
-readonly DEFAULT_REPO_URL="https://github.com/OpenBiliClaw/OpenBiliClaw.git"
+readonly DEFAULT_REPO_URL="https://github.com/whiteguo233/OpenBiliClaw.git"
 readonly DEFAULT_BRANCH="main"
 readonly DEFAULT_INSTALL_DIR="${HOME}/OpenBiliClaw"
 readonly CANDIDATE_SOURCES=(
