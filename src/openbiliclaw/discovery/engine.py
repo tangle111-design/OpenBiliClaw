@@ -518,8 +518,9 @@ class ContentDiscoveryEngine:
         # Validate LLM-returned style_key against allowed values
         _VALID_STYLES = {
             "game_strategy", "news_brief", "practical_guide", "story_doc",
-            "visual_showcase", "tech_analysis", "philosophy_culture",
-            "deep_dive", "light_chat",
+            "visual_showcase", "tech_analysis",
+            "deep_dive", "fun_variety", "lifestyle", "review_roundup",
+            "light_chat",
         }
 
         content.relevance_score = score
@@ -621,8 +622,9 @@ class ContentDiscoveryEngine:
 
         _VALID_STYLES = {
             "game_strategy", "news_brief", "practical_guide", "story_doc",
-            "visual_showcase", "tech_analysis", "philosophy_culture",
-            "deep_dive", "light_chat",
+            "visual_showcase", "tech_analysis",
+            "deep_dive", "fun_variety", "lifestyle", "review_roundup",
+            "light_chat",
         }
 
         try:

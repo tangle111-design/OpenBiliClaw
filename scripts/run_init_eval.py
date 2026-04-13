@@ -152,7 +152,7 @@ async def main() -> None:
             "_favorites": favorites_data,
             "_favorites_summary": f"共 {len(favorites_data)} 个收藏，"
             + "涵盖: " + ", ".join(
-                set(f.get("folder", "") for f in favorites_data[:30] if f.get("folder"))
+                set(f.get("folder", "") for f in favorites_data[:100] if f.get("folder"))
             ),
         })
     if following_data:
@@ -160,7 +160,7 @@ async def main() -> None:
             "title": "[关注列表汇总]",
             "_following": following_data,
             "_following_summary": f"共关注 {len(following_data)} 人，"
-            + "包括: " + ", ".join(f["name"] for f in following_data[:20]),
+            + "包括: " + ", ".join(f["name"] for f in following_data[:100]),
         })
 
     # Log the profile generation prompt

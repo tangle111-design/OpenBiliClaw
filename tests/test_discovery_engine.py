@@ -657,14 +657,14 @@ def test_infer_style_key_classifies_hard_courses_and_documentaries() -> None:
             title="【从零看懂fsf】世界观/伪从者设定解析",
             source_strategy="explore",
         )
-        == "philosophy_culture"
+        == "deep_dive"
     )
     assert (
         ContentDiscoveryEngine.infer_style_key(
             title="囚犯盒子问题，史上最烧脑的逻辑谜题，超乎你的想象！",
             source_strategy="explore",
         )
-        == "philosophy_culture"
+        == "deep_dive"
     )
 
 

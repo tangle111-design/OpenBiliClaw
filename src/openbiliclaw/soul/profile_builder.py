@@ -177,7 +177,7 @@ class ProfileBuilder:
         # Deduplicate while preserving order for frequency ranking
         from collections import Counter
         author_counts = Counter(authors)
-        top_authors = [name for name, _ in author_counts.most_common(15)]
+        top_authors = [name for name, _ in author_counts.most_common(50)]
 
         # Time-based grouping: split into recent vs older if timestamps exist
         recent_titles: list[str] = []
@@ -194,14 +194,14 @@ class ProfileBuilder:
 
         summary: dict[str, object] = {
             "count": len(regular_items),
-            "titles": titles[:20],
+            "titles": titles[:100],
             "authors": top_authors,
         }
         if recent_titles:
-            summary["recent_titles"] = recent_titles[:10]
+            summary["recent_titles"] = recent_titles[:50]
             summary["recent_hint"] = f"最近观看的 {len(recent_titles)} 个视频（前30%）代表当前活跃兴趣"
         if older_titles:
-            summary["older_titles"] = older_titles[:10]
+            summary["older_titles"] = older_titles[:50]
         if favorites_summary:
             summary["favorites_summary"] = favorites_summary
         if following_summary:

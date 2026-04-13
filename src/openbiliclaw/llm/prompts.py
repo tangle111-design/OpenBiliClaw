@@ -518,7 +518,7 @@ def build_search_queries_prompt(
 5. 用户画像中包含 interest_domains（一级兴趣域）、interests（二级具体兴趣）
    以及可选的 speculative_interests（猜测兴趣——系统推测用户可能感兴趣但尚未确认的方向）。
    你必须保证 query 主题分布均匀，避免集中在用户最强兴趣上：
-   - 约 25% query 使用一级兴趣域名称搜索（如 "科技 深度" "游戏 机制"），
+   - 约 25% query 使用一级兴趣域名称搜索（如 "科技 盘点" "游戏 推荐"），
      目的是发现该域中用户尚未接触的新内容。
    - 约 25% query 使用二级兴趣的细分角度（非直接重复现有词条）。
    - 约 25% query 基于 speculative_interests 生成（如果画像中存在），
@@ -527,6 +527,9 @@ def build_search_queries_prompt(
    - 约 25% query 跨域探索（桥接用户认知风格或深层需求到相邻但陌生的领域）。
    跨域 query 不需要完全脱离用户认知范围，但核心主题词必须不在用户任何
    interest_domains / interests 中出现。
+7. query 的内容风格必须多样化，不要全部偏向"深度/学术/原理"。
+   应该混合使用不同风格词，如 盘点/推荐/日常/吐槽/测评/入门/体验/挑战/合集 等，
+   整组 query 中带"深度/原理/解析/机制"等学术向关键词的不得超过 2 个。
 6. 所有 query 的核心主题词（第一个实词）必须两两不同，
    禁止同一概念换皮出现多次。
 </rules>
@@ -534,11 +537,11 @@ def build_search_queries_prompt(
 <output_schema>
 {
   "queries": [
-    "纪录片 原理",
-    "摄影 构图 深度讲解",
-    "历史 长视频 深度",
-    "认知科学 决策 机制",
-    "城市规划 纪录片"
+    "摄影 入门 推荐",
+    "历史 冷知识 盘点",
+    "科技 新品 测评",
+    "城市规划 纪录片",
+    "认知科学 科普"
   ]
 }
 </output_schema>
@@ -548,22 +551,23 @@ def build_search_queries_prompt(
 认知风格偏好"结构化分析、高信息密度"：
 
 一级域 query（~40%）：
-- "科技 前沿 深度解读"（用域名搜索，覆盖用户未知的科技子领域）
+- "科技 新品 盘点"（用域名搜索，覆盖用户未知的科技子领域）
 - "历史 冷知识 讲解"（用域名搜索，发现域内新角度）
-- "游戏 机制设计 分析"（如果画像有游戏域）
+- "游戏 推荐 合集"（如果画像有游戏域）
 
 二级细分 query（~30%）：
-- "冷战 外交 深度解析"（历史域内的细分角度，非直接重复）
+- "冷战 外交 故事"（历史域内的细分角度，非直接重复）
 - "强化学习 应用 案例"（具体兴趣的新切面）
 
 跨域探索 query（~30%）：
-- "认知科学 决策 机制"（上游学科，桥接：结构化分析偏好）
-- "城市规划 发展史 纪录片"（相邻领域，桥接：纪录片风格+系统视角）
+- "心理学 日常 科普"（相邻学科，桥接：对人行为的好奇）
+- "城市探索 vlog"（相邻领域，桥接：纪录片风格+系统视角）
 
 坏的 query：
 - "强化学习 ppo"（和已有二级兴趣完全重合，无新意）
 - "美食"（与用户认知风格无桥接关系，随机发散）
 - "博弈论 纳什均衡 策略模型"（三个 query 本质相同，浪费多样性配额）
+- "科技 深度 解析" + "历史 深度 解读" + "哲学 深度 讨论"（全部偏学术，风格单一）
 </examples>
 """.strip()
     user_prompt = "\n\n".join(
@@ -707,7 +711,8 @@ def build_content_evaluation_prompt(
         "4. 不要只说\"因为热门\"或\"因为看过类似的\"，要结合用户画像。\n"
         "5. 根据发现路径调整评判宽容度：search 要求高度匹配；"
         "trending 来源的内容已经过大众验证，只要不在用户讨厌列表中且内容质量过关，基础分应 ≥ 0.6，若还能和画像产生关联则给更高分；"
-        "related_chain 允许适度偏移；explore 只要心理需求层面说得通就应该给较高分，即使主题完全陌生也不应因此大幅扣分。\n"
+        "related_chain 允许适度偏移；explore 允许主题陌生，但内容仍需具备可看性和吸引力，"
+        "不能仅因为心理需求抽象匹配就给高分，过于学术、艰深、小众的内容应适当降分。\n"
         "6. topic_group 是该内容所属的粗粒度主题分类，用于推荐去重。"
         "要求：2-4 个中文词，抽象到能覆盖同类内容，"
         "例如\"强化学习\"而非\"强化学习ppo算法源码级讲解\"，"
@@ -715,19 +720,21 @@ def build_content_evaluation_prompt(
         "同一主题的不同切面必须归为同一个 topic_group。"
         "语义相同的主题必须用同一个词——\"AI\" \"人工智能\" \"机器学习\" 统一写成 \"人工智能\"，"
         "\"RL\" \"强化学习\" 统一写成 \"强化学习\"。\n"
-        "7. style_key 从以下 9 个选项中选一个，描述该内容的呈现风格：\n"
+        "7. style_key 从以下 11 个选项中选一个，描述该内容的呈现风格：\n"
         "   game_strategy（游戏攻略/机制解析）/ news_brief（新闻资讯/时事快评）/ "
         "practical_guide（教程/入门/实操指南）/ story_doc（纪录片/故事/人物传记）/ "
-        "visual_showcase（视觉向/混剪/空镜）/ tech_analysis（技术深度分析/硬件评测）/ "
-        "philosophy_culture（哲学/文化/思想讨论）/ deep_dive（原理讲解/学术解析）/ "
-        "light_chat（日常/闲聊/娱乐/其他）\n"
+        "visual_showcase（视觉向/混剪/空镜）/ tech_analysis（技术分析/硬件评测）/ "
+        "deep_dive（原理讲解/学术解析）/ "
+        "fun_variety（搞笑/吐槽/整活/挑战）/ lifestyle（日常/vlog/生活分享）/ "
+        "review_roundup（盘点/测评/推荐/合集）/ "
+        "light_chat（闲聊/杂谈/其他）\n"
         "</rules>\n\n"
         "<output_schema>\n"
         "{\n"
         '  "score": 0.78,\n'
-        '  "reason": "这个视频的讲解深度和表达方式更贴近你长期偏好的高信息密度内容。",\n'
-        '  "topic_group": "认知科学",\n'
-        '  "style_key": "deep_dive"\n'
+        '  "reason": "这个视频的选题角度新颖，节奏轻快，契合你对该领域的好奇心。",\n'
+        '  "topic_group": "生活方式",\n'
+        '  "style_key": "light_chat"\n'
         "}\n"
         "</output_schema>"
     )
@@ -775,15 +782,15 @@ def build_batch_content_evaluation_prompt(
         "1. 输出必须是严格 JSON 数组，不要附带解释。\n"
         "2. 数组长度必须与输入内容数量一致，顺序一一对应。\n"
         "3. 每项包含 score(0-1)、reason(一句中文)、topic_group(2-4词粗分类)、"
-        "style_key(9选1)。\n"
+        "style_key(11选1)。\n"
         "4. 根据发现路径调整评判宽容度：search 要求高度匹配；"
         "trending 基础分 >= 0.6；related_chain 允许适度偏移；"
-        "explore 只要心理需求说得通就给较高分。\n"
+        "explore 允许主题陌生，但内容仍需具备可看性，过于学术艰深的应适当降分。\n"
         "5. topic_group 规则：2-4 个中文词的粗分类，同主题不同切面统一。"
         "语义相同必须用同一词（AI/人工智能/机器学习 统一为 人工智能）。\n"
-        "6. style_key 从 9 个选项中选：game_strategy / news_brief / "
+        "6. style_key 从 11 个选项中选：game_strategy / news_brief / "
         "practical_guide / story_doc / visual_showcase / tech_analysis / "
-        "philosophy_culture / deep_dive / light_chat\n"
+        "deep_dive / fun_variety / lifestyle / review_roundup / light_chat\n"
         "</rules>\n\n"
         "<output_schema>\n"
         "[\n"
@@ -987,8 +994,10 @@ def build_explore_domains_prompt(
 7. novelty_level 范围必须在 0.65 到 0.95 之间；至少 3 个 domain 的 novelty_level ≥ 0.75。
 8. 每个 domain 生成 2 到 3 个适合 B 站搜索的 query，query 必须具体到可直接搜索的细分话题，禁止只写宽泛大词。
 9. 不同 domain 的 query 之间词汇重叠率要低；每个 query 必须包含一个内容形式词
-   （如 纪录片/深度讲解/科普/测评/vlog/解说/手书/混剪），
+   （如 盘点/推荐/测评/vlog/日常/吐槽/科普/体验/挑战/合集/纪录片/解说/手书/混剪），
    不同 domain 必须使用不同的形式词，以保证搜索结果在风格维度上有差异。
+   整组 query 中"深度讲解/深度解析/原理"等学术向形式词最多只能出现 1 次，
+   优先使用轻松、大众化的形式词。
 10. 反信息茧房：不同 domain 的 query 第一个实词（核心主题词）必须两两不同，
    禁止仅替换修饰词而保留相同核心名词；至少 4 个 domain 必须来自用户
    已有兴趣领域之外的全新方向（即用户画像中未出现的领域）。
@@ -1003,7 +1012,7 @@ def build_explore_domains_prompt(
       "category": "审美体验",
       "why_it_might_resonate": "你偏好结构清晰、能从具体对象看见更大系统的内容。",
       "novelty_level": 0.72,
-      "queries": ["上海 里弄 改造 纪录片", "参数化 建筑 深度讲解", "废墟 探险 vlog"]
+      "queries": ["上海 里弄 改造 纪录片", "创意 建筑 盘点", "废墟 探险 vlog"]
     }
   ]
 }

@@ -45,7 +45,7 @@ async def generate_mock_pool(
             f"relevance_score, topic_group, style_key\n"
             f"2. source_strategy 从 search/trending/related_chain/explore 中选\n"
             f"3. style_key 从 game_strategy/news_brief/practical_guide/story_doc/"
-            f"visual_showcase/tech_analysis/philosophy_culture/deep_dive/light_chat 中选\n"
+            f"visual_showcase/tech_analysis/deep_dive/fun_variety/lifestyle/review_roundup/light_chat 中选\n"
             f"4. topic_group 用 2-4 个中文词\n"
             f"5. 内容要多样：至少覆盖 4 个不同 topic_group 和 3 种 style_key\n"
             f"6. relevance_score 在 0.5-0.95 之间，不要全给高分\n\n"
