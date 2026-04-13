@@ -278,15 +278,19 @@ PY
     if [ -n "$missing" ]; then
         echo "Next steps (credentials are missing):"
         echo ""
-        echo "  1. Prepare the missing values:"
+        echo "  1. Choose your LLM provider (default: openai):"
+        echo "     Supported: openai | gemini | claude | deepseek | openrouter | ollama"
+        echo ""
+        echo "  2. Prepare the missing values:"
         case "$missing" in
             *llm.*api_key*)
-                echo "     - LLM API key — get one from your provider:"
+                echo "     - LLM API key — get one from your chosen provider:"
                 echo "         OpenAI:     https://platform.openai.com/api-keys"
                 echo "         Gemini:     https://aistudio.google.com/apikey"
                 echo "         DeepSeek:   https://platform.deepseek.com/api_keys"
                 echo "         Claude:     https://console.anthropic.com/settings/keys"
                 echo "         OpenRouter: https://openrouter.ai/keys"
+                echo "         Ollama:     (no key needed, just install and run)"
                 ;;
         esac
         case "$missing" in
@@ -299,11 +303,12 @@ PY
                 ;;
         esac
         echo ""
-        echo "  2. Run with your values filled in:"
+        echo "  3. Run with your values filled in:"
         echo ""
         # Build the command dynamically — only show flags for what's missing.
         echo "     python3 $INSTALL_DIR/scripts/agent_bootstrap.py \\"
         echo "         --project-dir $INSTALL_DIR \\"
+        echo "         --provider <YOUR_PROVIDER> \\"
         case "$missing" in
             *llm.*api_key*) echo "         --llm-api-key '<YOUR_API_KEY>' \\" ;;
         esac
