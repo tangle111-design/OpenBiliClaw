@@ -47,13 +47,11 @@ All data lives in a single SQLite file on your disk. LLM calls use your own API 
 
 The extension is your main interface — it shows recommendations in a Bilibili side panel, collects behavior, and lets you chat with the agent.
 
-```bash
-cd extension && npm install && npm run package
-```
+1. Download the latest [`openbiliclaw-extension.zip`](https://github.com/whiteguo233/OpenBiliClaw/releases/latest)
+2. Open `chrome://extensions/`, enable "Developer mode" in the top right
+3. Drag the downloaded `.zip` file into the page to install
 
-1. Open `chrome://extensions/`, enable "Developer mode" in the top right
-2. Drag the generated `extension/openbiliclaw-extension-v*.zip` into the page to install
-   (or click "Load unpacked" and select the `extension/` directory)
+> Developers can also `cd extension && npm install && npm run package` to build from source.
 
 ### ⚡ Step 2: Deploy the Backend
 
