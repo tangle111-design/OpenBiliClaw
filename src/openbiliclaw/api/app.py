@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import suppress
-from typing import Any, cast
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,17 +14,27 @@ from openbiliclaw.api.models import (
     ActivityFeedItemOut,
     ActivityFeedResponse,
     BehaviorEventBatchIn,
+    BilibiliConfigOut,
     ChatIn,
     ChatResponse,
     CognitionUpdateSeenIn,
     CognitionUpdateSeenResponse,
     CognitionUpdateSummary,
+    ConfigIssueOut,
+    ConfigResponse,
+    ConfigUpdateIn,
+    ConfigUpdateResponse,
     DelightAckIn,
     DelightAckResponse,
+    EmbeddingConfigOut,
     EventIngestResponse,
     FeedbackIn,
     FeedbackResponse,
     HealthResponse,
+    LLMConfigOut,
+    LLMProviderConfigOut,
+    LoggingConfigOut,
+    ModuleLLMConfigOut,
     NotificationAckIn,
     NotificationAckResponse,
     PendingCognitionUpdateOut,
@@ -42,6 +52,8 @@ from openbiliclaw.api.models import (
     RecommendationRefreshResponse,
     RecommendationReshuffleResponse,
     RuntimeStatusResponse,
+    SchedulerConfigOut,
+    StorageConfigOut,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,6 +100,9 @@ def create_app(
     auto_update_service: Any | None = None,
 ) -> FastAPI:
     """Create the local backend API app."""
+    from openbiliclaw.api.runtime_context import RuntimeContext, build_runtime_context
+    from openbiliclaw.config import load_config
+
     app = FastAPI(title="OpenBiliClaw API")
     app.add_middleware(
         CORSMiddleware,
@@ -96,162 +111,62 @@ def create_app(
         allow_headers=["*"],
     )
 
-    if memory_manager is None or database is None or soul_engine is None:
-        from openbiliclaw.bilibili.api import BilibiliAPIClient
-        from openbiliclaw.bilibili.auth import resolve_runtime_cookie
-        from openbiliclaw.config import load_config
-        from openbiliclaw.discovery.engine import (
-            ContentDiscoveryEngine,
-            DiscoveryConcurrencyController,
+    # ── Build RuntimeContext ────────────────────────────────────────
+    config = load_config()
+
+    if soul_engine is not None:
+        # Injection path: caller provides swappable components.
+        # Auto-create stable components (database, memory_manager) if missing.
+        from openbiliclaw.runtime.events import RuntimeEventHub as _RuntimeEventHub
+
+        _db = database
+        _created_db = False
+        if _db is None:
+            from openbiliclaw.storage.database import Database
+
+            _db = Database(config.data_path / "openbiliclaw.db")
+            _db.initialize()
+            _created_db = True
+        _mm = memory_manager
+        if _mm is None:
+            from openbiliclaw.memory.manager import MemoryManager
+
+            _mm = MemoryManager(config.data_path, database=_db if _created_db else None)
+            _mm.initialize()
+
+        ctx = RuntimeContext(
+            database=_db,
+            memory_manager=_mm,
+            event_hub=runtime_event_hub or getattr(runtime_controller, "event_hub", None) or _RuntimeEventHub(),
+            # config intentionally left None in injection path — matches
+            # old behaviour where closures couldn't see config when all
+            # core components were provided by the caller.
+            soul_engine=soul_engine,
+            dialogue=dialogue,
+            runtime_controller=runtime_controller,
+            recommendation_engine=recommendation_engine,
+            account_sync_service=account_sync_service,
+            auto_update_service=auto_update_service,
         )
-        from openbiliclaw.discovery.strategies.strategies import (
-            ExploreStrategy,
-            RelatedChainStrategy,
-            SearchStrategy,
-            TrendingStrategy,
+        if ctx.dialogue is None:
+            from openbiliclaw.soul.dialogue import SocraticDialogue
+            ctx.dialogue = SocraticDialogue(llm=None, soul_engine=soul_engine, session="popup")
+        if ctx.auto_update_service is None:
+            from openbiliclaw.runtime.updater import AutoUpdateService
+            ctx.auto_update_service = AutoUpdateService(enabled=True)
+    else:
+        # Production path: build everything from config.
+        ctx = build_runtime_context(
+            config,
+            memory_manager=memory_manager,
+            database=database,
+            event_hub=runtime_event_hub,
         )
-        from openbiliclaw.llm import build_llm_registry
-        from openbiliclaw.llm.service import LLMService
-        from openbiliclaw.memory.manager import MemoryManager
-        from openbiliclaw.recommendation.engine import RecommendationEngine
-        from openbiliclaw.runtime.account_sync import AccountSyncService
-        from openbiliclaw.runtime.events import RuntimeEventHub
-        from openbiliclaw.runtime.refresh import ContinuousRefreshController
-        from openbiliclaw.soul.dialogue import SocraticDialogue
-        from openbiliclaw.soul.engine import SoulEngine
-        from openbiliclaw.storage.database import Database
-
-        config = load_config()
-        llm_registry = build_llm_registry(config)
-        created_runtime_database = False
-        if database is None:
-            database = Database(config.data_path / "openbiliclaw.db")
-            database.initialize()
-            created_runtime_database = True
-        if memory_manager is None:
-            shared_database = database if created_runtime_database else None
-            memory_manager = MemoryManager(config.data_path, database=shared_database)
-            memory_manager.initialize()
-        if soul_engine is None:
-            soul_engine = SoulEngine(
-                llm=llm_registry,  # type: ignore[arg-type]
-                memory=memory_manager,
-            )
-        llm_service = LLMService(registry=llm_registry, memory=memory_manager)
-        if recommendation_engine is None:
-            from openbiliclaw.recommendation.curator import PoolCurator
-
-            curator = PoolCurator(database)
-            from openbiliclaw.llm.registry import build_embedding_service
-            _emb_service = build_embedding_service(config, llm_registry)
-            recommendation_engine = RecommendationEngine(
-                llm=llm_service, database=database, curator=curator,
-                embedding_service=_emb_service,
-            )
-            # Share the embedding service with the soul pipeline so
-            # semantic pool purges can run on newly-learned dislikes.
-            set_emb = getattr(soul_engine, "set_embedding_service", None)
-            if callable(set_emb):
-                set_emb(_emb_service)
-        bilibili_client = BilibiliAPIClient(
-            cookie=resolve_runtime_cookie(
-                data_dir=config.data_path,
-                configured_cookie=config.bilibili.cookie,
-            )
-        )
-        if runtime_controller is None:
-            concurrency = DiscoveryConcurrencyController(
-                bilibili_request_concurrency=2,
-                llm_evaluation_concurrency=2,
-            )
-            _embedding_service = build_embedding_service(config, llm_registry)
-
-            discovery_engine = ContentDiscoveryEngine(
-                llm_service=llm_service,
-                database=database,
-                concurrency=concurrency,
-                embedding_service=_embedding_service,
-            )
-            search_strategy = SearchStrategy(
-                llm_service=llm_service,
-                bilibili_client=bilibili_client,
-                concurrency=concurrency,
-            )
-            trending_strategy = TrendingStrategy(
-                bilibili_client=bilibili_client,
-                llm_service=llm_service,
-                concurrency=concurrency,
-            )
-            related_strategy = RelatedChainStrategy(
-                bilibili_client=bilibili_client,
-                llm_service=llm_service,
-                memory_manager=cast("Any", memory_manager),
-                search_strategy=search_strategy,
-                trending_strategy=trending_strategy,
-                concurrency=concurrency,
-            )
-            explore_strategy = ExploreStrategy(
-                llm_service=llm_service,
-                bilibili_client=bilibili_client,
-                concurrency=concurrency,
-                embedding_service=_embedding_service,
-            )
-            discovery_engine.register_strategy(search_strategy)
-            discovery_engine.register_strategy(trending_strategy)
-            discovery_engine.register_strategy(related_strategy)
-            discovery_engine.register_strategy(explore_strategy)
-            runtime_controller = ContinuousRefreshController(
-                memory_manager=memory_manager,
-                database=database,
-                soul_engine=soul_engine,
-                discovery_engine=discovery_engine,
-                recommendation_engine=recommendation_engine,
-                pool_target_count=config.scheduler.pool_target_count,
-                event_hub=runtime_event_hub or RuntimeEventHub(),
-            )
-        if account_sync_service is None:
-            account_sync_service = AccountSyncService(
-                memory_manager=memory_manager,
-                bilibili_client=bilibili_client,
-                soul_engine=soul_engine,
-                sync_interval_hours=config.scheduler.account_sync_interval_hours,
-            )
-        if runtime_event_hub is None:
-            runtime_event_hub = getattr(runtime_controller, "event_hub", None)
-        if dialogue is None:
-            dialogue = SocraticDialogue(
-                llm=None,
-                soul_engine=soul_engine,
-                llm_service=llm_service,
-                session="popup",
-            )
-
-    if auto_update_service is None:
-        from openbiliclaw.runtime.updater import AutoUpdateService
-
-        try:
-            from openbiliclaw.config import load_config as _load_cfg
-            _cfg = _load_cfg()
-            auto_update_service = AutoUpdateService(
-                enabled=_cfg.scheduler.auto_update_enabled,
-                check_interval_hours=_cfg.scheduler.auto_update_check_interval_hours,
-            )
-        except Exception:
-            auto_update_service = AutoUpdateService(enabled=True)
-
-    if dialogue is None:
-        from openbiliclaw.soul.dialogue import SocraticDialogue
-
-        dialogue = SocraticDialogue(llm=None, soul_engine=soul_engine, session="popup")
-    if runtime_event_hub is None:
-        from openbiliclaw.runtime.events import RuntimeEventHub
-
-        runtime_event_hub = RuntimeEventHub()
 
     async def _run_post_feedback_tasks() -> None:
         with suppress(Exception):
-            await soul_engine.process_feedback_batch_if_needed()
-        refresh_after_feedback = getattr(runtime_controller, "refresh_after_feedback", None)
+            await ctx.soul_engine.process_feedback_batch_if_needed()
+        refresh_after_feedback = getattr(ctx.runtime_controller, "refresh_after_feedback", None)
         if callable(refresh_after_feedback):
             with suppress(Exception):
                 await refresh_after_feedback()
@@ -259,6 +174,30 @@ def create_app(
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse(status="ok", service="openbiliclaw-api")
+
+    @app.post("/api/init-completed")
+    async def init_completed() -> dict[str, object]:
+        """Notify the running server that ``openbiliclaw init`` has finished.
+
+        Called by the CLI at the end of a successful init.  The handler
+        broadcasts an ``init_completed`` event via WebSocket so the
+        browser extension can immediately re-fetch profile, recommendations
+        and activity data.  It also kicks the continuous-refresh controller
+        so the discovery pool is picked up without waiting for the next
+        60-second tick.
+        """
+        # Broadcast to extension
+        with suppress(Exception):
+            await ctx.event_hub.publish({
+                "type": "init_completed",
+                "message": "初始化完成，画像与发现池已就绪。",
+            })
+        # Kick refresh controller immediately
+        trigger = getattr(ctx.runtime_controller, "trigger_manual_refresh", None)
+        if callable(trigger):
+            with suppress(Exception):
+                asyncio.create_task(trigger())
+        return {"ok": True}
 
     def _serialize_recommendation_items(items: list[Any]) -> list[RecommendationOut]:
         return [
@@ -278,8 +217,8 @@ def create_app(
     @app.websocket("/api/runtime-stream")
     async def runtime_stream(websocket: WebSocket) -> None:
         await websocket.accept()
-        subscribe = getattr(runtime_event_hub, "subscribe", None)
-        unsubscribe = getattr(runtime_event_hub, "unsubscribe", None)
+        subscribe = getattr(ctx.event_hub, "subscribe", None)
+        unsubscribe = getattr(ctx.event_hub, "unsubscribe", None)
         if not callable(subscribe) or not callable(unsubscribe):
             await websocket.close()
             return
@@ -295,31 +234,7 @@ def create_app(
 
     @app.on_event("startup")
     async def startup_refresh_loop() -> None:
-        run_forever = getattr(runtime_controller, "run_forever", None)
-        if runtime_controller is None or not callable(run_forever):
-            app.state.refresh_task = None
-        else:
-            app.state.refresh_task = asyncio.create_task(run_forever())
-        sync_forever = getattr(account_sync_service, "run_forever", None)
-        if account_sync_service is None or not callable(sync_forever):
-            app.state.account_sync_task = None
-            return
-        app.state.account_sync_task = asyncio.create_task(sync_forever())
-        # Auto-update background task
-        update_forever = getattr(auto_update_service, "run_forever", None)
-        if auto_update_service is not None and callable(update_forever):
-            app.state.auto_update_task = asyncio.create_task(update_forever())
-        else:
-            app.state.auto_update_task = None
-        # Trigger speculator on startup to ensure speculations exist
-        if soul_engine is not None:
-            try:
-                profile = await soul_engine.get_profile()
-                speculator = getattr(soul_engine, "_speculator", None)
-                if speculator is not None:
-                    await speculator.force_tick(profile)
-            except Exception:
-                pass  # Profile not initialized yet — skip silently
+        await ctx.restart_background_tasks(app)
 
     @app.on_event("shutdown")
     async def shutdown_refresh_loop() -> None:
@@ -345,7 +260,7 @@ def create_app(
         cursor: str = "",
     ) -> ProfileSummaryResponse:
         try:
-            profile = await soul_engine.get_profile()
+            profile = await ctx.soul_engine.get_profile()
         except Exception:
             return ProfileSummaryResponse(initialized=False)
 
@@ -436,7 +351,7 @@ def create_app(
         cognition_updates = []
         has_more_cognition_updates = False
         next_cognition_cursor = ""
-        load_cognition_updates = getattr(memory_manager, "load_cognition_updates", None)
+        load_cognition_updates = getattr(ctx.memory_manager, "load_cognition_updates", None)
         if callable(load_cognition_updates):
             raw_updates = [
                 item
@@ -461,7 +376,7 @@ def create_app(
         # ── Speculative interests ──
         spec_items: list[SpeculativeInterestOut] = []
         try:
-            spec_state = load_speculative_state(config.data_path)
+            spec_state = load_speculative_state(ctx.config.data_path)
             from openbiliclaw.api.models import SpeculativeSpecificOut
 
             spec_items = [
@@ -554,9 +469,9 @@ def create_app(
                     "timestamp": item.timestamp,
                 },
             }
-            await memory_manager.propagate_event(event)
+            await ctx.memory_manager.propagate_event(event)
             accepted += 1
-        refresh_after_event_ingest = getattr(runtime_controller, "refresh_after_event_ingest", None)
+        refresh_after_event_ingest = getattr(ctx.runtime_controller, "refresh_after_event_ingest", None)
         if callable(refresh_after_event_ingest):
             with suppress(Exception):
                 await refresh_after_event_ingest()
@@ -564,7 +479,7 @@ def create_app(
 
     @app.get("/api/recommendations", response_model=RecommendationListResponse)
     async def recommendations() -> RecommendationListResponse:
-        rows = database.get_recommendations(limit=20)
+        rows = ctx.database.get_recommendations(limit=20)
         return RecommendationListResponse(
             items=[
                 RecommendationOut(
@@ -586,21 +501,21 @@ def create_app(
         from openbiliclaw.runtime.activity_feed import ActivityFeedBuilder
 
         runtime_status: dict[str, object] = {}
-        get_runtime_status = getattr(runtime_controller, "get_runtime_status", None)
+        get_runtime_status = getattr(ctx.runtime_controller, "get_runtime_status", None)
         if callable(get_runtime_status):
             runtime_status = dict(get_runtime_status())
-        get_account_sync_status = getattr(account_sync_service, "get_runtime_status", None)
+        get_account_sync_status = getattr(ctx.account_sync_service, "get_runtime_status", None)
         if callable(get_account_sync_status):
             runtime_status.update(get_account_sync_status())
 
         cognition_updates: list[dict[str, object]] = []
-        load_cognition_updates = getattr(memory_manager, "load_cognition_updates", None)
+        load_cognition_updates = getattr(ctx.memory_manager, "load_cognition_updates", None)
         if callable(load_cognition_updates):
             cognition_updates = [
                 item for item in load_cognition_updates() if isinstance(item, dict)
             ]
 
-        builder = ActivityFeedBuilder(database=database)
+        builder = ActivityFeedBuilder(database=ctx.database)
         payload = builder.build(
             runtime_status=runtime_status,
             cognition_updates=cognition_updates,
@@ -626,25 +541,25 @@ def create_app(
 
     async def _trigger_replenishment_if_needed() -> None:
         """Fire a background Discovery refresh when the pool runs low."""
-        curator = getattr(recommendation_engine, "_curator", None)
+        curator = getattr(ctx.recommendation_engine, "_curator", None)
         if curator is None or not hasattr(curator, "needs_replenishment"):
             return
         if not curator.needs_replenishment():
             return
-        trigger = getattr(runtime_controller, "trigger_manual_refresh", None)
+        trigger = getattr(ctx.runtime_controller, "trigger_manual_refresh", None)
         if callable(trigger):
             logger.info("Pool low — triggering automatic replenishment")
             asyncio.create_task(trigger())
 
     @app.post("/api/recommendations/reshuffle", response_model=RecommendationReshuffleResponse)
     async def reshuffle_recommendations() -> RecommendationReshuffleResponse:
-        if recommendation_engine is None or soul_engine is None:
+        if ctx.recommendation_engine is None or ctx.soul_engine is None:
             return RecommendationReshuffleResponse(items=[])
         try:
-            profile = await soul_engine.get_profile()
+            profile = await ctx.soul_engine.get_profile()
         except Exception:
             return RecommendationReshuffleResponse(items=[])
-        items = await recommendation_engine.reshuffle_recommendations(profile=profile, limit=10)
+        items = await ctx.recommendation_engine.reshuffle_recommendations(profile=profile, limit=10)
         await _trigger_replenishment_if_needed()
         return RecommendationReshuffleResponse(items=_serialize_recommendation_items(items))
 
@@ -652,13 +567,13 @@ def create_app(
     async def append_recommendations(
         payload: RecommendationAppendIn,
     ) -> RecommendationReshuffleResponse:
-        if recommendation_engine is None or soul_engine is None:
+        if ctx.recommendation_engine is None or ctx.soul_engine is None:
             return RecommendationReshuffleResponse(items=[])
         try:
-            profile = await soul_engine.get_profile()
+            profile = await ctx.soul_engine.get_profile()
         except Exception:
             return RecommendationReshuffleResponse(items=[])
-        items = await recommendation_engine.append_recommendations(
+        items = await ctx.recommendation_engine.append_recommendations(
             profile=profile,
             excluded_bvids=payload.excluded_bvids,
             limit=10,
@@ -668,7 +583,7 @@ def create_app(
 
     @app.post("/api/recommendations/refresh", response_model=RecommendationRefreshResponse)
     async def refresh_recommendations() -> RecommendationRefreshResponse:
-        trigger_manual_refresh = getattr(runtime_controller, "trigger_manual_refresh", None)
+        trigger_manual_refresh = getattr(ctx.runtime_controller, "trigger_manual_refresh", None)
         if not callable(trigger_manual_refresh):
             return RecommendationRefreshResponse(
                 ok=True,
@@ -687,7 +602,7 @@ def create_app(
 
     @app.get("/api/runtime-status", response_model=RuntimeStatusResponse)
     async def runtime_status() -> RuntimeStatusResponse:
-        get_runtime_status = getattr(runtime_controller, "get_runtime_status", None)
+        get_runtime_status = getattr(ctx.runtime_controller, "get_runtime_status", None)
         if not callable(get_runtime_status):
             return RuntimeStatusResponse(
                 initialized=False,
@@ -696,20 +611,20 @@ def create_app(
                 unread_count=0,
             )
         payload = dict(get_runtime_status())
-        get_account_sync_status = getattr(account_sync_service, "get_runtime_status", None)
+        get_account_sync_status = getattr(ctx.account_sync_service, "get_runtime_status", None)
         if callable(get_account_sync_status):
             payload.update(get_account_sync_status())
-        get_update_status = getattr(auto_update_service, "get_runtime_status", None)
+        get_update_status = getattr(ctx.auto_update_service, "get_runtime_status", None)
         if callable(get_update_status):
             payload.update(get_update_status())
         return RuntimeStatusResponse(**payload)
 
     @app.get("/api/notifications/pending", response_model=PendingNotificationResponse)
     async def pending_notification() -> PendingNotificationResponse:
-        get_pending_notification = getattr(runtime_controller, "get_pending_notification", None)
+        get_pending_notification = getattr(ctx.runtime_controller, "get_pending_notification", None)
         item = get_pending_notification() if callable(get_pending_notification) else None
         if item is None:
-            get_notification_candidate = getattr(database, "get_notification_candidate", None)
+            get_notification_candidate = getattr(ctx.database, "get_notification_candidate", None)
             if callable(get_notification_candidate):
                 candidate = get_notification_candidate(min_confidence=0.82)
                 if candidate is not None:
@@ -728,7 +643,7 @@ def create_app(
         response_model=PendingCognitionUpdateResponse,
     )
     async def pending_cognition_update() -> PendingCognitionUpdateResponse:
-        load_cognition_updates = getattr(memory_manager, "load_cognition_updates", None)
+        load_cognition_updates = getattr(ctx.memory_manager, "load_cognition_updates", None)
         if not callable(load_cognition_updates):
             return PendingCognitionUpdateResponse(item=None)
         updates = [
@@ -757,8 +672,8 @@ def create_app(
         update_id = payload.id.strip()
         if not update_id:
             raise HTTPException(status_code=422, detail="Cognition update id is required.")
-        load_cognition_updates = getattr(memory_manager, "load_cognition_updates", None)
-        save_cognition_updates = getattr(memory_manager, "save_cognition_updates", None)
+        load_cognition_updates = getattr(ctx.memory_manager, "load_cognition_updates", None)
+        save_cognition_updates = getattr(ctx.memory_manager, "save_cognition_updates", None)
         if not callable(load_cognition_updates) or not callable(save_cognition_updates):
             raise HTTPException(status_code=500, detail="Cognition update storage unavailable.")
         updates = load_cognition_updates()
@@ -778,7 +693,7 @@ def create_app(
 
     @app.get("/api/delight/pending", response_model=PendingDelightResponse)
     async def pending_delight() -> PendingDelightResponse:
-        get_pending_delight = getattr(runtime_controller, "get_pending_delight", None)
+        get_pending_delight = getattr(ctx.runtime_controller, "get_pending_delight", None)
         item = get_pending_delight() if callable(get_pending_delight) else None
         if item is None:
             return PendingDelightResponse(item=None)
@@ -789,11 +704,11 @@ def create_app(
         bvid = payload.bvid.strip()
         if not bvid:
             raise HTTPException(status_code=422, detail="Delight bvid is required.")
-        mark_sent = getattr(runtime_controller, "mark_delight_sent", None)
+        mark_sent = getattr(ctx.runtime_controller, "mark_delight_sent", None)
         if callable(mark_sent):
             mark_sent(bvid)
         else:
-            database.mark_delight_notified(bvid)
+            ctx.database.mark_delight_notified(bvid)
         return DelightAckResponse(ok=True, bvid=bvid)
 
     @app.post("/api/notifications/sent", response_model=NotificationAckResponse)
@@ -801,11 +716,11 @@ def create_app(
         bvid = payload.bvid.strip()
         if not bvid:
             raise HTTPException(status_code=422, detail="Notification bvid is required.")
-        mark_sent = getattr(runtime_controller, "mark_notification_sent", None)
+        mark_sent = getattr(ctx.runtime_controller, "mark_notification_sent", None)
         if callable(mark_sent):
             mark_sent(bvid)
         else:
-            database.mark_notification_sent(bvid)
+            ctx.database.mark_notification_sent(bvid)
         return NotificationAckResponse(ok=True, bvid=bvid)
 
     @app.post("/api/chat", response_model=ChatResponse)
@@ -813,7 +728,7 @@ def create_app(
         message = payload.message.strip()
         if not message:
             raise HTTPException(status_code=422, detail="Chat message is required.")
-        reply = await dialogue.respond(message)
+        reply = await ctx.dialogue.respond(message)
         return ChatResponse(reply=reply)
 
     @app.post("/api/feedback", response_model=FeedbackResponse)
@@ -825,16 +740,16 @@ def create_app(
         if feedback_type == "comment" and not note:
             raise HTTPException(status_code=422, detail="Comment feedback requires note.")
 
-        recommendation = database.get_recommendation_by_id(payload.recommendation_id)
+        recommendation = ctx.database.get_recommendation_by_id(payload.recommendation_id)
         if recommendation is None:
             raise HTTPException(status_code=404, detail="Recommendation not found.")
 
-        database.update_recommendation_feedback(
+        ctx.database.update_recommendation_feedback(
             payload.recommendation_id,
             feedback_type=feedback_type,
             feedback_note=note,
         )
-        await memory_manager.propagate_event(
+        await ctx.memory_manager.propagate_event(
             {
                 "event_type": "feedback",
                 "title": str(recommendation.get("title", "")),
@@ -847,7 +762,7 @@ def create_app(
             }
         )
         record_immediate_feedback_cognition = getattr(
-            soul_engine,
+            ctx.soul_engine,
             "record_immediate_feedback_cognition",
             None,
         )
@@ -886,7 +801,7 @@ def create_app(
 
         recommendation: dict[str, object] | None = None
         if payload.recommendation_id is not None:
-            recommendation = database.get_recommendation_by_id(
+            recommendation = ctx.database.get_recommendation_by_id(
                 payload.recommendation_id,
             )
 
@@ -908,7 +823,7 @@ def create_app(
 
         # Persist the click as an event so history/query paths can see it.
         with suppress(Exception):
-            await memory_manager.propagate_event(
+            await ctx.memory_manager.propagate_event(
                 {
                     "event_type": "click",
                     "title": title,
@@ -924,7 +839,7 @@ def create_app(
 
         # Push a strong signal into the profile update pipeline.
         layers_updated: list[str] = []
-        pipeline = getattr(soul_engine, "pipeline", None) if soul_engine else None
+        pipeline = getattr(ctx.soul_engine, "pipeline", None) if ctx.soul_engine else None
         if pipeline is not None:
             signal = signal_from_recommendation_click(
                 bvid=bvid,
@@ -944,6 +859,233 @@ def create_app(
             ok=True,
             bvid=bvid,
             layers_updated=layers_updated,
+        )
+
+    # ── Configuration management endpoints ──────────────────────────
+
+    def _config_to_response(
+        cfg: Any,
+        issues: list[Any] | None = None,
+        *,
+        mask_keys: bool = True,
+    ) -> ConfigResponse:
+        """Convert a Config dataclass to a ConfigResponse, optionally masking API keys."""
+
+        def _mask(key: str) -> str:
+            if not mask_keys or not key:
+                return key
+            if len(key) <= 8:
+                return "*" * len(key)
+            return key[:4] + "*" * (len(key) - 8) + key[-4:]
+
+        def _provider_out(p: Any) -> LLMProviderConfigOut:
+            return LLMProviderConfigOut(
+                api_key=_mask(p.api_key),
+                model=p.model,
+                base_url=p.base_url,
+                http_referer=getattr(p, "http_referer", ""),
+                x_title=getattr(p, "x_title", ""),
+            )
+
+        issue_list = [
+            ConfigIssueOut(field=i.field, message=i.message)
+            for i in (issues or [])
+        ]
+
+        return ConfigResponse(
+            language=cfg.language,
+            data_dir=cfg.data_dir,
+            llm=LLMConfigOut(
+                default_provider=cfg.llm.default_provider,
+                openai=_provider_out(cfg.llm.openai),
+                claude=_provider_out(cfg.llm.claude),
+                gemini=_provider_out(cfg.llm.gemini),
+                deepseek=_provider_out(cfg.llm.deepseek),
+                ollama=_provider_out(cfg.llm.ollama),
+                openrouter=_provider_out(cfg.llm.openrouter),
+                embedding=EmbeddingConfigOut(
+                    provider=cfg.llm.embedding.provider,
+                    model=cfg.llm.embedding.model,
+                    similarity_threshold=cfg.llm.embedding.similarity_threshold,
+                ),
+                soul=ModuleLLMConfigOut(
+                    provider=cfg.llm.soul.provider,
+                    model=cfg.llm.soul.model,
+                ),
+                discovery=ModuleLLMConfigOut(
+                    provider=cfg.llm.discovery.provider,
+                    model=cfg.llm.discovery.model,
+                ),
+                recommendation=ModuleLLMConfigOut(
+                    provider=cfg.llm.recommendation.provider,
+                    model=cfg.llm.recommendation.model,
+                ),
+                evaluation=ModuleLLMConfigOut(
+                    provider=cfg.llm.evaluation.provider,
+                    model=cfg.llm.evaluation.model,
+                ),
+            ),
+            bilibili=BilibiliConfigOut(
+                auth_method=cfg.bilibili.auth_method,
+                cookie=_mask(cfg.bilibili.cookie),
+                browser_executable=cfg.bilibili.browser_executable,
+                browser_headed=cfg.bilibili.browser_headed,
+            ),
+            scheduler=SchedulerConfigOut(
+                enabled=cfg.scheduler.enabled,
+                discovery_cron=cfg.scheduler.discovery_cron,
+                pool_target_count=cfg.scheduler.pool_target_count,
+                account_sync_interval_hours=cfg.scheduler.account_sync_interval_hours,
+                auto_update_enabled=cfg.scheduler.auto_update_enabled,
+                auto_update_check_interval_hours=cfg.scheduler.auto_update_check_interval_hours,
+            ),
+            storage=StorageConfigOut(db_path=cfg.storage.db_path),
+            logging=LoggingConfigOut(
+                level=cfg.logging.level,
+                file_level=cfg.logging.file_level,
+                directory=cfg.logging.directory,
+                filename=cfg.logging.filename,
+            ),
+            issues=issue_list,
+        )
+
+    @app.get("/api/config", response_model=ConfigResponse)
+    def get_config(reveal_keys: bool = False) -> ConfigResponse:
+        """Return the current configuration (API keys masked by default)."""
+        from openbiliclaw.config import (
+            _collect_config_issues,
+            load_config,
+        )
+
+        cfg = load_config()
+        issues = _collect_config_issues(cfg)
+        return _config_to_response(cfg, issues, mask_keys=not reveal_keys)
+
+    @app.put("/api/config", response_model=ConfigUpdateResponse)
+    async def update_config(payload: ConfigUpdateIn) -> ConfigUpdateResponse:
+        """Update configuration, persist to config.toml, and hot-reload runtime.
+
+        Only the fields included in the request body are modified.
+        After persisting, the backend attempts to rebuild all swappable
+        runtime components so the new settings take effect immediately.
+        """
+        from openbiliclaw.config import (
+            _collect_config_issues,
+            load_config,
+            save_config,
+        )
+
+        cfg = load_config()
+        update = payload.model_dump(exclude_none=True)
+
+        # Apply top-level scalars
+        if "language" in update:
+            cfg.language = str(update["language"])
+        if "data_dir" in update:
+            cfg.data_dir = str(update["data_dir"])
+
+        # Apply LLM updates
+        if "llm" in update:
+            llm_data = update["llm"]
+            if "default_provider" in llm_data:
+                cfg.llm.default_provider = str(llm_data["default_provider"])
+            for provider_name in (
+                "openai", "claude", "gemini", "deepseek", "ollama", "openrouter",
+            ):
+                if provider_name in llm_data and isinstance(llm_data[provider_name], dict):
+                    provider_cfg = getattr(cfg.llm, provider_name)
+                    pdata = llm_data[provider_name]
+                    for field_name in ("api_key", "model", "base_url", "http_referer", "x_title"):
+                        if field_name in pdata:
+                            setattr(provider_cfg, field_name, str(pdata[field_name]))
+            if "embedding" in llm_data and isinstance(llm_data["embedding"], dict):
+                emb = llm_data["embedding"]
+                if "provider" in emb:
+                    cfg.llm.embedding.provider = str(emb["provider"])
+                if "model" in emb:
+                    cfg.llm.embedding.model = str(emb["model"])
+                if "similarity_threshold" in emb:
+                    cfg.llm.embedding.similarity_threshold = float(emb["similarity_threshold"])
+            for module_name in ("soul", "discovery", "recommendation", "evaluation"):
+                if module_name in llm_data and isinstance(llm_data[module_name], dict):
+                    mod_cfg = getattr(cfg.llm, module_name)
+                    mdata = llm_data[module_name]
+                    if "provider" in mdata:
+                        mod_cfg.provider = str(mdata["provider"])
+                    if "model" in mdata:
+                        mod_cfg.model = str(mdata["model"])
+
+        # Apply bilibili updates
+        if "bilibili" in update:
+            bdata = update["bilibili"]
+            if "auth_method" in bdata:
+                cfg.bilibili.auth_method = str(bdata["auth_method"])
+            if "cookie" in bdata:
+                cfg.bilibili.cookie = str(bdata["cookie"])
+            if "browser_executable" in bdata:
+                cfg.bilibili.browser_executable = str(bdata["browser_executable"])
+            if "browser_headed" in bdata:
+                cfg.bilibili.browser_headed = bool(bdata["browser_headed"])
+
+        # Apply scheduler updates
+        if "scheduler" in update:
+            sdata = update["scheduler"]
+            for key in (
+                "enabled", "discovery_cron", "pool_target_count",
+                "account_sync_interval_hours", "auto_update_enabled",
+                "auto_update_check_interval_hours",
+            ):
+                if key in sdata:
+                    current_val = getattr(cfg.scheduler, key)
+                    if isinstance(current_val, bool):
+                        setattr(cfg.scheduler, key, bool(sdata[key]))
+                    elif isinstance(current_val, int):
+                        setattr(cfg.scheduler, key, int(sdata[key]))
+                    else:
+                        setattr(cfg.scheduler, key, str(sdata[key]))
+
+        # Apply storage updates
+        if "storage" in update:
+            stdata = update["storage"]
+            if "db_path" in stdata:
+                cfg.storage.db_path = str(stdata["db_path"])
+
+        # Apply logging updates
+        if "logging" in update:
+            ldata = update["logging"]
+            for key in ("level", "file_level", "directory", "filename"):
+                if key in ldata:
+                    setattr(cfg.logging, key, str(ldata[key]))
+
+        # Save to disk
+        saved_path = save_config(cfg)
+        issues = _collect_config_issues(cfg)
+        logger.info("Configuration saved to %s", saved_path)
+
+        # ── Hot-reload: rebuild runtime components ──────────────────
+        reloaded = False
+        reload_message = f"配置已保存到 {saved_path}。"
+        try:
+            ctx.rebuild_from_config(cfg)
+            await ctx.restart_background_tasks(app)
+            reloaded = True
+            reload_message += " 运行时组件已热重载，新配置立即生效。"
+            logger.info("Config hot-reload succeeded")
+            # Notify WebSocket subscribers so the extension re-fetches data
+            with suppress(Exception):
+                await ctx.event_hub.publish({
+                    "type": "config_reloaded",
+                    "message": "配置已热重载，运行时组件已重建。",
+                })
+        except Exception as exc:
+            logger.exception("Config hot-reload failed — old components remain active")
+            reload_message += f" 热重载失败（{exc}），旧组件仍在运行，重启后端可完全生效。"
+
+        return ConfigUpdateResponse(
+            ok=True,
+            config=_config_to_response(cfg, issues, mask_keys=True),
+            message=reload_message,
+            reloaded=reloaded,
         )
 
     return app

@@ -1975,6 +1975,253 @@
       }
     }
 
+    /* ── Settings panel ─────────────────────────────────────── */
+
+    .settings-gear {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid rgba(230, 237, 248, 0.92);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.15s, transform 0.15s;
+    }
+
+    .settings-gear:hover {
+      background: var(--brand-soft);
+      transform: rotate(30deg);
+    }
+
+    .settings-gear svg {
+      width: 16px;
+      height: 16px;
+      color: var(--text-secondary);
+    }
+
+    .settings-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      background:
+        radial-gradient(circle at 15% 12%, rgba(251, 114, 153, 0.15), transparent 30%),
+        radial-gradient(circle at 88% 18%, rgba(90, 169, 255, 0.18), transparent 26%),
+        linear-gradient(180deg, var(--bg-base) 0%, var(--bg-sky) 100%);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 16px;
+      gap: 12px;
+    }
+
+    .settings-overlay[hidden] {
+      display: none;
+    }
+
+    .settings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .settings-header h2 {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .settings-back {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.76);
+      border: 1px solid rgba(230, 237, 248, 0.92);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      color: var(--text-secondary);
+    }
+
+    .settings-back:hover {
+      background: var(--brand-soft);
+    }
+
+    .settings-section {
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .settings-section h3 {
+      font-size: 14px;
+      font-weight: 800;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .settings-section h3 .section-icon {
+      font-size: 16px;
+    }
+
+    .settings-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .settings-field label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .settings-field input,
+    .settings-field select,
+    .settings-field textarea {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.8);
+      font-size: 13px;
+      color: var(--text-main);
+      font-family: inherit;
+      transition: border-color 0.15s;
+    }
+
+    .settings-field input:focus,
+    .settings-field select:focus,
+    .settings-field textarea:focus {
+      outline: none;
+      border-color: var(--sky);
+      box-shadow: var(--focus-ring);
+    }
+
+    .settings-field textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
+
+    .settings-field input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--brand);
+    }
+
+    .settings-field-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .settings-field-row label {
+      text-transform: none;
+      font-size: 13px;
+      color: var(--text-main);
+      font-weight: 600;
+    }
+
+    .settings-provider-fields {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.5);
+      margin-top: 4px;
+    }
+
+    .settings-provider-fields.is-active {
+      display: flex;
+    }
+
+    .settings-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .settings-save {
+      flex: 1;
+      padding: 12px 20px;
+      border: 0;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--brand), var(--brand-strong));
+      color: #fff;
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      transition: opacity 0.15s;
+    }
+
+    .settings-save:hover {
+      opacity: 0.88;
+    }
+
+    .settings-save:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .settings-toast {
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .settings-toast[data-tone="success"] {
+      background: var(--lime-soft);
+      color: #1a7a4a;
+    }
+
+    .settings-toast[data-tone="error"] {
+      background: rgba(239, 122, 134, 0.15);
+      color: #c0404e;
+    }
+
+    .settings-toast[hidden] {
+      display: none;
+    }
+
+    .settings-issues {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .settings-issue {
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: var(--warning-soft);
+      color: #8a6520;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+
+    .settings-note {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      font-style: italic;
+    }
+
   </style>
 </head>
 <body>
@@ -1994,6 +2241,9 @@
             </div>
           </div>
         </div>
+        <button id="settingsGear" class="settings-gear" type="button" title="设置" aria-label="打开设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
       </div>
       <p class="hero-copy">首页先放一边，这里是你最近更可能点开的。</p>
     </header>
@@ -2195,6 +2445,182 @@
         </div>
       </section>
     </main>
+
+    <!-- ── Settings overlay ── -->
+    <div id="settingsOverlay" class="settings-overlay" hidden>
+      <div class="settings-header">
+        <h2>后端设置</h2>
+        <button id="settingsBack" class="settings-back" type="button" title="返回" aria-label="关闭设置">&larr;</button>
+      </div>
+
+      <div id="settingsToast" class="settings-toast" hidden></div>
+
+      <div id="settingsIssues" class="settings-issues"></div>
+
+      <!-- LLM Provider -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F916;</span> LLM 模型</h3>
+        <div class="settings-field">
+          <label for="cfgLlmProvider">默认 Provider</label>
+          <select id="cfgLlmProvider">
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="ollama">Ollama (本地)</option>
+            <option value="openrouter">OpenRouter</option>
+          </select>
+        </div>
+        <!-- OpenAI -->
+        <div class="settings-provider-fields" data-provider="openai">
+          <div class="settings-field">
+            <label for="cfgOpenaiKey">OpenAI API Key</label>
+            <input id="cfgOpenaiKey" type="password" autocomplete="off" placeholder="sk-...">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenaiModel">Model</label>
+            <input id="cfgOpenaiModel" type="text" placeholder="gpt-4o">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenaiBaseUrl">Base URL (可选)</label>
+            <input id="cfgOpenaiBaseUrl" type="text" placeholder="留空使用默认">
+          </div>
+        </div>
+        <!-- Claude -->
+        <div class="settings-provider-fields" data-provider="claude">
+          <div class="settings-field">
+            <label for="cfgClaudeKey">Claude API Key</label>
+            <input id="cfgClaudeKey" type="password" autocomplete="off" placeholder="sk-ant-...">
+          </div>
+          <div class="settings-field">
+            <label for="cfgClaudeModel">Model</label>
+            <input id="cfgClaudeModel" type="text" placeholder="claude-sonnet-4-20250514">
+          </div>
+        </div>
+        <!-- Gemini -->
+        <div class="settings-provider-fields" data-provider="gemini">
+          <div class="settings-field">
+            <label for="cfgGeminiKey">Gemini API Key</label>
+            <input id="cfgGeminiKey" type="password" autocomplete="off" placeholder="AI...">
+          </div>
+          <div class="settings-field">
+            <label for="cfgGeminiModel">Model</label>
+            <input id="cfgGeminiModel" type="text" placeholder="gemini-2.5-flash">
+          </div>
+        </div>
+        <!-- DeepSeek -->
+        <div class="settings-provider-fields" data-provider="deepseek">
+          <div class="settings-field">
+            <label for="cfgDeepseekKey">DeepSeek API Key</label>
+            <input id="cfgDeepseekKey" type="password" autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label for="cfgDeepseekModel">Model</label>
+            <input id="cfgDeepseekModel" type="text" placeholder="deepseek-chat">
+          </div>
+          <div class="settings-field">
+            <label for="cfgDeepseekBaseUrl">Base URL</label>
+            <input id="cfgDeepseekBaseUrl" type="text" placeholder="https://api.deepseek.com">
+          </div>
+        </div>
+        <!-- Ollama -->
+        <div class="settings-provider-fields" data-provider="ollama">
+          <div class="settings-field">
+            <label for="cfgOllamaModel">Model</label>
+            <input id="cfgOllamaModel" type="text" placeholder="llama3">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOllamaBaseUrl">Base URL</label>
+            <input id="cfgOllamaBaseUrl" type="text" placeholder="http://localhost:11434">
+          </div>
+        </div>
+        <!-- OpenRouter -->
+        <div class="settings-provider-fields" data-provider="openrouter">
+          <div class="settings-field">
+            <label for="cfgOpenrouterKey">OpenRouter API Key</label>
+            <input id="cfgOpenrouterKey" type="password" autocomplete="off">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenrouterModel">Model</label>
+            <input id="cfgOpenrouterModel" type="text" placeholder="openai/gpt-4o-mini">
+          </div>
+          <div class="settings-field">
+            <label for="cfgOpenrouterBaseUrl">Base URL</label>
+            <input id="cfgOpenrouterBaseUrl" type="text" placeholder="https://openrouter.ai/api/v1">
+          </div>
+        </div>
+      </div>
+
+      <!-- Bilibili -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F4FA;</span> Bilibili</h3>
+        <div class="settings-field">
+          <label for="cfgBiliAuth">认证方式</label>
+          <select id="cfgBiliAuth">
+            <option value="cookie">Cookie</option>
+            <option value="qrcode">二维码</option>
+            <option value="none">无</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="cfgBiliCookie">Cookie</label>
+          <textarea id="cfgBiliCookie" placeholder="从浏览器复制 Cookie 字符串"></textarea>
+        </div>
+      </div>
+
+      <!-- General -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x2699;&#xFE0F;</span> 通用</h3>
+        <div class="settings-field">
+          <label for="cfgLanguage">语言</label>
+          <select id="cfgLanguage">
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Scheduler -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x23F0;</span> 调度</h3>
+        <div class="settings-field-row">
+          <input id="cfgSchedulerEnabled" type="checkbox">
+          <label for="cfgSchedulerEnabled">启用定时发现</label>
+        </div>
+        <div class="settings-field">
+          <label for="cfgDiscoveryCron">发现 Cron 表达式</label>
+          <input id="cfgDiscoveryCron" type="text" placeholder="0 */4 * * *">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolTarget">候选池目标数量</label>
+          <input id="cfgPoolTarget" type="number" min="1" max="300" placeholder="300">
+        </div>
+        <div class="settings-field-row">
+          <input id="cfgAutoUpdate" type="checkbox">
+          <label for="cfgAutoUpdate">自动更新</label>
+        </div>
+      </div>
+
+      <!-- Logging -->
+      <div class="settings-section">
+        <h3><span class="section-icon">&#x1F4CB;</span> 日志</h3>
+        <div class="settings-field">
+          <label for="cfgLogLevel">控制台级别</label>
+          <select id="cfgLogLevel">
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+        </div>
+      </div>
+
+      <p class="settings-note">保存后需重启后端才能生效。</p>
+
+      <div class="settings-actions">
+        <button id="settingsSave" class="settings-save" type="button">保存配置</button>
+      </div>
+    </div>
 
     <footer id="footerHintBar" class="footer" data-tone="info">
       <div class="footer-head">

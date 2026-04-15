@@ -377,3 +377,108 @@ class ChatResponse(BaseModel):
     """Popup chat response."""
 
     reply: str
+
+
+# --- Configuration API models ---
+
+
+class LLMProviderConfigOut(BaseModel):
+    """LLM provider configuration (keys masked by default)."""
+
+    api_key: str = ""
+    model: str = ""
+    base_url: str = ""
+    http_referer: str = ""
+    x_title: str = ""
+
+
+class EmbeddingConfigOut(BaseModel):
+    provider: str = ""
+    model: str = ""
+    similarity_threshold: float = 0.82
+
+
+class ModuleLLMConfigOut(BaseModel):
+    provider: str = ""
+    model: str = ""
+
+
+class LLMConfigOut(BaseModel):
+    default_provider: str = "openai"
+    openai: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
+    claude: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
+    gemini: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
+    deepseek: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
+    ollama: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
+    openrouter: LLMProviderConfigOut = Field(default_factory=LLMProviderConfigOut)
+    embedding: EmbeddingConfigOut = Field(default_factory=EmbeddingConfigOut)
+    soul: ModuleLLMConfigOut = Field(default_factory=ModuleLLMConfigOut)
+    discovery: ModuleLLMConfigOut = Field(default_factory=ModuleLLMConfigOut)
+    recommendation: ModuleLLMConfigOut = Field(default_factory=ModuleLLMConfigOut)
+    evaluation: ModuleLLMConfigOut = Field(default_factory=ModuleLLMConfigOut)
+
+
+class BilibiliConfigOut(BaseModel):
+    auth_method: str = "cookie"
+    cookie: str = ""
+    browser_executable: str = ""
+    browser_headed: bool = False
+
+
+class SchedulerConfigOut(BaseModel):
+    enabled: bool = True
+    discovery_cron: str = "0 */4 * * *"
+    pool_target_count: int = 300
+    account_sync_interval_hours: int = 6
+    auto_update_enabled: bool = True
+    auto_update_check_interval_hours: int = 6
+
+
+class StorageConfigOut(BaseModel):
+    db_path: str = "data/openbiliclaw.db"
+
+
+class LoggingConfigOut(BaseModel):
+    level: str = "INFO"
+    file_level: str = "DEBUG"
+    directory: str = "logs"
+    filename: str = "openbiliclaw.log"
+
+
+class ConfigIssueOut(BaseModel):
+    field: str
+    message: str
+
+
+class ConfigResponse(BaseModel):
+    """Full configuration response."""
+
+    language: str = "zh"
+    data_dir: str = "data"
+    llm: LLMConfigOut = Field(default_factory=LLMConfigOut)
+    bilibili: BilibiliConfigOut = Field(default_factory=BilibiliConfigOut)
+    scheduler: SchedulerConfigOut = Field(default_factory=SchedulerConfigOut)
+    storage: StorageConfigOut = Field(default_factory=StorageConfigOut)
+    logging: LoggingConfigOut = Field(default_factory=LoggingConfigOut)
+    issues: list[ConfigIssueOut] = Field(default_factory=list)
+
+
+class ConfigUpdateIn(BaseModel):
+    """Partial config update. Only provided fields are updated."""
+
+    language: str | None = None
+    data_dir: str | None = None
+    llm: dict[str, object] | None = None
+    bilibili: dict[str, object] | None = None
+    scheduler: dict[str, object] | None = None
+    storage: dict[str, object] | None = None
+    logging: dict[str, object] | None = None
+
+
+class ConfigUpdateResponse(BaseModel):
+    """Response after config save."""
+
+    ok: bool = True
+    config: ConfigResponse
+    message: str = ""
+    reloaded: bool = False

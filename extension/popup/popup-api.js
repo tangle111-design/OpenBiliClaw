@@ -132,3 +132,17 @@ export async function sendChatMessage(message) {
     body: JSON.stringify({ message }),
   });
 }
+
+export async function fetchConfig() {
+  return requestJson("/config?reveal_keys=true", { method: "GET" });
+}
+
+export async function updateConfig(data) {
+  return requestJson("/config", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+}

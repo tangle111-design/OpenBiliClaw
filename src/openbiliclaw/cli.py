@@ -789,6 +789,29 @@ def init() -> None:
         ],
     )
 
+    # Notify the running API server so the extension refreshes immediately.
+    _notify_running_server_init_completed()
+
+
+def _notify_running_server_init_completed(
+    *,
+    base_url: str = "http://127.0.0.1:8420",
+) -> None:
+    """POST to the running API server to announce init completion.
+
+    Best-effort: silently ignored when the server is not running.
+    """
+    import urllib.request
+
+    url = f"{base_url}/api/init-completed"
+    try:
+        req = urllib.request.Request(url, method="POST", data=b"")
+        with urllib.request.urlopen(req, timeout=3):
+            console.print("[dim]已通知后端服务，插件将自动刷新。[/dim]")
+    except Exception:
+        # Server not running — nothing to notify, and that's fine.
+        pass
+
 
 @app.command()
 def recommend() -> None:

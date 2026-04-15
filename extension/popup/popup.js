@@ -27,6 +27,7 @@ import {
   appendRecommendations,
   checkBackendStatus,
   fetchActivityFeed,
+  fetchConfig,
   fetchProfileSummary,
   fetchRecommendations,
   fetchRuntimeStatus,
@@ -35,6 +36,7 @@ import {
   refreshRecommendations,
   sendChatMessage,
   submitFeedback,
+  updateConfig,
 } from "./popup-api.js";
 
 const state = {
@@ -249,6 +251,18 @@ function connectRuntimeStream() {
         elements.footer.dataset.tone = getHintBannerState(getRuntimeEventTone(event)).tone;
       }
       renderActivityCard();
+      // Hot-reload: re-fetch all data when backend config is reloaded
+      if (event.type === "config_reloaded") {
+        setHint("后端配置已热重载，正在刷新数据…", "success");
+        void initializeRecommendations();
+      }
+      // Init completed: re-fetch everything including profile
+      if (event.type === "init_completed") {
+        state.profileLoaded = false;
+        setHint("初始化完成！正在加载画像和推荐…", "success");
+        void initializeRecommendations();
+        void loadProfileSummary({ force: true });
+      }
     },
     onConnect() {
       if (!state.online) {
@@ -1880,6 +1894,189 @@ function bindChat() {
   });
 }
 
+// ── Settings panel ──────────────────────────────────────────
+
+function bindSettings() {
+  const gearBtn = document.getElementById("settingsGear");
+  const overlay = document.getElementById("settingsOverlay");
+  const backBtn = document.getElementById("settingsBack");
+  const saveBtn = document.getElementById("settingsSave");
+  const toast = document.getElementById("settingsToast");
+  const issuesContainer = document.getElementById("settingsIssues");
+  const providerSelect = document.getElementById("cfgLlmProvider");
+
+  if (!gearBtn || !overlay || !backBtn || !saveBtn) return;
+
+  function showProviderFields(provider) {
+    for (const el of overlay.querySelectorAll(".settings-provider-fields")) {
+      el.classList.toggle("is-active", el.dataset.provider === provider);
+    }
+  }
+
+  providerSelect.addEventListener("change", () => {
+    showProviderFields(providerSelect.value);
+  });
+
+  function showToast(message, tone = "success") {
+    toast.textContent = message;
+    toast.dataset.tone = tone;
+    toast.hidden = false;
+    setTimeout(() => { toast.hidden = true; }, 4000);
+  }
+
+  function renderIssues(issues) {
+    issuesContainer.innerHTML = "";
+    if (!Array.isArray(issues) || issues.length === 0) return;
+    for (const issue of issues) {
+      const div = document.createElement("div");
+      div.className = "settings-issue";
+      div.textContent = `${issue.field}: ${issue.message}`;
+      issuesContainer.appendChild(div);
+    }
+  }
+
+  function populateForm(cfg) {
+    // LLM
+    providerSelect.value = cfg.llm?.default_provider || "openai";
+    showProviderFields(providerSelect.value);
+
+    // Provider fields
+    const setVal = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.value = val || "";
+    };
+
+    setVal("cfgOpenaiKey", cfg.llm?.openai?.api_key);
+    setVal("cfgOpenaiModel", cfg.llm?.openai?.model);
+    setVal("cfgOpenaiBaseUrl", cfg.llm?.openai?.base_url);
+    setVal("cfgClaudeKey", cfg.llm?.claude?.api_key);
+    setVal("cfgClaudeModel", cfg.llm?.claude?.model);
+    setVal("cfgGeminiKey", cfg.llm?.gemini?.api_key);
+    setVal("cfgGeminiModel", cfg.llm?.gemini?.model);
+    setVal("cfgDeepseekKey", cfg.llm?.deepseek?.api_key);
+    setVal("cfgDeepseekModel", cfg.llm?.deepseek?.model);
+    setVal("cfgDeepseekBaseUrl", cfg.llm?.deepseek?.base_url);
+    setVal("cfgOllamaModel", cfg.llm?.ollama?.model);
+    setVal("cfgOllamaBaseUrl", cfg.llm?.ollama?.base_url);
+    setVal("cfgOpenrouterKey", cfg.llm?.openrouter?.api_key);
+    setVal("cfgOpenrouterModel", cfg.llm?.openrouter?.model);
+    setVal("cfgOpenrouterBaseUrl", cfg.llm?.openrouter?.base_url);
+
+    // Bilibili
+    const biliAuth = document.getElementById("cfgBiliAuth");
+    if (biliAuth) biliAuth.value = cfg.bilibili?.auth_method || "cookie";
+    setVal("cfgBiliCookie", cfg.bilibili?.cookie);
+
+    // General
+    const lang = document.getElementById("cfgLanguage");
+    if (lang) lang.value = cfg.language || "zh";
+
+    // Scheduler
+    const schedEnabled = document.getElementById("cfgSchedulerEnabled");
+    if (schedEnabled) schedEnabled.checked = cfg.scheduler?.enabled !== false;
+    setVal("cfgDiscoveryCron", cfg.scheduler?.discovery_cron);
+    setVal("cfgPoolTarget", cfg.scheduler?.pool_target_count);
+    const autoUpdate = document.getElementById("cfgAutoUpdate");
+    if (autoUpdate) autoUpdate.checked = cfg.scheduler?.auto_update_enabled !== false;
+
+    // Logging
+    const logLevel = document.getElementById("cfgLogLevel");
+    if (logLevel) logLevel.value = cfg.logging?.level || "INFO";
+
+    renderIssues(cfg.issues);
+  }
+
+  function collectForm() {
+    const getVal = (id) => {
+      const el = document.getElementById(id);
+      return el ? el.value : "";
+    };
+
+    return {
+      language: getVal("cfgLanguage"),
+      llm: {
+        default_provider: providerSelect.value,
+        openai: {
+          api_key: getVal("cfgOpenaiKey"),
+          model: getVal("cfgOpenaiModel"),
+          base_url: getVal("cfgOpenaiBaseUrl"),
+        },
+        claude: {
+          api_key: getVal("cfgClaudeKey"),
+          model: getVal("cfgClaudeModel"),
+        },
+        gemini: {
+          api_key: getVal("cfgGeminiKey"),
+          model: getVal("cfgGeminiModel"),
+        },
+        deepseek: {
+          api_key: getVal("cfgDeepseekKey"),
+          model: getVal("cfgDeepseekModel"),
+          base_url: getVal("cfgDeepseekBaseUrl"),
+        },
+        ollama: {
+          model: getVal("cfgOllamaModel"),
+          base_url: getVal("cfgOllamaBaseUrl"),
+        },
+        openrouter: {
+          api_key: getVal("cfgOpenrouterKey"),
+          model: getVal("cfgOpenrouterModel"),
+          base_url: getVal("cfgOpenrouterBaseUrl"),
+        },
+      },
+      bilibili: {
+        auth_method: getVal("cfgBiliAuth"),
+        cookie: getVal("cfgBiliCookie"),
+      },
+      scheduler: {
+        enabled: document.getElementById("cfgSchedulerEnabled")?.checked ?? true,
+        discovery_cron: getVal("cfgDiscoveryCron"),
+        pool_target_count: parseInt(getVal("cfgPoolTarget"), 10) || 300,
+        auto_update_enabled: document.getElementById("cfgAutoUpdate")?.checked ?? true,
+      },
+      logging: {
+        level: getVal("cfgLogLevel"),
+      },
+    };
+  }
+
+  gearBtn.addEventListener("click", async () => {
+    overlay.hidden = false;
+    toast.hidden = true;
+    issuesContainer.innerHTML = "";
+    try {
+      const cfg = await fetchConfig();
+      populateForm(cfg);
+    } catch {
+      showToast("无法加载配置，请确认后端已启动。", "error");
+    }
+  });
+
+  backBtn.addEventListener("click", () => {
+    overlay.hidden = true;
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = "保存中...";
+    toast.hidden = true;
+    try {
+      const data = collectForm();
+      const result = await updateConfig(data);
+      if (result.config) {
+        renderIssues(result.config.issues);
+      }
+      const tone = result.reloaded ? "success" : "warning";
+      showToast(result.message || "配置已保存。", tone);
+    } catch (err) {
+      showToast(`保存失败: ${err.message}`, "error");
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "保存配置";
+    }
+  });
+}
+
 async function initializePopup() {
   const requestedTab = new URLSearchParams(window.location.search).get("tab");
   bindTabs();
@@ -1887,6 +2084,7 @@ async function initializePopup() {
   bindRefreshButton();
   bindActivityToggle();
   bindChat();
+  bindSettings();
   setActiveTab(
     requestedTab === "profile" || requestedTab === "chat" || requestedTab === "recommend"
       ? requestedTab
