@@ -104,12 +104,16 @@ async def extract_content_from_page(
     for item in items_raw:
         if not isinstance(item, dict):
             continue
-        title = str(item.get("title", "")).strip()
+        # LLMs often return JSON nulls for missing fields — ``item.get(key, "")``
+        # then yields ``None`` (the value), not the default, and ``str(None)``
+        # produces the string ``"None"`` which looks populated to every
+        # downstream truthiness check. Coerce to "" before stripping.
+        title = str(item.get("title") or "").strip()
         if not title:
             continue
 
-        content_id = str(item.get("content_id", "")).strip()
-        content_url = str(item.get("url", "")).strip()
+        content_id = str(item.get("content_id") or "").strip()
+        content_url = str(item.get("url") or "").strip()
 
         # Generate a content_id from URL if not provided
         if not content_id and content_url:
@@ -123,8 +127,8 @@ async def extract_content_from_page(
                 content_url=content_url,
                 source_platform=source_platform,
                 title=title,
-                author_name=str(item.get("author", "")).strip(),
-                description=str(item.get("summary", "")).strip(),
+                author_name=str(item.get("author") or "").strip(),
+                description=str(item.get("summary") or "").strip(),
                 source_strategy="web_extract",
             )
         )

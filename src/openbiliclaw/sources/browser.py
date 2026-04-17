@@ -17,12 +17,46 @@ Two interchangeable backends:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# JS evaluated in-page to get the visible body text.
-_INNER_TEXT_SCRIPT = "() => document.body && document.body.innerText || ''"
+# JS evaluated in-page. Returns both the visible body text AND every
+# clickable anchor as {text, href}. The LLM extractor works on the
+# inner text only, but callers use the anchor list to backfill the
+# ``content_url`` field — innerText alone drops all hrefs, which means
+# extracted items otherwise have no way to link back to source.
+_PAGE_SNAPSHOT_SCRIPT = """\
+() => {
+  const text = (document.body && document.body.innerText) || '';
+  const seen = new Set();
+  const anchors = [];
+  for (const a of document.querySelectorAll('a[href]')) {
+    const href = a.href || '';
+    if (!href || href.startsWith('javascript:') || seen.has(href)) continue;
+    const t = ((a.innerText || a.textContent || '') + '').trim();
+    if (!t) continue;
+    seen.add(href);
+    anchors.push({text: t.slice(0, 200), href: href});
+  }
+  return {text: text, anchors: anchors};
+}
+"""
+
+
+@dataclass
+class PageSnapshot:
+    """Page content + anchor metadata captured in a single round trip.
+
+    ``text`` mirrors ``document.body.innerText`` (what LLM extractors chew
+    on). ``anchors`` preserves the ``(visible_text, href)`` pairs that
+    innerText throws away — callers use these to rebuild URLs for items
+    the extractor surfaces.
+    """
+
+    text: str
+    anchors: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _async_playwright() -> Any:
@@ -89,18 +123,26 @@ class BrowserManager:
         """Backend identifier: ``"cdp"`` or ``"agent-browser"``."""
         return "cdp" if self._cdp_url else "agent-browser"
 
-    async def get_page_text(self, url: str) -> str:
-        """Navigate to ``url`` and return visible page text.
+    async def get_page_snapshot(self, url: str) -> PageSnapshot:
+        """Navigate to ``url`` and return text + anchors.
 
-        Raises:
-            RuntimeError: if the CDP backend cannot connect or returns
-                no text. Callers catch this and log/skip the recipe.
+        The CDP backend captures both in one JS evaluate; the agent-browser
+        fallback only exposes text, so ``anchors`` is returned empty.
         """
         if self._cdp_url:
-            return await self._get_page_text_cdp(url)
+            return await self._get_page_snapshot_cdp(url)
         assert self._browser is not None
         text: str = await self._browser.get_page_content(url)
-        return text
+        return PageSnapshot(text=text, anchors=[])
+
+    async def get_page_text(self, url: str) -> str:
+        """Navigate to ``url`` and return visible page text only.
+
+        Thin wrapper over :meth:`get_page_snapshot` for callers that
+        don't need anchor data.
+        """
+        snapshot = await self.get_page_snapshot(url)
+        return snapshot.text
 
     async def close(self) -> None:
         """Close the fallback backend; CDP backend detaches per-call."""
@@ -109,8 +151,8 @@ class BrowserManager:
         if self._browser is not None:
             await self._browser.close()
 
-    async def _get_page_text_cdp(self, url: str) -> str:
-        """Connect to the running Chrome via CDP, navigate, return body text."""
+    async def _get_page_snapshot_cdp(self, url: str) -> PageSnapshot:
+        """Connect to the running Chrome via CDP, navigate, return snapshot."""
         async with _async_playwright() as pw:
             browser = await pw.chromium.connect_over_cdp(self._cdp_url)
             try:
@@ -124,7 +166,7 @@ class BrowserManager:
                         # Many SPA feeds never go idle — DOMContentLoaded is enough
                         # to give the JS extractor something to chew on.
                         logger.debug("networkidle timeout for %s; proceeding", url)
-                    text = await page.evaluate(_INNER_TEXT_SCRIPT)
+                    raw = await page.evaluate(_PAGE_SNAPSHOT_SCRIPT)
                 finally:
                     try:
                         await page.close()
@@ -137,6 +179,19 @@ class BrowserManager:
                     await browser.close()
                 except Exception:
                     logger.debug("failed to detach CDP browser", exc_info=True)
+
+        if not isinstance(raw, dict):
+            raise RuntimeError(f"CDP backend returned non-dict snapshot: {type(raw)!r}")
+        text = raw.get("text", "")
         if not isinstance(text, str):
-            raise RuntimeError(f"CDP backend returned non-string body text: {type(text)!r}")
-        return text
+            raise RuntimeError(f"CDP snapshot .text is not a string: {type(text)!r}")
+        anchors_raw = raw.get("anchors", []) or []
+        anchors: list[tuple[str, str]] = []
+        for entry in anchors_raw:
+            if not isinstance(entry, dict):
+                continue
+            t = str(entry.get("text") or "").strip()
+            h = str(entry.get("href") or "").strip()
+            if t and h:
+                anchors.append((t, h))
+        return PageSnapshot(text=text, anchors=anchors)

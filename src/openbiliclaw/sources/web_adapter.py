@@ -73,7 +73,7 @@ class WebSourceAdapter:
             return []
 
         try:
-            page_text = await browser.get_page_text(url)
+            snapshot = await browser.get_page_snapshot(url)
         except Exception:
             logger.exception("WebSourceAdapter: failed to fetch %s", url)
             return []
@@ -84,16 +84,24 @@ class WebSourceAdapter:
                 pass
 
         items = await extract_content_from_page(
-            page_text,
+            snapshot.text,
             source_platform=recipe.source_type,
             llm_service=self._llm_service,
             base_url=url,
         )
 
-        # Apply recipe source_type and limit
+        # Apply recipe source_type and URL/ID backfill from captured anchors.
         for item in items:
             if not item.source_platform:
                 item.source_platform = recipe.source_type
+            if not item.content_url:
+                matched = _match_anchor_by_title(snapshot.anchors, item.title)
+                if matched:
+                    item.content_url = matched
+            if item.content_url and (not item.content_id or item.content_id == item.title[:32]):
+                derived = _extract_content_id(item.content_url)
+                if derived:
+                    item.content_id = derived
 
         return items[:limit]
 
@@ -112,6 +120,58 @@ class WebSourceAdapter:
         if url_template:
             return url_template
         return ""
+
+
+def _match_anchor_by_title(
+    anchors: list[tuple[str, str]],
+    title: str,
+) -> str:
+    """Return the href of the anchor whose text best matches ``title``.
+
+    Matching is deliberately simple: case-insensitive substring either way
+    (anchor text contains the title, or the title contains the anchor
+    text). For cards on xiaohongshu / v2ex / zhihu this is sufficient —
+    the anchor's visible text IS the card title.
+    """
+    if not title or not anchors:
+        return ""
+    needle = title.strip().lower()
+    if not needle:
+        return ""
+    # Prefer exact-substring hits first, then partial overlap, so a card
+    # whose full title is a prefix of a longer anchor still wins.
+    best_exact = ""
+    best_partial = ""
+    for text, href in anchors:
+        candidate = text.strip().lower()
+        if not candidate:
+            continue
+        if (candidate == needle or needle in candidate) and not best_exact:
+            best_exact = href
+        elif candidate in needle and not best_partial:
+            best_partial = href
+    return best_exact or best_partial
+
+
+def _extract_content_id(url: str) -> str:
+    """Pull the last non-empty path segment out of ``url``.
+
+    Works for xiaohongshu (``/explore/{note_id}``, ``/discovery/item/{id}``),
+    v2ex (``/t/{topic_id}``), zhihu (``/question/{id}``), etc. Returns ""
+    when no usable segment is found — callers should keep the original ID.
+    """
+    if not url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+
+        path = urlparse(url).path.strip("/")
+    except Exception:
+        return ""
+    if not path:
+        return ""
+    last = path.rsplit("/", 1)[-1]
+    return last
 
 
 class XiaohongshuAdapter(WebSourceAdapter):

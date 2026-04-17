@@ -21,8 +21,8 @@ class _FakePage:
     async def wait_for_load_state(self, state: str, **kwargs: Any) -> None:
         return None
 
-    async def evaluate(self, script: str) -> str:
-        return self._text
+    async def evaluate(self, script: str) -> dict[str, Any]:
+        return {"text": self._text, "anchors": []}
 
     async def close(self) -> None:
         return None
@@ -130,6 +130,43 @@ class TestBrowserManagerCDPBackend:
         # really a detach — it releases the CDP connection without killing
         # the host Chrome. The fake can't distinguish, but we do call it.
         assert fake_browser.closed is True
+
+    @pytest.mark.asyncio
+    async def test_get_page_snapshot_returns_text_and_anchors(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Emulate what the real JS returns: a dict with text + anchor list
+        class _AnchorPage(_FakePage):
+            async def evaluate(self, script: str) -> dict[str, Any]:
+                return {
+                    "text": "visible body",
+                    "anchors": [
+                        {"text": "  first note  ", "href": "https://example.com/a"},
+                        {"text": "", "href": "https://example.com/empty-text"},
+                        {"text": "second", "href": ""},
+                        {"text": "third", "href": "https://example.com/b"},
+                    ],
+                }
+
+        class _AnchorBrowser(_FakeBrowser):
+            def __init__(self) -> None:
+                super().__init__("")
+                self._page = _AnchorPage("")
+                self._context = _FakeContext(self._page)
+                self.contexts = [self._context]
+
+        fake_browser = _AnchorBrowser()
+        _install_fake_playwright(monkeypatch, fake_browser)
+
+        bm = BrowserManager(cdp_url="http://127.0.0.1:9222")
+        snap = await bm.get_page_snapshot("https://example.com")
+
+        assert snap.text == "visible body"
+        # Only rows with BOTH text and href (after trimming) survive
+        assert snap.anchors == [
+            ("first note", "https://example.com/a"),
+            ("third", "https://example.com/b"),
+        ]
 
     @pytest.mark.asyncio
     async def test_get_page_text_creates_context_if_none(
