@@ -181,6 +181,8 @@ class TestBackendAPI:
                 soul_engine: object,
                 llm_service: object | None = None,
                 session: str,
+                tools: object | None = None,
+                tool_dispatcher: object | None = None,
             ) -> None:
                 self.llm = llm
                 self.soul_engine = soul_engine

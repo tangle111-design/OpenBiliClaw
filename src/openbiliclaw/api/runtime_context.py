@@ -197,12 +197,17 @@ class RuntimeContext:
             sync_interval_hours=new_config.scheduler.account_sync_interval_hours,
         )
 
-        # 10. Dialogue
+        # 10. Dialogue (with source management tools)
+        from openbiliclaw.sources.tools import SOURCE_TOOLS, SourceToolDispatcher
+
+        source_tool_dispatcher = SourceToolDispatcher(self.database)
         new_dialogue = SocraticDialogue(
             llm=None,
             soul_engine=new_soul_engine,
             llm_service=new_llm_service,
             session="popup",
+            tools=SOURCE_TOOLS,
+            tool_dispatcher=source_tool_dispatcher,
         )
 
         # 11. Auto-update service
