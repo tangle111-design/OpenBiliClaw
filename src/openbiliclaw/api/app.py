@@ -210,9 +210,6 @@ def create_app(
                 expression=str(item.expression),
                 topic_label=str(item.topic_label),
                 presented=bool(item.presented),
-                content_id=str(getattr(item.content, "content_id", "") or item.content.bvid),
-                content_url=str(getattr(item.content, "content_url", "") or ""),
-                source_platform=str(getattr(item.content, "source_platform", "") or "bilibili"),
             )
             for item in items
         ]
@@ -494,9 +491,6 @@ def create_app(
                     expression=str(row.get("expression", "")),
                     topic_label=str(row.get("topic", "")),
                     presented=bool(row.get("presented", 0)),
-                    content_id=str(row.get("content_id", "") or row.get("bvid", "")),
-                    content_url=str(row.get("content_url", "") or ""),
-                    source_platform=str(row.get("source_platform", "") or "bilibili"),
                 )
                 for row in rows
             ]

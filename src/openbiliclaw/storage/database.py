@@ -126,7 +126,6 @@ class Database:
         self._ensure_content_cache_topic_columns()
         self._ensure_content_cache_pool_copy_columns()
         self._ensure_content_cache_delight_columns()
-        self._ensure_content_cache_multisource_columns()
 
         # Set schema version
         self._conn.execute(
@@ -1147,30 +1146,6 @@ class Database:
                 continue
             self.conn.execute(
                 f"ALTER TABLE content_cache ADD COLUMN {column_name} {column_type}"
-            )
-
-    def _ensure_content_cache_multisource_columns(self) -> None:
-        """Add multi-source content identity fields for existing databases."""
-        existing_columns = {
-            str(row["name"])
-            for row in self.conn.execute("PRAGMA table_info(content_cache)").fetchall()
-        }
-        required_columns = {
-            "content_id": "TEXT DEFAULT ''",
-            "content_url": "TEXT DEFAULT ''",
-            "source_platform": "TEXT DEFAULT 'bilibili'",
-        }
-        added = False
-        for column_name, column_type in required_columns.items():
-            if column_name in existing_columns:
-                continue
-            self.conn.execute(
-                f"ALTER TABLE content_cache ADD COLUMN {column_name} {column_type}"
-            )
-            added = True
-        if added:
-            self.conn.execute(
-                "UPDATE content_cache SET content_id = bvid WHERE content_id = ''"
             )
 
     def get_delight_candidate(

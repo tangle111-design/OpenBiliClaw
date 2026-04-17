@@ -24,12 +24,6 @@ export function buildVideoUrl(bvid) {
   return `https://www.bilibili.com/video/${normalizeText(bvid)}`;
 }
 
-export function buildContentUrl(item) {
-  if (item?.content_url) return item.content_url;
-  if (item?.bvid) return buildVideoUrl(item.bvid);
-  return "";
-}
-
 export function getTabButtonState(activeTab, tabName) {
   return {
     selected: activeTab === tabName,
@@ -69,9 +63,6 @@ export function normalizeRecommendation(item) {
     expression: normalizeText(item?.expression),
     topic_label: normalizeText(item?.topic_label),
     presented: Boolean(item?.presented),
-    content_id: normalizeText(item?.content_id) || normalizeText(item?.bvid),
-    content_url: normalizeText(item?.content_url) || "",
-    source_platform: normalizeText(item?.source_platform) || "bilibili",
   };
 }
 

@@ -51,9 +51,6 @@ test("reshuffleRecommendations posts to reshuffle endpoint", async () => {
         expression: "先给你捞一条新的。",
         topic_label: "",
         presented: false,
-        content_id: "BV1NEW",
-        content_url: "",
-        source_platform: "bilibili",
       },
     ],
   });
@@ -102,9 +99,6 @@ test("appendRecommendations posts excluded bvids to append endpoint", async () =
         expression: "",
         topic_label: "",
         presented: false,
-        content_id: "BV1APPEND",
-        content_url: "",
-        source_platform: "bilibili",
       },
     ],
   });
@@ -144,9 +138,6 @@ test("fetchRecommendations normalizes cover urls from the recommend endpoint", a
       expression: "",
       topic_label: "",
       presented: false,
-      content_id: "BV1FETCH",
-      content_url: "",
-      source_platform: "bilibili",
     },
   ]);
 });

@@ -91,9 +91,9 @@ class SupportsStructuredTask(Protocol):
 class DiscoveredContent:
     """A piece of content discovered by the engine."""
 
-    bvid: str = ""  # Bilibili video ID (legacy; prefer content_id for new code)
+    bvid: str = ""  # Bilibili video ID
     title: str = ""
-    up_name: str = ""  # UP主 name (legacy; prefer author_name for new code)
+    up_name: str = ""  # UP主 name
     up_mid: int = 0  # UP主 ID
     cover_url: str = ""
     duration: int = 0  # seconds
@@ -112,22 +112,6 @@ class DiscoveredContent:
     candidate_tier: str = "primary"  # Primary discovery vs backfill supply
     discovered_at: str = ""  # Cache timestamp for recency-aware ranking
     last_scored_at: str = ""  # Last relevance scoring timestamp
-
-    # ── Multi-source fields (Phase 0) ───────────────────────────────
-    content_id: str = ""  # Universal content ID; equals bvid for Bilibili content
-    content_url: str = ""  # Direct clickable URL
-    source_platform: str = ""  # "bilibili" | "xiaohongshu" | "web" | ...
-    author_name: str = ""  # Universal author name; equals up_name for Bilibili
-
-    def __post_init__(self) -> None:
-        if not self.content_id and self.bvid:
-            self.content_id = self.bvid
-        if not self.source_platform and self.bvid:
-            self.source_platform = "bilibili"
-        if not self.author_name and self.up_name:
-            self.author_name = self.up_name
-        if not self.content_url and self.bvid:
-            self.content_url = f"https://www.bilibili.com/video/{self.bvid}"
 
 
 class DiscoveryStrategy(ABC):

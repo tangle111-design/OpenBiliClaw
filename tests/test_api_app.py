@@ -623,9 +623,6 @@ class TestBackendAPI:
                     "expression": "先给你捞一条新的。",
                     "topic_label": "刚补进来的新东西",
                     "presented": False,
-                    "content_id": "BV1NEW",
-                    "content_url": "https://www.bilibili.com/video/BV1NEW",
-                    "source_platform": "bilibili",
                 }
             ]
         }
@@ -695,9 +692,6 @@ class TestBackendAPI:
                     "expression": "这条接在你刚刚看的后面也顺。",
                     "topic_label": "下一条",
                     "presented": False,
-                    "content_id": "BV1NEXT",
-                    "content_url": "https://www.bilibili.com/video/BV1NEXT",
-                    "source_platform": "bilibili",
                 }
             ]
         }
