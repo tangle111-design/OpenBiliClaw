@@ -115,7 +115,14 @@ class TestBackendAPI:
                 captured["llm_evaluation_concurrency"] = llm_evaluation_concurrency
 
         class FakeContentDiscoveryEngine:
-            def __init__(self, *, llm_service: object, database: object, concurrency=None, embedding_service=None) -> None:
+            def __init__(
+                self,
+                *,
+                llm_service: object,
+                database: object,
+                concurrency=None,
+                embedding_service=None,
+            ) -> None:
                 captured["engine_concurrency"] = concurrency
 
             def register_strategy(self, strategy: object) -> None:
@@ -158,7 +165,14 @@ class TestBackendAPI:
                 self.memory = memory
 
         class FakeRecommendationEngine:
-            def __init__(self, *, llm: object, database: object, curator: object = None, embedding_service: object = None) -> None:
+            def __init__(
+                self,
+                *,
+                llm: object,
+                database: object,
+                curator: object = None,
+                embedding_service: object = None,
+            ) -> None:
                 self.llm = llm
                 self.database = database
 
@@ -1126,7 +1140,12 @@ class TestBackendAPI:
         assert data["motivational_drivers"] == [
             "建立判断确定性", "持续扩展理解边界", "在复杂信息里找到秩序感",
         ]
-        assert data["cognitive_style"] == ["会先看结构", "对证据比较敏感", "偏好把问题讲透", "不太吃空话"]
+        assert data["cognitive_style"] == [
+            "会先看结构",
+            "对证据比较敏感",
+            "偏好把问题讲透",
+            "不太吃空话",
+        ]
         assert data["current_phase"] == "最近更像在一边吸收高密度信息，一边整理自己的判断框架。"
         assert data["life_stage"] == "职业上升期，开始关注更宏观的议题。"
         assert data["favorite_up_users"] == ["经济观察", "构图实验室"]
@@ -1731,7 +1750,6 @@ class TestBackendAPI:
             EmbeddingConfig,
             LLMConfig,
             LLMProviderConfig,
-            load_config,
             save_config,
         )
 
