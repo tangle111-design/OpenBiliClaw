@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
 from openbiliclaw.soul.profile import (
-    InterestLayer,
     InterestDomain,
+    InterestLayer,
     InterestSpecific,
     OnionProfile,
 )
 from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
 from openbiliclaw.storage.database import Database
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

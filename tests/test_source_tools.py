@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 from openbiliclaw.sources.tools import SOURCE_TOOLS, SourceToolDispatcher
 from openbiliclaw.storage.database import Database
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestSourceToolDispatcher:

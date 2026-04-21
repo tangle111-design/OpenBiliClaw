@@ -9,18 +9,20 @@ result back.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
 
 from openbiliclaw.sources.xhs_tasks import (
-    XhsTaskQueue,
     XhsCreatorStore,
+    XhsTaskQueue,
 )
 from openbiliclaw.storage.database import Database
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

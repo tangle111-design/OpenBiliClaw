@@ -15,10 +15,12 @@ the same kind of fake used across the rest of the test suite.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from openbiliclaw.api.models import BehaviorEventBatchIn
 from openbiliclaw.llm.base import LLMResponse

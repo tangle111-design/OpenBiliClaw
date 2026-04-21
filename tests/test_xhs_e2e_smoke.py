@@ -11,11 +11,13 @@ Usage::
 from __future__ import annotations
 
 import os
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _SMOKE_ENABLED = os.environ.get("XHS_E2E_SMOKE", "") == "1"
 

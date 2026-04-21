@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import sqlite3
-from dataclasses import dataclass, field
-from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,6 +14,9 @@ from openbiliclaw.recommendation.delight import (
     DelightWeights,
 )
 from openbiliclaw.storage.database import Database
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_candidate(**overrides: object) -> DiscoveredContent:

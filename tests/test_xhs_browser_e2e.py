@@ -244,7 +244,10 @@ class TestChromeXhsPages:
         """Count note card links on explore page."""
         count = cdp_evaluate(
             xhs_tab["ws"],
-            """document.querySelectorAll('a[href*="/explore/"], a[href*="/discovery/item/"]').length"""
+            (
+                """document.querySelectorAll('a[href*="/explore/"], """
+                """a[href*="/discovery/item/"]').length"""
+            ),
         )
         print(f"✓ Explore page note links: {count}")
         # Soft assertion — page structure varies, but should have some
@@ -265,7 +268,10 @@ class TestChromeXhsPages:
         """Search page renders cards without scrolling."""
         count = cdp_evaluate(
             search_tab["ws"],
-            """document.querySelectorAll('a[href*="/explore/"], a[href*="/discovery/item/"]').length"""
+            (
+                """document.querySelectorAll('a[href*="/explore/"], """
+                """a[href*="/discovery/item/"]').length"""
+            ),
         )
         print(f"✓ Search page note links (no scroll): {count}")
 
@@ -288,9 +294,16 @@ class TestExtensionContentScript:
             print("✓ Extension chrome.runtime available — content script likely injected")
         else:
             print("⚠ chrome.runtime not detected — extension may not be loaded")
-            print("  To load: chrome://extensions → Developer mode → Load unpacked → select extension/ dir")
+            print(
+                "  To load: chrome://extensions → Developer mode → "
+                "Load unpacked → select extension/ dir"
+            )
 
-    def test_passive_collection_evidence(self, xhs_tab: dict[str, Any], backend: httpx.Client) -> None:
+    def test_passive_collection_evidence(
+        self,
+        xhs_tab: dict[str, Any],
+        backend: httpx.Client,
+    ) -> None:
         """After navigating to xhs, check if passive collection sent URLs to backend."""
         # Wait a bit more for passive collector debounce
         time.sleep(2)
@@ -335,7 +348,11 @@ class TestFullPipeline:
         urls_json = cdp_evaluate(
             search_tab["ws"],
             """JSON.stringify(
-                Array.from(document.querySelectorAll('a[href*="/explore/"], a[href*="/discovery/item/"]'))
+                Array.from(
+                    document.querySelectorAll(
+                        'a[href*="/explore/"], a[href*="/discovery/item/"]'
+                    )
+                )
                     .slice(0, 20)
                     .map(a => a.href)
                     .filter((v, i, a) => a.indexOf(v) === i)

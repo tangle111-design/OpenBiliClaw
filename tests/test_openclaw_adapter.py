@@ -210,7 +210,12 @@ class _FakeLLMService:
     async def complete_socratic_dialogue(
         self, *, user_message: str, history: list[dict[str, str]] | None = None,
     ) -> SimpleNamespace:
-        return SimpleNamespace(content="你说的这个方向我有个猜测——你是不是其实更在意底层结构而不只是结论？")
+        return SimpleNamespace(
+            content=(
+                "你说的这个方向我有个猜测——"
+                "你是不是其实更在意底层结构而不只是结论？"
+            )
+        )
 
 
 class _FakeSoulEngine:
@@ -615,7 +620,14 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             self.memory = memory
 
     class FakeRecommendationEngine:
-        def __init__(self, *, llm: object, database: object, curator: object = None, embedding_service: object = None) -> None:
+        def __init__(
+            self,
+            *,
+            llm: object,
+            database: object,
+            curator: object = None,
+            embedding_service: object = None,
+        ) -> None:
             self.llm = llm
             self.database = database
 
@@ -624,7 +636,14 @@ def test_build_openclaw_adapter_services_reuses_shared_database(monkeypatch) -> 
             self.cookie = cookie
 
     class FakeDiscoveryEngine:
-        def __init__(self, *, llm_service: object, database: object, embedding_service: object = None, concurrency: object = None) -> None:
+        def __init__(
+            self,
+            *,
+            llm_service: object,
+            database: object,
+            embedding_service: object = None,
+            concurrency: object = None,
+        ) -> None:
             self.llm_service = llm_service
             self.database = database
 

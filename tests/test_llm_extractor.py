@@ -27,8 +27,20 @@ class FakeLLMService:
 class TestLLMExtractor:
     def test_extracts_items_from_valid_json(self) -> None:
         response = '''[
-            {"title": "机械键盘评测", "author": "键盘侠", "summary": "Cherry 红轴对比", "url": "https://example.com/p/1", "content_id": "1"},
-            {"title": "静电容键盘", "author": "外设达人", "summary": "Topre 上手体验", "url": "https://example.com/p/2", "content_id": "2"}
+            {
+                "title": "机械键盘评测",
+                "author": "键盘侠",
+                "summary": "Cherry 红轴对比",
+                "url": "https://example.com/p/1",
+                "content_id": "1"
+            },
+            {
+                "title": "静电容键盘",
+                "author": "外设达人",
+                "summary": "Topre 上手体验",
+                "url": "https://example.com/p/2",
+                "content_id": "2"
+            }
         ]'''
         service = FakeLLMService(response)
         items = asyncio.run(

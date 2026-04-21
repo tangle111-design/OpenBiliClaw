@@ -17,12 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from openbiliclaw.discovery.engine import DiscoveredContent
 from openbiliclaw.llm.base import LLMResponse
 from openbiliclaw.recommendation.engine import RecommendationEngine
 from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
 from openbiliclaw.storage.database import Database
-
 
 # ── Test fixtures ──────────────────────────────────────────────────
 
@@ -98,7 +96,14 @@ class _ClassifyLLM:
 
             if not results:
                 # Fallback — return generic classification
-                results = [{"score": 0.65, "reason": "通用内容", "topic_group": "其他", "style_key": "light_chat"}]
+                results = [
+                    {
+                        "score": 0.65,
+                        "reason": "通用内容",
+                        "topic_group": "其他",
+                        "style_key": "light_chat",
+                    }
+                ]
 
             return LLMResponse(
                 content=json.dumps(results, ensure_ascii=False),
@@ -121,14 +126,78 @@ class _ClassifyLLM:
 def _seed_bilibili_content(db: Database) -> None:
     """Insert pre-classified bilibili content (as discovery engine would)."""
     bilibili_items = [
-        ("BV_BILI_01", "终末地基建攻略全解", "游戏UP主", "game_strategy", "游戏攻略", 0.88, "search"),
-        ("BV_BILI_02", "大疆Pocket 4上手体验", "科技博主", "tech_analysis", "硬件评测", 0.82, "trending"),
-        ("BV_BILI_03", "脑机接口最新进展", "学术频道", "deep_dive", "前沿科技", 0.80, "related_chain"),
-        ("BV_BILI_04", "咒术回战牢鹿VS牢真", "动漫区UP", "fun_variety", "二次元动漫", 0.76, "trending"),
-        ("BV_BILI_05", "拼豆祖国97000颗", "手工达人", "visual_showcase", "手工创意", 0.70, "explore"),
-        ("BV_BILI_06", "王者荣耀S38赛季攻略", "电竞解说", "game_strategy", "游戏攻略", 0.84, "search"),
-        ("BV_BILI_07", "ChatGPT深度评测2026", "AI博主", "tech_analysis", "人工智能", 0.79, "search"),
-        ("BV_BILI_08", "进击的巨人完结解析", "漫评UP", "deep_dive", "二次元动漫", 0.81, "related_chain"),
+        (
+            "BV_BILI_01",
+            "终末地基建攻略全解",
+            "游戏UP主",
+            "game_strategy",
+            "游戏攻略",
+            0.88,
+            "search",
+        ),
+        (
+            "BV_BILI_02",
+            "大疆Pocket 4上手体验",
+            "科技博主",
+            "tech_analysis",
+            "硬件评测",
+            0.82,
+            "trending",
+        ),
+        (
+            "BV_BILI_03",
+            "脑机接口最新进展",
+            "学术频道",
+            "deep_dive",
+            "前沿科技",
+            0.80,
+            "related_chain",
+        ),
+        (
+            "BV_BILI_04",
+            "咒术回战牢鹿VS牢真",
+            "动漫区UP",
+            "fun_variety",
+            "二次元动漫",
+            0.76,
+            "trending",
+        ),
+        (
+            "BV_BILI_05",
+            "拼豆祖国97000颗",
+            "手工达人",
+            "visual_showcase",
+            "手工创意",
+            0.70,
+            "explore",
+        ),
+        (
+            "BV_BILI_06",
+            "王者荣耀S38赛季攻略",
+            "电竞解说",
+            "game_strategy",
+            "游戏攻略",
+            0.84,
+            "search",
+        ),
+        (
+            "BV_BILI_07",
+            "ChatGPT深度评测2026",
+            "AI博主",
+            "tech_analysis",
+            "人工智能",
+            0.79,
+            "search",
+        ),
+        (
+            "BV_BILI_08",
+            "进击的巨人完结解析",
+            "漫评UP",
+            "deep_dive",
+            "二次元动漫",
+            0.81,
+            "related_chain",
+        ),
     ]
     for bvid, title, author, style, topic, score, source in bilibili_items:
         db.cache_content(
@@ -149,7 +218,6 @@ def _seed_bilibili_content(db: Database) -> None:
 
 def _ingest_xhs_notes(db: Database) -> int:
     """Simulate XHS extension sending notes — raw, no classification."""
-    from openbiliclaw.api.app import create_app
 
     xhs_notes = [
         ("xhs_001", "莫氏鸡煲在家轻松复刻", "美食博主A"),
@@ -172,7 +240,7 @@ def _ingest_xhs_notes(db: Database) -> int:
             note_id,
             title=title,
             up_name=author,
-            source=f"xhs-extension-task",
+            source="xhs-extension-task",
             source_platform="xiaohongshu",
             content_id=note_id,
             content_url=f"https://www.xiaohongshu.com/explore/{note_id}?xsec_token=abc",
@@ -243,7 +311,11 @@ class TestMultiSourceDiversityE2E:
 
             # Save classified state
             rows_classified = db.get_pool_candidates(limit=50)
-            classified_data = {r["bvid"]: dict(r) for r in rows_classified if r.get("source_platform") == "xiaohongshu"}
+            classified_data = {
+                r["bvid"]: dict(r)
+                for r in rows_classified
+                if r.get("source_platform") == "xiaohongshu"
+            }
 
             # Re-ingest same notes (simulates extension page reload)
             _ingest_xhs_notes(db)
@@ -257,12 +329,16 @@ class TestMultiSourceDiversityE2E:
                 if bvid not in classified_data:
                     continue
                 original = classified_data[bvid]
-                assert row["style_key"] == original["style_key"], \
-                    f"style_key wiped for {bvid}: was '{original['style_key']}', now '{row['style_key']}'"
-                assert row["topic_group"] == original["topic_group"], \
+                assert row["style_key"] == original["style_key"], (
+                    f"style_key wiped for {bvid}: "
+                    f"was '{original['style_key']}', now '{row['style_key']}'"
+                )
+                assert row["topic_group"] == original["topic_group"], (
                     f"topic_group wiped for {bvid}"
-                assert float(row["relevance_score"]) == float(original["relevance_score"]), \
-                    f"relevance_score wiped for {bvid}"
+                )
+                assert float(row["relevance_score"]) == float(
+                    original["relevance_score"]
+                ), f"relevance_score wiped for {bvid}"
 
     @pytest.mark.asyncio
     async def test_mixed_pool_produces_diverse_recommendations(self) -> None:
@@ -340,8 +416,9 @@ class TestMultiSourceDiversityE2E:
             # and in the extension (extractNoteMetadataFromAnchor returns null)
 
             # Verify the API-level filter works
-            from openbiliclaw.api.app import create_app
             from types import SimpleNamespace
+
+            from openbiliclaw.api.app import create_app
 
             fake_config = SimpleNamespace(
                 data_path=Path(tmpdir),
@@ -379,9 +456,21 @@ class TestMultiSourceDiversityE2E:
                     "/api/sources/xhs/observed-urls",
                     json={
                         "notes": [
-                            {"url": "https://www.xiaohongshu.com/explore/note_has_title", "title": "有标题", "author": "A"},
-                            {"url": "https://www.xiaohongshu.com/explore/note_no_title", "title": "", "author": "B"},
-                            {"url": "https://www.xiaohongshu.com/explore/note_null_title", "title": None, "author": "C"},
+                            {
+                                "url": "https://www.xiaohongshu.com/explore/note_has_title",
+                                "title": "有标题",
+                                "author": "A",
+                            },
+                            {
+                                "url": "https://www.xiaohongshu.com/explore/note_no_title",
+                                "title": "",
+                                "author": "B",
+                            },
+                            {
+                                "url": "https://www.xiaohongshu.com/explore/note_null_title",
+                                "title": None,
+                                "author": "C",
+                            },
                         ],
                         "page_type": "search",
                     },
@@ -454,8 +543,19 @@ class TestMultiSourceDiversityE2E:
             async def complete_structured_task(self, **kwargs) -> LLMResponse:
                 # Return malformed response — only 1 result for N items
                 return LLMResponse(
-                    content=json.dumps([{"score": 0.7, "reason": "ok", "topic_group": "test", "style_key": "lifestyle"}]),
-                    provider="test", model="dummy", usage={},
+                    content=json.dumps(
+                        [
+                            {
+                                "score": 0.7,
+                                "reason": "ok",
+                                "topic_group": "test",
+                                "style_key": "lifestyle",
+                            }
+                        ]
+                    ),
+                    provider="test",
+                    model="dummy",
+                    usage={},
                 )
 
         with tempfile.TemporaryDirectory() as tmpdir:
