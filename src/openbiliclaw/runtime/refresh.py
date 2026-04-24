@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from openbiliclaw.soul.speculator import build_probe_axis, choose_next_probe_candidate
+
+logger = logging.getLogger(__name__)
 
 _MAX_DISCOVERY_BACKFILL_PER_REFRESH = 60
 _SOURCE_TARGET_SHARES: tuple[tuple[str, int], ...] = (
@@ -224,9 +227,24 @@ class ContinuousRefreshController:
         """
         pool_available = self.database.count_pool_candidates()
         if pool_available > self.pool_target_count:
-            with suppress(Exception):
-                self.database.trim_pool_to_target_count(target=self.pool_target_count)
+            trimmed = 0
+            try:
+                trimmed = self.database.trim_pool_to_target_count(target=self.pool_target_count)
+            except Exception:
+                logger.exception("trim_pool_to_target_count failed")
             pool_available = self.database.count_pool_candidates()
+            logger.info(
+                "enforce_pool_cap: trimmed=%s, pool_available=%s, target=%s",
+                trimmed,
+                pool_available,
+                self.pool_target_count,
+            )
+        else:
+            logger.debug(
+                "enforce_pool_cap: no trim needed, pool_available=%s, target=%s",
+                pool_available,
+                self.pool_target_count,
+            )
         return pool_available >= self.pool_target_count
 
     async def trigger_manual_refresh(self) -> dict[str, object]:
