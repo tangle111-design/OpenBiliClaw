@@ -33,7 +33,13 @@ class DiscoveryConcurrencyController:
     """Shared bounded concurrency for external discovery dependencies."""
 
     bilibili_request_concurrency: int = 2
-    llm_evaluation_concurrency: int = 2
+    # Cap on simultaneous discovery LLM calls. Raised from 2 to 8 after
+    # moving off Gemini's 15-RPM free tier onto deepseek, which has no
+    # effective RPM cap at our request sizes. Combined with batch-level
+    # concurrency inside ``evaluate_content_batch`` this lets a single
+    # discovery run fan out ~8 LLM calls at a time instead of crawling.
+    # ``chat_active`` still yields the lane to an interactive dialogue.
+    llm_evaluation_concurrency: int = 8
     search_budget_total: int = 30
     """Total bilibili search API calls allowed per discovery run.
 
@@ -68,13 +74,15 @@ class DiscoveryConcurrencyController:
             return await awaitable
 
     chat_active: bool = False
-    llm_throttle_seconds: float = 2.0
+    llm_throttle_seconds: float = 0.0
     """Minimum delay between consecutive discovery LLM calls.
 
-    Prevents discovery from saturating the LLM provider's RPM quota
-    (e.g. Gemini Flash free tier = 15 RPM).  With throttle=2s, discovery
-    uses at most 30 RPM of its own, leaving headroom for interactive
-    chat requests.
+    Kept at 0 for deepseek, which has no effective RPM cap at our
+    request sizes. Raise above 0 when fronting a provider with a
+    strict RPM ceiling (e.g. Gemini free tier at 15 RPM). The
+    ``chat_active`` flag already yields the lane when a dialogue is
+    in progress, so the throttle is no longer needed for chat
+    protection on deepseek.
     """
 
     async def run_llm(self, awaitable: Awaitable[_T]) -> _T:
@@ -689,11 +697,16 @@ class ContentDiscoveryEngine:
             total_batches,
             len(contents) - len(uncached_indices),
         )
-        # Process uncached items in batches
-        for batch_idx, batch_start in enumerate(
-            range(0, len(uncached_indices), batch_size), start=1
-        ):
-            batch_indices = uncached_indices[batch_start : batch_start + batch_size]
+
+        # Fan every batch out concurrently. The ``run_llm`` wrapper
+        # already caps actual parallelism to
+        # ``llm_evaluation_concurrency``, so this just lets the
+        # semaphore do its job without the sequential for-loop
+        # throttling us to 1 active batch per strategy.
+        async def _run_batch(
+            batch_idx: int,
+            batch_indices: list[int],
+        ) -> tuple[list[int], list[float]]:
             batch_contents = [contents[i] for i in batch_indices]
             t0 = time.monotonic()
             batch_scores = await self._evaluate_batch(
@@ -701,8 +714,6 @@ class ContentDiscoveryEngine:
                 profile,
                 source_context=source_context,
             )
-            for idx, batch_score in zip(batch_indices, batch_scores, strict=True):
-                scores[idx] = batch_score
             elapsed = time.monotonic() - t0
             kept = sum(1 for s in batch_scores if s > 0)
             logger.info(
@@ -714,6 +725,18 @@ class ContentDiscoveryEngine:
                 elapsed,
                 kept,
             )
+            return batch_indices, batch_scores
+
+        tasks = []
+        for batch_idx, batch_start in enumerate(
+            range(0, len(uncached_indices), batch_size), start=1
+        ):
+            batch_indices = uncached_indices[batch_start : batch_start + batch_size]
+            tasks.append(_run_batch(batch_idx, batch_indices))
+
+        for batch_indices, batch_scores in await asyncio.gather(*tasks):
+            for idx, batch_score in zip(batch_indices, batch_scores, strict=True):
+                scores[idx] = batch_score
 
         return scores
 
