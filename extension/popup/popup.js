@@ -1557,7 +1557,7 @@ function renderProfileSummary(summary) {
 
 function appendChatMessage(role, content) {
   if (!(elements.chatMessages instanceof HTMLElement)) {
-    return;
+    return null;
   }
   const item = document.createElement("div");
   item.className = `chat-message${role === "你" ? " user" : ""}`;
@@ -1573,6 +1573,55 @@ function appendChatMessage(role, content) {
   item.append(label, text);
   elements.chatMessages.append(item);
   elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+  return item;
+}
+
+// Render a placeholder "thinking" bubble with animated dots while we
+// wait for the dialogue endpoint. Returns the bubble element so the
+// submit handler can swap it for the real reply (or an error) once
+// the request resolves.
+function appendChatThinkingPlaceholder() {
+  if (!(elements.chatMessages instanceof HTMLElement)) {
+    return null;
+  }
+  const item = document.createElement("div");
+  item.className = "chat-message chat-thinking";
+
+  const label = document.createElement("span");
+  label.className = "chat-role";
+  label.textContent = "助手";
+
+  const text = document.createElement("p");
+  text.className = "chat-content chat-thinking-content";
+  text.innerHTML =
+    '<span class="chat-thinking-label">正在想</span>' +
+    '<span class="chat-thinking-dots">' +
+    '<span class="chat-thinking-dot"></span>' +
+    '<span class="chat-thinking-dot"></span>' +
+    '<span class="chat-thinking-dot"></span>' +
+    "</span>";
+
+  item.append(label, text);
+  elements.chatMessages.append(item);
+  elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+  return item;
+}
+
+// Replace a previously-inserted placeholder with the final assistant
+// reply text in-place, so the visual position stays stable.
+function replaceChatThinkingPlaceholder(placeholder, content) {
+  if (!(placeholder instanceof HTMLElement)) {
+    return;
+  }
+  placeholder.classList.remove("chat-thinking");
+  const text = placeholder.querySelector(".chat-content");
+  if (text instanceof HTMLElement) {
+    text.classList.remove("chat-thinking-content");
+    text.textContent = content;
+  }
+  if (elements.chatMessages instanceof HTMLElement) {
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+  }
 }
 
 function setFeedbackStatus(statusLine, message) {
@@ -2632,6 +2681,7 @@ function bindChat() {
     }
 
     appendChatMessage("你", message);
+    const thinkingPlaceholder = appendChatThinkingPlaceholder();
     elements.chatInput.value = "";
     elements.chatSendButton.disabled = true;
     elements.chatSendButton.textContent = "发送中...";
@@ -2646,7 +2696,11 @@ function bindChat() {
     try {
       const payload = await sendChatMessage(message);
       clearSlowStatusTimer();
-      appendChatMessage("助手", payload.reply);
+      if (thinkingPlaceholder) {
+        replaceChatThinkingPlaceholder(thinkingPlaceholder, payload.reply);
+      } else {
+        appendChatMessage("助手", payload.reply);
+      }
       setHint("收到，这句记下了。", "success");
       await refreshProfileSummaryAfterInteraction({
         onProfileStart() {
@@ -2661,7 +2715,11 @@ function bindChat() {
       });
     } catch {
       clearSlowStatusTimer();
-      appendChatMessage("助手", "刚刚没发出去，换个说法再试试。");
+      if (thinkingPlaceholder) {
+        replaceChatThinkingPlaceholder(thinkingPlaceholder, "刚刚没发出去，换个说法再试试。");
+      } else {
+        appendChatMessage("助手", "刚刚没发出去，换个说法再试试。");
+      }
       setChatStatus(getSubmissionProgressMessage("chat", "error"), "error");
       setHint("聊天接口这会儿没接上，先看看本地后端是不是开着。", "error");
     } finally {
