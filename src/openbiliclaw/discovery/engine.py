@@ -657,13 +657,12 @@ class ContentDiscoveryEngine:
     # Safety cap applied at the evaluator level regardless of caller.
     # Strategies that over-fetch (related_chain depth-2 fanout, explore
     # with expanded budget, etc.) would otherwise dump 400+ items into a
-    # single discover run, turning init into tens of minutes even with
-    # heavy concurrency. 80 leaves a single strategy with at most 8
-    # eval batches — enough to keep quality, tight enough to bound
-    # walltime. Truncation is top-of-list (natural ranking from
-    # strategies), and a WARNING is emitted so we see when strategies
-    # hit the cap.
-    _EVALUATE_BATCH_HARD_CAP = 80
+    # single discover run. 30 keeps each strategy at ~3 eval batches,
+    # so 4 strategies × 3 batches = 12 fits in a single concurrency
+    # wave under the default ``llm_evaluation_concurrency=32`` cap.
+    # Truncation is top-of-list (natural ranking from strategies), and
+    # a WARNING is emitted so we see when strategies hit the cap.
+    _EVALUATE_BATCH_HARD_CAP = 30
 
     async def evaluate_content_batch(
         self,

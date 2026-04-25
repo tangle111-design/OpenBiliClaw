@@ -69,12 +69,12 @@ _RUNTIME_COMPONENTS: dict[str, Any] = {}
 _INIT_DISCOVERY_PLAN = [
     ["search", "trending", "related_chain", "explore"],
 ]
-# Initial pool target. Small enough that each strategy typically stays
-# within a single LLM evaluation batch, but big enough to give the
-# four strategies room to contribute diverse candidates. The
+# Initial pool target. Kept small so the discover phase finishes in
+# one or two LLM-eval waves and ``_run_backfill`` doesn't trigger. The
 # background refresh loop tops the pool up to
-# ``scheduler.pool_target_count`` over the following hour.
-_INIT_POOL_TARGET_COUNT = 40
+# ``scheduler.pool_target_count`` (600) over the following hour, so a
+# tiny init pool only delays diversity, never reduces it.
+_INIT_POOL_TARGET_COUNT = 15
 
 if TYPE_CHECKING:
     from pathlib import Path
