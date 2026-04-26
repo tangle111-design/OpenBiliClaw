@@ -324,8 +324,20 @@ const shiftDelightQueue = removeCurrentDelight;
 
 function navigateDelight(delta) {
   if (state.activeDelights.length <= 1) return;
+  // Preserve the expand state across navigation: if the user had the
+  // current banner expanded, the next one slides in already expanded
+  // so they don't have to click open every card.
+  const wasExpanded = Boolean(
+    state.activeDelights[state.delightCurrentIndex]?.expanded,
+  );
   state.delightCurrentIndex += delta;
   clampDelightIndex();
+  if (wasExpanded && state.activeDelights[state.delightCurrentIndex]) {
+    state.activeDelights[state.delightCurrentIndex] = {
+      ...state.activeDelights[state.delightCurrentIndex],
+      expanded: true,
+    };
+  }
   syncDelightHead();
 }
 
