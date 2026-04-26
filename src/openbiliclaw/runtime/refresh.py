@@ -18,7 +18,15 @@ _MAX_DISCOVERY_BACKFILL_PER_REFRESH = 60
 _SOURCE_TARGET_SHARES: tuple[tuple[str, int], ...] = (
     ("search", 4),
     ("related_chain", 4),
-    ("trending", 3),
+    # trending was 3 (target=120 at pool_target=600). Empirically trending
+    # never reaches that floor: items have higher consumption rate than
+    # other sources (relevance is high, popup serves them quickly) and
+    # the topic_group cap suppresses repeat 鬼畜/同人/短片 surfaces. The
+    # observed steady-state is ~30-45, so the deficit logic kept firing
+    # solo trending rounds every 60s that net only ~1 fresh item — pure
+    # LLM-evaluation waste. Drop share to 1 (target ~46) to align with
+    # reality.
+    ("trending", 1),
     ("explore", 4),
 )
 
@@ -43,7 +51,12 @@ class SupportsEventDatabase(Protocol):
     def count_pool_candidates_by_source(self) -> dict[str, int]: ...
     def trim_explore_cluster_overflow(self, *, max_per_cluster: int = 3) -> int: ...
     def trim_topic_group_overflow(self, *, max_per_group: int) -> int: ...
-    def trim_pool_to_target_count(self, *, target: int) -> int: ...
+    def trim_pool_to_target_count(
+        self,
+        *,
+        target: int,
+        source_share_quotas: dict[str, int] | None = None,
+    ) -> int: ...
     def evict_stale_pool_items(self, *, max_age_days: int = 14) -> int: ...
     def get_notification_candidate(
         self,
@@ -259,7 +272,10 @@ class ContinuousRefreshController:
         if pool_available > self.pool_target_count:
             trimmed = 0
             try:
-                trimmed = self.database.trim_pool_to_target_count(target=self.pool_target_count)
+                trimmed = self.database.trim_pool_to_target_count(
+                    target=self.pool_target_count,
+                    source_share_quotas=self._source_target_counts(),
+                )
             except Exception:
                 logger.exception("trim_pool_to_target_count failed")
             pool_available = self.database.count_pool_candidates()

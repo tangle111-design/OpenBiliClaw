@@ -292,6 +292,95 @@ class TestDatabase:
             assert suppressed == 0
             db.close()
 
+    def test_trim_pool_share_quotas_protect_under_target_sources(self) -> None:
+        """When trim is given source_share_quotas, items from over-quota
+        sources get suppressed first — even if they have higher scores
+        than items from under-quota sources. This prevents trending /
+        explore from being systematically axed when search /
+        related_chain overflow."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            # Search has 5 items at score 0.95 (high), trending has 3 at 0.60 (low).
+            # Total = 8, target = 6, so 2 must be suppressed.
+            # Without share quotas: all trending items get axed (lowest score).
+            # With quota search=2: 3 of search's 5 are over-quota → those go first,
+            # protecting trending entirely.
+            for i in range(5):
+                db.cache_content(
+                    f"BVS{i}",
+                    title=f"S{i}",
+                    up_name="UP",
+                    source="search",
+                    relevance_score=0.95,
+                )
+            for i in range(3):
+                db.cache_content(
+                    f"BVT{i}",
+                    title=f"T{i}",
+                    up_name="UP",
+                    source="trending",
+                    relevance_score=0.60,
+                )
+
+            suppressed = db.trim_pool_to_target_count(
+                target=6,
+                source_share_quotas={"search": 2, "trending": 4},
+            )
+            assert suppressed == 2
+
+            rows = db.get_cached_content(limit=20)
+            by_bvid = {row["bvid"]: row for row in rows}
+            # All trending kept (under quota of 4) — this is the protection.
+            # Without share quotas, trending (low score) would get axed first.
+            assert all(by_bvid[f"BVT{i}"]["pool_status"] == "fresh" for i in range(3))
+            # Search lost the bottom 2 (suppressed), kept top 3: 2 within quota
+            # + 1 backfill from over-quota since target=6 had remaining slot.
+            search_fresh = [
+                bvid for bvid in (f"BVS{i}" for i in range(5))
+                if by_bvid[bvid]["pool_status"] == "fresh"
+            ]
+            assert len(search_fresh) == 3
+            assert by_bvid["BVS3"]["pool_status"] == "suppressed"
+            assert by_bvid["BVS4"]["pool_status"] == "suppressed"
+            db.close()
+
+    def test_trim_pool_legacy_score_only_when_no_quotas(self) -> None:
+        """Without source_share_quotas, the trim must keep its old score-first
+        behavior — that's the path used by callers that don't care about
+        per-source diversity."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            for i in range(5):
+                db.cache_content(
+                    f"BVHIGH{i}",
+                    title=f"H{i}",
+                    up_name="UP",
+                    source="search",
+                    relevance_score=0.95,
+                )
+            for i in range(3):
+                db.cache_content(
+                    f"BVLOW{i}",
+                    title=f"L{i}",
+                    up_name="UP",
+                    source="trending",
+                    relevance_score=0.30,
+                )
+
+            suppressed = db.trim_pool_to_target_count(target=5)
+            assert suppressed == 3
+
+            rows = db.get_cached_content(limit=20)
+            by_bvid = {row["bvid"]: row for row in rows}
+            # All low-score trending suppressed, all high-score search kept
+            assert all(by_bvid[f"BVHIGH{i}"]["pool_status"] == "fresh" for i in range(5))
+            assert all(by_bvid[f"BVLOW{i}"]["pool_status"] == "suppressed" for i in range(3))
+            db.close()
+
     def test_purge_pool_by_disliked_topics_matches_topic_key_exact(self) -> None:
         """An exact topic_key match should flip pool_status to purged_by_dislike."""
         with tempfile.TemporaryDirectory() as tmpdir:

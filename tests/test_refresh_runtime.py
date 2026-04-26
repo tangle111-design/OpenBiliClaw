@@ -88,7 +88,12 @@ class _FakeDatabase:
     def trim_topic_group_overflow(self, *, max_per_group: int) -> int:
         return 0
 
-    def trim_pool_to_target_count(self, *, target: int) -> int:
+    def trim_pool_to_target_count(
+        self,
+        *,
+        target: int,
+        source_share_quotas: dict[str, int] | None = None,
+    ) -> int:
         if self.pool_count <= target:
             return 0
         trimmed = self.pool_count - target

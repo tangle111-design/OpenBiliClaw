@@ -664,7 +664,12 @@ class Database:
         )
         return len(clean_bvids)
 
-    def trim_pool_to_target_count(self, *, target: int) -> int:
+    def trim_pool_to_target_count(
+        self,
+        *,
+        target: int,
+        source_share_quotas: dict[str, int] | None = None,
+    ) -> int:
         """Suppress overflow fresh items so the pool does not exceed *target*.
 
         Ranking (what we keep): higher ``relevance_score`` > newer
@@ -672,6 +677,13 @@ class Database:
         already surfaced as recommendations are excluded from the count — the
         recommendation side treats the pool as a queue, so consumed rows are
         never trimmed here.
+
+        When ``source_share_quotas`` is provided, the trim respects per-source
+        share targets: items from sources already at or above their quota
+        get suppressed *before* lower-scored items from under-quota sources.
+        Without this, score-only trim systematically axes low-relevance
+        sources (trending, explore) when high-relevance sources (search,
+        related_chain) overflow — defeating the per-source diversity goal.
         """
         if target <= 0:
             return 0
@@ -700,6 +712,29 @@ class Database:
                 str(row.get("bvid", "")),
             ),
         )
+
+        if source_share_quotas:
+            # Walk highest-score-first and split into in-quota vs over-quota.
+            # in_quota items get priority during keep selection so under-target
+            # sources (trending) keep their slots even when over-target sources
+            # (search, related_chain) have higher scores.
+            in_quota: list[dict[str, Any]] = []
+            over_quota: list[dict[str, Any]] = []
+            seen: dict[str, int] = defaultdict(int)
+            for row in ranked:
+                src = str(row.get("source", "") or "")
+                quota = source_share_quotas.get(src)
+                if quota is None:
+                    in_quota.append(row)
+                    continue
+                if seen[src] < quota:
+                    in_quota.append(row)
+                    seen[src] += 1
+                else:
+                    over_quota.append(row)
+            # Build ordering so over-quota lands past `target` first
+            ranked = in_quota + over_quota
+
         overflow_bvids = [str(row.get("bvid", "")).strip() for row in ranked[target:]]
         clean_bvids = [bvid for bvid in overflow_bvids if bvid]
         if not clean_bvids:
