@@ -411,7 +411,11 @@ function connectRuntimeStream() {
         }
       }
       // Delight feedback: show hint
-      if (event.type === "delight.disliked" || event.type === "delight.chat") {
+      if (
+        event.type === "delight.disliked" ||
+        event.type === "delight.liked" ||
+        event.type === "delight.chat"
+      ) {
         setHint(String(event.message || ""), "success");
       }
       // Init completed: re-fetch everything including profile
@@ -1009,6 +1013,11 @@ function buildDelightCard(delight) {
     dismissMessageByBvid(delight.bvid);
   });
 
+  const likeBtn = document.createElement("button");
+  likeBtn.className = "probe-btn is-confirm";
+  likeBtn.textContent = "\u559C\u6B22";
+  likeBtn.addEventListener("click", () => handleDelightResponse(delight, "like"));
+
   const dislikeBtn = document.createElement("button");
   dislikeBtn.className = "probe-btn is-reject";
   dislikeBtn.textContent = "\u4E0D\u611F\u5174\u8DA3";
@@ -1019,7 +1028,7 @@ function buildDelightCard(delight) {
   chatBtn.textContent = "\u804A\u4E00\u804A";
   chatBtn.addEventListener("click", () => expandDelightChat(item, delight));
 
-  actions.append(viewBtn, dislikeBtn, chatBtn);
+  actions.append(viewBtn, likeBtn, dislikeBtn, chatBtn);
   item.append(actions);
   return item;
 }
@@ -1032,7 +1041,10 @@ async function handleDelightResponse(delight, responseType) {
       item.replaceChildren();
       const msg = document.createElement("p");
       msg.className = "message-result";
-      msg.textContent = "\u597D\uFF0C\u8FD9\u7C7B\u5148\u4E0D\u63A8\u4E86\u3002";
+      msg.textContent =
+        responseType === "like"
+          ? "\u597D\uFF0C\u8FD9\u7C7B\u591A\u6765\u70B9\u3002"
+          : "\u597D\uFF0C\u8FD9\u7C7B\u5148\u4E0D\u63A8\u4E86\u3002";
       item.append(msg);
       setTimeout(() => { item.remove(); renderMessagesEmptyIfNeeded(); }, 2000);
     }
@@ -2238,12 +2250,33 @@ function renderDelightSlot() {
       },
     );
 
+    const likeButton = createActionButton(
+      "喜欢",
+      "action-button action-secondary delight-banner-action is-like",
+      async () => {
+        try {
+          await respondToDelight(delight.bvid, "like", delight.title);
+        } catch (err) {
+          console.error("Delight like failed:", err);
+        }
+        setHint("好，这类多来点。", "success");
+        rememberDismissedDelight(delight.bvid);
+        removeCurrentDelight();
+        renderDelightSlot();
+      },
+    );
+
     const rejectButton = createActionButton(
       "不感兴趣",
       "action-button action-secondary delight-banner-action",
-      () => {
+      async () => {
+        try {
+          await respondToDelight(delight.bvid, "dislike", delight.title);
+        } catch (err) {
+          console.error("Delight dislike failed:", err);
+        }
         rememberDismissedDelight(delight.bvid);
-        shiftDelightQueue();
+        removeCurrentDelight();
         setHint("记下了，这类惊喜先少来点。", "success");
         renderDelightSlot();
       },
@@ -2263,9 +2296,10 @@ function renderDelightSlot() {
 
     if (isHandled) {
       rejectButton.disabled = true;
+      likeButton.disabled = true;
     }
 
-    actions.append(openButton, rejectButton, chatButton);
+    actions.append(openButton, likeButton, rejectButton, chatButton);
     body.append(actions);
 
     if (delight.composer_open) {

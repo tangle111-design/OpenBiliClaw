@@ -873,11 +873,42 @@ def create_app(
         response_type = str(payload.get("response", "")).strip().lower()
         if not bvid:
             raise HTTPException(status_code=422, detail="bvid is required")
-        if response_type not in {"view", "dislike", "chat"}:
-            raise HTTPException(status_code=422, detail="response must be view, dislike, or chat")
+        if response_type not in {"view", "like", "dislike", "chat"}:
+            raise HTTPException(
+                status_code=422,
+                detail="response must be view, like, dislike, or chat",
+            )
 
         if response_type == "view":
             return JSONResponse(content={"ok": True, "action": "viewed", "bvid": bvid})
+
+        if response_type == "like":
+            # User marks this delight as liked WITHOUT having opened the
+            # video. Treat as a strong positive feedback signal: boost
+            # the row's relevance score and record a cognition update so
+            # downstream scoring + UI both reflect the preference.
+            try:
+                ctx.database._execute_write(
+                    "UPDATE content_cache SET feedback_type='like', "
+                    "feedback_at=CURRENT_TIMESTAMP, "
+                    "relevance_score=MIN(1.0, COALESCE(relevance_score, 0.5) + 0.15) "
+                    "WHERE bvid = ?",
+                    (bvid,),
+                )
+            except Exception:
+                logger.debug("Failed to record delight like for %s", bvid)
+            label = title or bvid
+            _record_probe_cognition(
+                f"你喜欢惊喜推荐「{label}」，会多挖类似的。",
+                bvid,
+                "delight_like",
+            )
+            await _publish_probe_event(
+                "delight.liked",
+                f"好，「{label}」这类多来点。",
+                bvid,
+            )
+            return JSONResponse(content={"ok": True, "action": "liked", "bvid": bvid})
 
         if response_type == "dislike":
             try:
