@@ -15,7 +15,11 @@ from openbiliclaw.llm.base import (
     LLMResponseError,
 )
 from openbiliclaw.llm.gemini_provider import gemini_sdk_available
-from openbiliclaw.llm.registry import RegistryBuildError, build_llm_registry
+from openbiliclaw.llm.registry import (
+    RegistryBuildError,
+    build_embedding_service,
+    build_llm_registry,
+)
 
 
 @dataclass
@@ -159,6 +163,48 @@ def test_build_llm_registry_registers_ollama_when_base_url_is_explicit() -> None
 
     assert registry.default_provider == "ollama"
     assert registry.available_providers == ["ollama"]
+
+
+def test_build_embedding_service_picks_bge_m3_default_for_ollama(
+    tmp_path,
+) -> None:
+    """When [llm.embedding] provider=ollama and model is empty, the service
+    must use bge-m3 — not the gemini-embedding-001 default — so the
+    install-time wizard's choice actually takes effect."""
+    from openbiliclaw.config import EmbeddingConfig
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="ollama",
+            ollama=LLMProviderConfig(model="llama3", base_url="http://localhost:11434/v1"),
+            embedding=EmbeddingConfig(provider="ollama", model=""),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+    service = build_embedding_service(config, registry)
+    assert service is not None
+    assert service._model == "bge-m3"
+
+
+def test_build_embedding_service_respects_explicit_model_override(
+    tmp_path,
+) -> None:
+    """An explicit [llm.embedding] model wins over the per-provider default."""
+    from openbiliclaw.config import EmbeddingConfig
+
+    config = Config(
+        llm=LLMConfig(
+            default_provider="ollama",
+            ollama=LLMProviderConfig(model="llama3", base_url="http://localhost:11434/v1"),
+            embedding=EmbeddingConfig(provider="ollama", model="custom-embed-v2"),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+    service = build_embedding_service(config, registry)
+    assert service is not None
+    assert service._model == "custom-embed-v2"
 
 
 @pytest.mark.asyncio

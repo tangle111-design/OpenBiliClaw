@@ -1754,3 +1754,117 @@ def test_init_reports_partial_success_when_discovery_fails(
     assert "部分完成" in result.stdout
     assert "画像已生成" in result.stdout
     assert "discover" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Local Ollama embedding wizard helpers
+# ---------------------------------------------------------------------------
+
+
+def test_ollama_is_running_returns_true_on_200(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    class _FakeResp:
+        status_code = 200
+
+    class _FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "_FakeClient":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def get(self, url: str) -> _FakeResp:
+            assert url.endswith("/api/version")
+            return _FakeResp()
+
+    monkeypatch.setattr(httpx, "Client", _FakeClient)
+    assert cli_module._ollama_is_running() is True
+
+
+def test_ollama_is_running_returns_false_when_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    class _FailingClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "_FailingClient":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def get(self, url: str) -> object:
+            raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(httpx, "Client", _FailingClient)
+    assert cli_module._ollama_is_running() is False
+
+
+def test_ollama_has_model_matches_tagged_and_untagged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import httpx
+
+    class _FakeResp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return
+
+        def json(self) -> dict[str, object]:
+            return {
+                "models": [
+                    {"name": "llama3:latest"},
+                    {"name": "bge-m3:latest"},
+                ]
+            }
+
+    class _FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "_FakeClient":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def get(self, url: str) -> _FakeResp:
+            return _FakeResp()
+
+    monkeypatch.setattr(httpx, "Client", _FakeClient)
+    assert cli_module._ollama_has_model("bge-m3") is True
+    assert cli_module._ollama_has_model("nomic-embed-text") is False
+
+
+def test_save_embedding_provider_config_writes_to_toml(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verify the wizard's persistence helper writes both provider and model
+    to [llm.embedding] in config.toml. Round-trips: start from a default
+    config, run the helper, reload, assert the embedding section persisted."""
+    from openbiliclaw.config import (
+        Config,
+        LLMConfig,
+        load_config_with_diagnostics,
+        save_config,
+    )
+
+    config_path = tmp_path / "config.toml"
+    initial = Config(llm=LLMConfig(default_provider="gemini"))
+    save_config(initial, config_path)
+
+    monkeypatch.chdir(tmp_path)  # so load_config_with_diagnostics() finds it
+
+    cli_module._save_embedding_provider_config(provider="ollama", model="bge-m3")
+
+    reloaded, _ = load_config_with_diagnostics()
+    assert reloaded.llm.embedding.provider == "ollama"
+    assert reloaded.llm.embedding.model == "bge-m3"
