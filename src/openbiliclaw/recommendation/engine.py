@@ -1129,20 +1129,6 @@ class RecommendationEngine:
         topic_counts: dict[str, int] = {}
         broad_topic_counts: dict[str, int] = {}
         style_counts: dict[str, int] = {}
-        source_counts: dict[str, int] = {}
-        seen_sources: set[str] = set()
-        per_source_cap = cls._source_cap(limit)
-        available_sources = {
-            cls._normalize_topic_token(item.source_strategy)
-            for item in ranked
-            if cls._normalize_topic_token(item.source_strategy)
-        }
-        unique_source_target = min(limit, len(available_sources))
-
-        # Source diversity floor: pre-reserve best item per source
-        # so that no source gets completely crowded out
-        reserved = cls._reserve_per_source(ranked, available_sources)
-        reserved_bvids = {item.bvid for item in reserved}
 
         def _exceeds_broad_cap(item: DiscoveredContent) -> bool:
             bt = cls._broad_topic_token(item)
@@ -1156,46 +1142,13 @@ class RecommendationEngine:
         for item in ranked:
             tokens = cls._diversity_tokens(item)
             style_token = cls._style_token(item)
-            source_token = cls._normalize_topic_token(item.source_strategy)
-            # Reserved items bypass broad/style/source caps (not topic_cap)
-            # when their source is not yet represented — guarantees source floor
-            needs_source_floor = (
-                item.bvid in reserved_bvids
-                and bool(source_token)
-                and source_token not in seen_sources
-            )
-            prioritize_new_source = (
-                bool(source_token)
-                and source_token not in seen_sources
-                and len(seen_sources) < unique_source_target
-            )
-            # Topic dedup is always enforced — even reserved items
             if tokens and any(topic_counts.get(token, 0) >= per_topic_cap for token in tokens):
                 deferred.append(item)
                 continue
-            if not needs_source_floor and _exceeds_broad_cap(item):
+            if _exceeds_broad_cap(item):
                 deferred.append(item)
                 continue
-            if (
-                not needs_source_floor
-                and not prioritize_new_source
-                and style_counts.get(style_token, 0) >= per_style_cap
-            ):
-                deferred.append(item)
-                continue
-            if (
-                not needs_source_floor
-                and source_token
-                and source_counts.get(source_token, 0) >= per_source_cap
-            ):
-                deferred.append(item)
-                continue
-            if (
-                not needs_source_floor
-                and not prioritize_new_source
-                and source_token
-                and source_token in seen_sources
-            ):
+            if style_counts.get(style_token, 0) >= per_style_cap:
                 deferred.append(item)
                 continue
             selected.append(item)
@@ -1203,9 +1156,6 @@ class RecommendationEngine:
                 topic_counts[token] = topic_counts.get(token, 0) + 1
             _track_broad(item)
             style_counts[style_token] = style_counts.get(style_token, 0) + 1
-            if source_token:
-                seen_sources.add(source_token)
-                source_counts[source_token] = source_counts.get(source_token, 0) + 1
             if len(selected) >= limit:
                 return _finalize(selected)
 
@@ -1214,14 +1164,12 @@ class RecommendationEngine:
             *,
             topic_cap: int,
             enforce_style_cap: bool,
-            enforce_source_cap: bool,
             enforce_broad_cap: bool,
         ) -> list[DiscoveredContent]:
             remaining: list[DiscoveredContent] = []
             for item in pool:
                 tokens = cls._diversity_tokens(item)
                 style_token = cls._style_token(item)
-                source_token = cls._normalize_topic_token(item.source_strategy)
                 if tokens and any(topic_counts.get(token, 0) >= topic_cap for token in tokens):
                     remaining.append(item)
                     continue
@@ -1231,20 +1179,11 @@ class RecommendationEngine:
                 if enforce_style_cap and style_counts.get(style_token, 0) >= per_style_cap:
                     remaining.append(item)
                     continue
-                if (
-                    enforce_source_cap
-                    and source_token
-                    and source_counts.get(source_token, 0) >= per_source_cap
-                ):
-                    remaining.append(item)
-                    continue
                 selected.append(item)
                 for token in tokens:
                     topic_counts[token] = topic_counts.get(token, 0) + 1
                 _track_broad(item)
                 style_counts[style_token] = style_counts.get(style_token, 0) + 1
-                if source_token:
-                    source_counts[source_token] = source_counts.get(source_token, 0) + 1
                 if len(selected) >= limit:
                     return []
             return remaining
@@ -1252,32 +1191,14 @@ class RecommendationEngine:
         remaining = try_fill(
             deferred,
             topic_cap=per_topic_cap,
-            enforce_style_cap=True,
-            enforce_source_cap=True,
+            enforce_style_cap=False,
             enforce_broad_cap=True,
         )
         if len(selected) < limit:
             remaining = try_fill(
                 remaining,
-                topic_cap=per_topic_cap,
-                enforce_style_cap=False,
-                enforce_source_cap=True,
-                enforce_broad_cap=True,
-            )
-        if len(selected) < limit:
-            remaining = try_fill(
-                remaining,
-                topic_cap=per_topic_cap,
-                enforce_style_cap=False,
-                enforce_source_cap=False,
-                enforce_broad_cap=True,
-            )
-        if len(selected) < limit:
-            remaining = try_fill(
-                remaining,
                 topic_cap=soft_topic_cap,
                 enforce_style_cap=False,
-                enforce_source_cap=False,
                 enforce_broad_cap=True,  # Never relax broad_cap
             )
         if len(selected) < limit:
@@ -1492,23 +1413,6 @@ class RecommendationEngine:
         return result
 
     @staticmethod
-    def _reserve_per_source(
-        ranked: list[DiscoveredContent],
-        available_sources: set[str],
-    ) -> list[DiscoveredContent]:
-        """Pick the best candidate per source to guarantee source diversity floor."""
-        reserved: list[DiscoveredContent] = []
-        seen_sources: set[str] = set()
-        for item in ranked:
-            source = RecommendationEngine._normalize_topic_token(item.source_strategy)
-            if source and source in available_sources and source not in seen_sources:
-                seen_sources.add(source)
-                reserved.append(item)
-                if len(seen_sources) >= len(available_sources):
-                    break
-        return reserved
-
-    @staticmethod
     def _normalize_topic_token(value: str) -> str:
         text = value.strip().lower()
         if not text:
@@ -1529,16 +1433,12 @@ class RecommendationEngine:
         return max(1, min(3, (limit + 1) // 3))
 
     @staticmethod
-    def _source_cap(limit: int) -> int:
-        return 2 if limit <= 5 else 3
-
-    @staticmethod
     def _platform_token(item: DiscoveredContent) -> str:
         """Platform label for observability only — not used to filter picks.
 
-        Diversity and caps are driven by content features (style, topic,
-        source_strategy). This is exposed in ``_build_debug_summary`` so
-        log readers can still see the platform split per round.
+        Diversity and caps are driven by content features (topic and style).
+        Exposed in ``_build_debug_summary`` so log readers can still see the
+        platform split per round.
         """
         platform = (item.source_platform or "").strip().lower()
         return platform or "bilibili"

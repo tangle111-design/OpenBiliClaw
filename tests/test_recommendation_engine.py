@@ -393,55 +393,66 @@ async def test_generate_recommendations_limits_single_topic_dominance() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_recommendations_balances_sources_from_cache() -> None:
+async def test_generate_recommendations_balances_topics_from_cache() -> None:
+    """Source-agnostic content balance: when one source dominates the
+    relevance head with many duplicate topics, the candidate window still
+    spreads across distinct topic_groups so the picked batch isn't a
+    single-topic flood.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
         engine = RecommendationEngine(llm=_DummyLLM(), database=db)
 
+        # Dominant source + dominant topic at the relevance head
         for index in range(25):
             db.cache_content(
-                f"BVREL{index}",
-                title=f"相关链高分候选 {index}",
-                up_name="相关频道",
+                f"BVAI{index}",
+                title=f"AI 高分候选 {index}",
+                up_name="AI 频道",
                 source="related_chain",
                 relevance_score=0.99 - index * 0.001,
-                relevance_reason="related high score",
+                relevance_reason="ai high score",
                 style_key="practical_guide",
-                topic_key=f"related:topic:{index % 6}",
+                topic_key=f"ai:variant:{index}",
+                topic_group="人工智能",
             )
+        # Long tail: lower scores but distinct topic groups
         for index in range(5):
             db.cache_content(
-                f"BVTREND{index}",
-                title=f"热榜候选 {index}",
-                up_name="热榜频道",
+                f"BVGAME{index}",
+                title=f"游戏候选 {index}",
+                up_name="游戏频道",
                 source="trending",
                 relevance_score=0.89 - index * 0.001,
-                relevance_reason="trending candidate",
-                style_key="news_brief",
-                topic_key=f"trending:{index}",
+                relevance_reason="game candidate",
+                style_key="game_strategy",
+                topic_key=f"game:{index}",
+                topic_group="游戏",
             )
         for index in range(5):
             db.cache_content(
-                f"BVSEARCH{index}",
-                title=f"搜索候选 {index}",
-                up_name="搜索频道",
+                f"BVDOC{index}",
+                title=f"纪录片候选 {index}",
+                up_name="纪录片频道",
                 source="search",
                 relevance_score=0.88 - index * 0.001,
-                relevance_reason="search candidate",
-                style_key="deep_dive",
-                topic_key=f"search:{index}",
+                relevance_reason="doc candidate",
+                style_key="story_doc",
+                topic_key=f"doc:{index}",
+                topic_group="纪录片",
             )
         for index in range(5):
             db.cache_content(
-                f"BVEXP{index}",
-                title=f"探索候选 {index}",
-                up_name="探索频道",
+                f"BVHIST{index}",
+                title=f"历史候选 {index}",
+                up_name="历史频道",
                 source="explore",
                 relevance_score=0.87 - index * 0.001,
-                relevance_reason="explore candidate",
-                style_key="story_doc",
-                topic_key=f"explore:{index}",
+                relevance_reason="history candidate",
+                style_key="deep_dive",
+                topic_key=f"hist:{index}",
+                topic_group="人文历史",
             )
 
         recommendations = await engine.generate_recommendations(
@@ -450,10 +461,13 @@ async def test_generate_recommendations_balances_sources_from_cache() -> None:
             limit=10,
         )
 
-        picked_sources = {item.content.source_strategy for item in recommendations}
+        picked_groups = [item.content.topic_group for item in recommendations]
 
-        assert "explore" in picked_sources
-        assert "search" in picked_sources
+        # AI cannot dominate the batch even though it owns the relevance head
+        assert picked_groups.count("人工智能") <= 3
+        # Tail topics still surface
+        assert "游戏" in picked_groups
+        assert "纪录片" in picked_groups or "人文历史" in picked_groups
 
 
 @pytest.mark.asyncio
@@ -880,139 +894,31 @@ async def test_reshuffle_recommendations_spreads_styles_before_backfill() -> Non
 
 
 @pytest.mark.asyncio
-async def test_reshuffle_recommendations_limits_single_source_dominance() -> None:
+async def test_reshuffle_recommendations_caps_topic_and_style_for_larger_batches() -> None:
+    """Larger batches enforce per-topic and per-style caps regardless of source.
+
+    A batch should not collapse into a single broad topic or a single style
+    just because the relevance head happens to be source-homogeneous.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
-        db.cache_content(
-            "BVEXP1",
-            title="探索候选 1",
-            up_name="探索频道",
-            source="explore",
-            relevance_score=0.96,
-            relevance_reason="探索内容 1",
-            style_key="story_doc",
-            topic_key="探索:1",
-        )
-        db.cache_content(
-            "BVEXP2",
-            title="探索候选 2",
-            up_name="探索频道",
-            source="explore",
-            relevance_score=0.95,
-            relevance_reason="探索内容 2",
-            style_key="deep_dive",
-            topic_key="探索:2",
-        )
-        db.cache_content(
-            "BVEXP3",
-            title="探索候选 3",
-            up_name="探索频道",
-            source="explore",
-            relevance_score=0.94,
-            relevance_reason="探索内容 3",
-            style_key="light_chat",
-            topic_key="探索:3",
-        )
-        db.cache_content(
-            "BVEXP4",
-            title="探索候选 4",
-            up_name="探索频道",
-            source="explore",
-            relevance_score=0.93,
-            relevance_reason="探索内容 4",
-            style_key="practical_guide",
-            topic_key="探索:4",
-        )
-        db.cache_content(
-            "BVSEARCH1",
-            title="搜索候选",
-            up_name="搜索频道",
-            source="search",
-            relevance_score=0.91,
-            relevance_reason="搜索命中的内容。",
-            style_key="practical_guide",
-            topic_key="搜索:1",
-        )
-        db.cache_content(
-            "BVTREND1",
-            title="热榜候选",
-            up_name="热榜频道",
-            source="trending",
-            relevance_score=0.9,
-            relevance_reason="热榜命中的内容。",
-            style_key="news_brief",
-            topic_key="热榜:1",
-        )
-        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
-
-        recommendations = await engine.reshuffle_recommendations(
-            profile=_build_profile(),
-            limit=4,
-        )
-
-        picked_sources = [item.content.source_strategy for item in recommendations]
-
-    assert picked_sources.count("explore") <= 2
-    assert "search" in picked_sources
-    assert "trending" in picked_sources
-
-
-@pytest.mark.asyncio
-async def test_reshuffle_keeps_new_sources_even_when_style_repeats() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db = Database(Path(tmpdir) / "test.db")
-        db.initialize()
-        for bvid, title, source, score, style, topic in [
-            ("BVEXP1", "探索深挖 1", "explore", 0.99, "deep_dive", "探索:1"),
-            ("BVEXP2", "探索深挖 2", "explore", 0.98, "story_doc", "探索:2"),
-            ("BVEXP3", "探索深挖 3", "explore", 0.97, "visual_showcase", "探索:3"),
-            ("BVSEA1", "搜索杂谈 1", "search", 0.96, "light_chat", "搜索:1"),
-            ("BVTR1", "热榜杂谈 1", "trending", 0.95, "light_chat", "热榜:1"),
-        ]:
-            db.cache_content(
-                bvid,
-                title=title,
-                up_name="频道",
-                source=source,
-                relevance_score=score,
-                relevance_reason=f"{title} 的基础理由。",
-                style_key=style,
-                topic_key=topic,
-            )
-        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
-
-        recommendations = await engine.reshuffle_recommendations(
-            profile=_build_profile(),
-            limit=3,
-        )
-
-        picked_sources = [item.content.source_strategy for item in recommendations]
-
-        assert "search" in picked_sources
-        assert "trending" in picked_sources
-        assert picked_sources.count("explore") <= 1
-
-
-@pytest.mark.asyncio
-async def test_reshuffle_recommendations_caps_source_and_style_for_larger_batches() -> None:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db = Database(Path(tmpdir) / "test.db")
-        db.initialize()
+        # Topic head is "游戏" (4 items, mixed styles) — broad_cap (3) must
+        # bind. Style "game_strategy" appears 3× — style_cap (3) is at edge.
         items = [
-            ("BVEXP1", "探索纪录片 1", "explore", 0.99, "story_doc", "探索:1"),
-            ("BVEXP2", "探索深挖 2", "explore", 0.98, "deep_dive", "探索:2"),
-            ("BVEXP3", "探索轻聊 3", "explore", 0.97, "light_chat", "探索:3"),
-            ("BVEXP4", "探索攻略 4", "explore", 0.96, "practical_guide", "探索:4"),
-            ("BVREL1", "相关推荐机制拆解 1", "related_chain", 0.95, "game_strategy", "相关:1"),
-            ("BVREL2", "相关推荐机制拆解 2", "related_chain", 0.94, "game_strategy", "相关:2"),
-            ("BVREL3", "相关推荐故事向 3", "related_chain", 0.935, "light_chat", "相关:3"),
-            ("BVSEA1", "搜索教程 1", "search", 0.93, "practical_guide", "搜索:1"),
-            ("BVSEA2", "搜索快讯 2", "search", 0.92, "news_brief", "搜索:2"),
-            ("BVTR1", "热榜纪录片 1", "trending", 0.91, "story_doc", "热榜:1"),
-            ("BVTR2", "热榜视觉 2", "trending", 0.9, "visual_showcase", "热榜:2"),
+            ("BVGAME1", "游戏攻略 1", "explore", 0.99, "story_doc", "游戏:1", "游戏"),
+            ("BVGAME2", "游戏深挖 2", "explore", 0.98, "deep_dive", "游戏:2", "游戏"),
+            ("BVGAME3", "游戏轻聊 3", "explore", 0.97, "light_chat", "游戏:3", "游戏"),
+            ("BVGAME4", "游戏拆解 4", "explore", 0.96, "practical_guide", "游戏:4", "游戏"),
+            ("BVAI1", "AI 拆解 1", "related_chain", 0.95, "game_strategy", "ai:1", "人工智能"),
+            ("BVAI2", "AI 拆解 2", "related_chain", 0.94, "game_strategy", "ai:2", "人工智能"),
+            ("BVAI3", "AI 故事向 3", "related_chain", 0.935, "light_chat", "ai:3", "人工智能"),
+            ("BVDOC1", "纪录片教程 1", "search", 0.93, "practical_guide", "doc:1", "纪录片"),
+            ("BVNEWS1", "时事快讯 1", "search", 0.92, "news_brief", "news:1", "时事"),
+            ("BVHIST1", "历史纪录 1", "trending", 0.91, "story_doc", "hist:1", "人文历史"),
+            ("BVMUSIC1", "音乐视觉 1", "trending", 0.9, "visual_showcase", "music:1", "音乐"),
         ]
-        for bvid, title, source, score, style, topic in items:
+        for bvid, title, source, score, style, topic, group in items:
             db.cache_content(
                 bvid,
                 title=title,
@@ -1022,6 +928,7 @@ async def test_reshuffle_recommendations_caps_source_and_style_for_larger_batche
                 relevance_reason=f"{title} 的基础理由。",
                 style_key=style,
                 topic_key=topic,
+                topic_group=group,
             )
         engine = RecommendationEngine(llm=_DummyLLM(), database=db)
 
@@ -1030,12 +937,12 @@ async def test_reshuffle_recommendations_caps_source_and_style_for_larger_batche
             limit=10,
         )
 
-        picked_sources = [item.content.source_strategy for item in recommendations]
+        picked_groups = [item.content.topic_group for item in recommendations]
         picked_styles = [item.content.style_key for item in recommendations]
 
         assert len(recommendations) == 10
-        assert picked_sources.count("explore") <= 3
-        assert picked_sources.count("related_chain") <= 3
+        assert picked_groups.count("游戏") <= 3
+        assert picked_groups.count("人工智能") <= 3
         assert picked_styles.count("game_strategy") <= 3
 
 
