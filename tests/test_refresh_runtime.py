@@ -176,6 +176,9 @@ class _FakeRecommendationEngine:
         self.pool_copy_calls.append((profile, limit))
         return limit
 
+    async def prewarm_supergroup_embeddings(self) -> int:
+        return 0
+
 
 class _FakeEventHub:
     def __init__(self) -> None:

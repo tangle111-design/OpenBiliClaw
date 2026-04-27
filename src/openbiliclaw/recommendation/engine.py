@@ -427,6 +427,31 @@ class RecommendationEngine:
         scored.sort(key=lambda x: -x[1])
         return [item for item, _ in scored[:top_k]]
 
+    async def prewarm_supergroup_embeddings(self) -> int:
+        """Pre-fetch embeddings for every distinct topic_group in the pool.
+
+        ``serve()``'s _merge_topic_supergroups embeds each unique
+        ``topic_group`` label and runs pairwise cosine similarity. The
+        embedding service has an L1/L2 cache, so calling embed() for
+        labels already cached returns immediately. Pre-warming on each
+        refresh tick means reshuffle never pays an API round-trip — new
+        labels introduced by the most recent discovery round get warmed
+        before the user clicks.
+
+        Returns the number of labels considered.
+        """
+        if self._embedding_service is None:
+            return 0
+        labels = self._database.get_distinct_topic_groups()
+        if not labels:
+            return 0
+        # Parallel fan-out — cached labels short-circuit, only new labels
+        # actually hit the gemini API.
+        await asyncio.gather(
+            *(self._embedding_service.embed(label) for label in labels)
+        )
+        return len(labels)
+
     async def precompute_pool_copy(
         self,
         *,

@@ -117,6 +117,8 @@ class SupportsRecommendationEngine(Protocol):
         limit: int,
     ) -> int: ...
 
+    async def prewarm_supergroup_embeddings(self) -> int: ...
+
 
 @dataclass
 class ContinuousRefreshController:
@@ -665,6 +667,11 @@ class ContinuousRefreshController:
                 profile=profile,
                 limit=_MAX_DISCOVERY_BACKFILL_PER_REFRESH,
             )
+            # Pre-warm supergroup-merge embeddings so the popup's "换一批"
+            # hot path always hits the L1/L2 cache. New labels added by
+            # this refresh round get warmed before the user clicks.
+            with suppress(Exception):
+                await self.recommendation_engine.prewarm_supergroup_embeddings()
             await self._publish_delight_if_available()
             await self._publish_interest_probe_if_available()
 

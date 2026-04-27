@@ -555,6 +555,23 @@ class Database:
             counts[source] += 1
         return dict(counts)
 
+    def get_distinct_topic_groups(self) -> list[str]:
+        """Return distinct non-empty ``topic_group`` values in the fresh pool.
+
+        Used by recommendation pre-warming so the embedding cache is hot
+        before the popup hits ``serve()``. Cheap GROUP BY on a small
+        column with no JOIN.
+        """
+        cursor = self.conn.execute(
+            """
+            SELECT DISTINCT topic_group
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(topic_group, '') != ''
+            """
+        )
+        return [str(row[0]) for row in cursor.fetchall() if row and row[0]]
+
     def trim_explore_cluster_overflow(self, *, max_per_cluster: int = 3) -> int:
         """Suppress excess fresh explore items from high-risk topic clusters."""
         cursor = self.conn.execute(
