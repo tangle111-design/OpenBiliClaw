@@ -533,8 +533,119 @@ def local_serve_command(project_dir: Path, host: str, port: int) -> list[str]:
     return [str(python), "-m", "openbiliclaw.cli", "serve-api", "--host", host, "--port", str(port)]
 
 
+def _probe_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
+    """Return True if a TCP listener answers on host:port."""
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            return sock.connect_ex((host, port)) == 0
+    except OSError:
+        return False
+
+
+def _probe_is_openbiliclaw(host: str, port: int) -> bool:
+    """Confirm the listener on host:port responds to /api/health as OpenBiliClaw."""
+    url = f"http://{host}:{port}{DEFAULT_HEALTH_PATH}"
+    try:
+        with urllib.request.urlopen(url, timeout=2.0) as response:  # noqa: S310
+            if not (200 <= response.status < 300):
+                return False
+            body = response.read().decode("utf-8", errors="replace")
+            return "openbiliclaw" in body.lower()
+    except Exception:
+        return False
+
+
+def _find_pids_on_port(port: int) -> list[int]:
+    """Return PIDs of TCP listeners on the given port via lsof.
+
+    No-op on systems without lsof (mainly native Windows — the script
+    rejects that platform earlier; WSL2 has lsof).
+    """
+    lsof = which("lsof")
+    if lsof is None:
+        return []
+    try:
+        proc = subprocess.run(
+            [lsof, "-tiTCP:" + str(port), "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    pids: list[int] = []
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pids.append(int(line))
+        except ValueError:
+            continue
+    return pids
+
+
+def _stop_existing_obc_backend(host: str, port: int) -> bool:
+    """Try to gracefully stop any OpenBiliClaw backend already on host:port.
+
+    Returns True if the port is free after the stop attempt; False if a
+    non-OpenBiliClaw service still holds the port (caller should abort).
+    """
+    if not _probe_port_open(host, port):
+        return True
+
+    if not _probe_is_openbiliclaw(host, port):
+        return False
+
+    pids = _find_pids_on_port(port)
+    if not pids:
+        info(f"port {port} answers as OpenBiliClaw but no PIDs visible via lsof — proceeding")
+        return True
+
+    info(f"existing OpenBiliClaw backend on port {port}: pids={pids} — stopping to replace")
+    for pid in pids:
+        try:
+            os.kill(pid, 15)  # SIGTERM
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            info(f"  cannot signal pid {pid} (permission) — aborting")
+            return False
+
+    # Wait for the port to actually free up
+    for _ in range(20):
+        if not _probe_port_open(host, port, timeout=0.2):
+            return True
+        time.sleep(0.3)
+
+    # Last resort: SIGKILL stragglers
+    for pid in pids:
+        try:
+            os.kill(pid, 9)
+        except ProcessLookupError:
+            continue
+    time.sleep(0.5)
+    return not _probe_port_open(host, port, timeout=0.2)
+
+
 def start_local_backend(project_dir: Path, host: str, port: int) -> subprocess.Popen[bytes]:
-    """Start the local FastAPI backend as a detached subprocess."""
+    """Start the local FastAPI backend as a detached subprocess.
+
+    If something is already on the port:
+      - if it's an OpenBiliClaw backend (likely a previous install's
+        process), stop it and replace
+      - if it's something else, raise so the caller surfaces a clear error
+    """
+    if _probe_port_open(host, port):
+        freed = _stop_existing_obc_backend(host, port)
+        if not freed:
+            raise RuntimeError(
+                f"port {port} on {host} is in use by a non-OpenBiliClaw service. "
+                f"Stop that service or set PORT=<free port> and retry."
+            )
 
     cmd = local_serve_command(project_dir, host, port)
     log_dir = project_dir / "logs"
@@ -661,7 +772,11 @@ def run(args: argparse.Namespace) -> int:
             return 4
         emit(BootstrapResult("ok", "docker_started", {}))
     else:
-        start_local_backend(project_dir, args.host, args.port)
+        try:
+            start_local_backend(project_dir, args.host, args.port)
+        except RuntimeError as exc:
+            emit(BootstrapResult("error", str(exc), {"step": "local_start"}))
+            return 5
         emit(BootstrapResult("ok", "local_started", {"host": args.host, "port": args.port}))
 
     if args.skip_health_check:

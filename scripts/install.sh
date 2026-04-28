@@ -149,6 +149,38 @@ auto_detect_reuse_source() {
 ensure_checkout() {
     if [ -f "$INSTALL_DIR/pyproject.toml" ] && [ -f "$INSTALL_DIR/config.example.toml" ]; then
         log "Using existing checkout at $INSTALL_DIR"
+        # Auto-update when safe: clean working tree + fast-forward available.
+        # The previous behaviour silently kept any stale ref, so a user who
+        # installed weeks ago and re-ran the one-liner thought they got the
+        # latest while still running old code.
+        if [ -d "$INSTALL_DIR/.git" ]; then
+            (
+                cd "$INSTALL_DIR" || exit 0
+                git fetch --quiet origin "$BRANCH" 2>/dev/null || {
+                    log "${C_YELLOW}git fetch failed; skipping update check.${C_RESET}"
+                    exit 0
+                }
+                local_sha=$(git rev-parse HEAD 2>/dev/null)
+                remote_sha=$(git rev-parse "origin/$BRANCH" 2>/dev/null)
+                if [ -z "$local_sha" ] || [ -z "$remote_sha" ] || [ "$local_sha" = "$remote_sha" ]; then
+                    return 0
+                fi
+                behind=$(git rev-list --count "$local_sha..$remote_sha" 2>/dev/null || echo "?")
+                dirty=$(git status --porcelain 2>/dev/null)
+                if [ -n "$dirty" ]; then
+                    log "${C_YELLOW}⚠ Existing checkout is $behind commits behind origin/$BRANCH but has local changes — skipping auto-update.${C_RESET}"
+                    log "  To update manually: cd $INSTALL_DIR && git stash && git pull && git stash pop"
+                    return 0
+                fi
+                log "Updating existing checkout: $behind commits behind origin/$BRANCH — pulling…"
+                if git pull --ff-only --quiet origin "$BRANCH"; then
+                    log "${C_GREEN}✓ Updated to $(git rev-parse --short HEAD)${C_RESET}"
+                else
+                    log "${C_YELLOW}git pull failed (non-fast-forward?); keeping current checkout.${C_RESET}"
+                    log "  To force a fresh install: rm -rf $INSTALL_DIR && rerun this installer"
+                fi
+            )
+        fi
         return
     fi
 
