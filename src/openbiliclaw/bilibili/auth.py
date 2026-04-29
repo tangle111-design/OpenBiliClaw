@@ -82,7 +82,11 @@ class AuthManager:
             Cookie string, or empty string if not found.
         """
         if self._cookie_path.exists():
-            with open(self._cookie_path) as f:
+            # encoding="utf-8" matches save_cookie() — Bilibili cookies
+            # are ASCII so the bug never triggers in prod, but a
+            # platform-default encoding still risks UnicodeDecodeError
+            # on Windows GBK if a future cookie field carries non-ASCII.
+            with open(self._cookie_path, encoding="utf-8") as f:
                 data = json.load(f)
                 self._cookie = data.get("cookie", "")
                 logger.info("Cookie loaded from disk.")
@@ -143,9 +147,9 @@ class AuthManager:
         return await self.validate_cookie(cookie)
 
     def _save_cookie(self) -> None:
-        """Persist cookie to disk."""
+        """Persist cookie to disk. Always UTF-8 — see load_cookie()."""
         self._data_dir.mkdir(parents=True, exist_ok=True)
-        with open(self._cookie_path, "w") as f:
+        with open(self._cookie_path, "w", encoding="utf-8") as f:
             json.dump({"cookie": self._cookie}, f)
 
     def clear_cookie(self) -> None:

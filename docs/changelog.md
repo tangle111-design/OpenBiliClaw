@@ -4,6 +4,41 @@
 
 ---
 
+## v0.3.14: 修 Windows GBK 默认编码导致接口 500（2026-04-30）
+
+社区反馈在简体中文 Windows 上后端用默认 GBK locale 启动时，扩展请求 `/api/delight/pending-batch?limit=20`、`/api/activity-feed?limit=10` 等接口都会返回 500，根因是 `MemoryLayer.load()` / `save()` 在 `src/openbiliclaw/memory/manager.py` 用了不带 `encoding=` 的 `open()`：
+
+```python
+with open(self.storage_path) as f:        # ← 没指定编码
+    self._data = json.load(f)             # GBK 解码 UTF-8 文件 → 报错
+```
+
+`/api/health` 是常量字符串、不读 memory 文件，所以仍然 200——bug 只在业务接口现身。
+
+### 修复
+
+- `MemoryLayer.load()` / `save()` 显式 `encoding="utf-8"`
+- `BilibiliAuthManager.load_cookie()` / `_save_cookie()` 也补上（cookie 当前是 ASCII 不受影响，但同样不该依赖平台默认编码）
+- 项目里其他文本模式 `open(...)` 全部 audit 过——`config.py` 的两处用 `"rb"` 走 `tomllib`，正确；其余都已经显式 UTF-8
+
+### 回归测试
+
+`tests/test_memory_manager.py::test_memory_layer_load_uses_utf8_even_when_default_locale_is_gbk`：
+
+通过 monkeypatch `builtins.open`，让任何不带 `encoding=` 的 text-mode 调用回退到 GBK——精准模拟简体中文 Windows 的默认行为。验证：
+
+- `MemoryLayer.load()` 仍能正确读取含中文 + emoji 的 UTF-8 文件
+- `MemoryLayer.save()` 也不会触发 `UnicodeEncodeError`
+- 文件最终仍是合法 UTF-8
+
+撤回 `manager.py` 的 fix 时，这个测试会精确报出 `UnicodeDecodeError: 'gbk' codec can't decode byte 0x80`——和 prod 复现的错误一字不差。
+
+### 致谢
+
+非常感谢社区报告——bug 摘要、根因定位、修复思路、本地验证全跑通，整理得非常清楚，PR 级别的报告。
+
+---
+
 ## v0.3.13: 各种安装路径都把「装扩展自动同步」放到 Cookie 步骤的首选（2026-04-30）
 
 v0.3.12 加了扩展自动同步 Cookie，但各个安装路径的引导（向导 / 文档 / install.sh / install.ps1）都还按 F12 那套老流程在问。新用户根本不知道有更简单的路径，结果还在手动贴 Cookie。

@@ -374,3 +374,62 @@ def test_save_cognition_updates_round_trips_to_json(tmp_path: Path) -> None:
     assert updates[0]["notified"] is False
     assert updates[1]["kind"] == "profile_shift"
     assert updates[1]["notified"] is True
+
+
+def test_memory_layer_load_uses_utf8_even_when_default_locale_is_gbk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression for the Windows GBK bug.
+
+    On Chinese Windows with the default locale, ``open(path)`` (no
+    explicit encoding) decodes as GBK. The data files this layer reads
+    contain Chinese profile text + emoji that GBK can't represent, so
+    /api/activity-feed and /api/delight/pending-batch returned 500.
+
+    To reproduce on a host whose actual default IS UTF-8 (CI), we
+    monkeypatch the builtin ``open`` so any call without an explicit
+    ``encoding=`` falls back to GBK. If MemoryLayer.load() is missing
+    its encoding kwarg, this test will raise UnicodeDecodeError.
+    """
+    import builtins
+    import json as json_module
+
+    from openbiliclaw.memory.manager import MemoryLayer
+
+    layer_path = tmp_path / "core.json"
+    payload = {
+        "summary": "你最近吃讲透因果链这一口 🤔",
+        "tags": ["因果", "深度", "结构感", "💡"],
+    }
+    # Pre-populate as UTF-8 — what the real backend writes.
+    layer_path.write_text(
+        json_module.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    real_open = builtins.open
+
+    def gbk_default_open(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # If caller didn't specify encoding AND it's a text-mode open,
+        # force GBK to simulate Chinese Windows. Binary mode is left
+        # untouched (tomllib uses 'rb' and we should never break that).
+        if "encoding" not in kwargs:
+            mode = (args[1] if len(args) > 1 else kwargs.get("mode", "r")) or "r"
+            if "b" not in mode:
+                kwargs["encoding"] = "gbk"
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", gbk_default_open)
+
+    layer = MemoryLayer(name="core", storage_path=layer_path)
+    layer.load()  # Would raise UnicodeDecodeError without the fix.
+    assert layer.data == payload
+
+    layer.data["summary"] = "更新后的画像 ✨"
+    layer.save()  # Would raise UnicodeEncodeError without the fix.
+
+    # Sanity round-trip via real open() to confirm the file is still
+    # valid UTF-8 (i.e. save() also pinned the encoding correctly).
+    monkeypatch.setattr(builtins, "open", real_open)
+    reloaded = json_module.loads(layer_path.read_text(encoding="utf-8"))
+    assert reloaded["summary"] == "更新后的画像 ✨"

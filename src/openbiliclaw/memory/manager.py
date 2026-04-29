@@ -47,9 +47,16 @@ class MemoryLayer:
         self._loaded_mtime: float | None = None
 
     def load(self) -> None:
-        """Load layer data from disk."""
+        """Load layer data from disk.
+
+        Always reads as UTF-8. Without ``encoding="utf-8"`` Python uses
+        the platform's locale encoding — which is GBK on Chinese
+        Windows installs — and our JSON files contain Chinese profile
+        text + emoji that GBK can't decode, raising UnicodeDecodeError
+        on first /api/activity-feed or /api/delight/pending-batch hit.
+        """
         if self.storage_path.exists():
-            with open(self.storage_path) as f:
+            with open(self.storage_path, encoding="utf-8") as f:
                 self._data = json.load(f)
             self._loaded_mtime = self.storage_path.stat().st_mtime
             logger.debug("Loaded %s layer from %s", self.name, self.storage_path)
@@ -67,9 +74,15 @@ class MemoryLayer:
             self.load()
 
     def save(self) -> None:
-        """Persist layer data to disk."""
+        """Persist layer data to disk.
+
+        Always writes as UTF-8. ``ensure_ascii=False`` lets us emit
+        Chinese / emoji content directly, but the file handle has to be
+        opened in UTF-8 explicitly — otherwise GBK Windows hosts crash
+        on the first non-ASCII write.
+        """
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.storage_path, "w") as f:
+        with open(self.storage_path, "w", encoding="utf-8") as f:
             json.dump(self._data, f, ensure_ascii=False, indent=2)
         self._loaded_mtime = self.storage_path.stat().st_mtime
         logger.debug("Saved %s layer to %s", self.name, self.storage_path)
