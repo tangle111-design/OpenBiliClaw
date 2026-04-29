@@ -54,6 +54,13 @@ class FeedbackSignals:
     disliked_up_mids: frozenset[int] = field(default_factory=frozenset)
     disliked_topic_keys: frozenset[str] = field(default_factory=frozenset)
     liked_topic_keys: frozenset[str] = field(default_factory=frozenset)
+    # Franchises (e.g. 原神 / 星穹铁道) extracted from disliked items'
+    # titles via :mod:`openbiliclaw.recommendation.franchise`. Without
+    # this axis, disliking one 原神 video only blocks that exact bvid;
+    # other 原神 candidates from related_chain keep coming through. With
+    # it the curator subtracts a soft penalty from any candidate whose
+    # title hits the same franchise.
+    disliked_franchises: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -74,6 +81,12 @@ class ScoringContext:
 _FRESHNESS_HALF_LIFE_DAYS: float = 3.0
 _FEEDBACK_DISLIKE_UP_PENALTY: float = 0.20
 _FEEDBACK_DISLIKE_TOPIC_PENALTY: float = 0.10
+# Softer than topic penalty — franchise propagation is a heuristic
+# (substring match on title), so we don't want a single 原神 dislike
+# to brick all gaming content forever. With combined fatigue + topic
+# penalty, this 0.07 is enough to push 原神 candidates below other
+# fresh content but doesn't outright suppress.
+_FEEDBACK_DISLIKE_FRANCHISE_PENALTY: float = 0.07
 _FEEDBACK_LIKE_TOPIC_BONUS: float = 0.05
 _POOL_LOW_THRESHOLD: int = 50
 _DEFAULT_WEIGHTS = ScoringWeights()
@@ -130,9 +143,12 @@ class PoolCurator:
         feedback_rows = self._database.get_feedback_signals(
             limit=self._history_window,
         )
+        from openbiliclaw.recommendation.franchise import extract_franchise
+
         disliked_ups: set[int] = set()
         disliked_topics: set[str] = set()
         liked_topics: set[str] = set()
+        disliked_franchises: set[str] = set()
         for row in feedback_rows:
             ftype = str(row.get("feedback_type", "")).strip()
             if ftype == "dislike":
@@ -142,6 +158,17 @@ class PoolCurator:
                 topic = str(row.get("topic_key", "")).strip()
                 if topic:
                     disliked_topics.add(topic)
+                # Extract a franchise key from the disliked item's title
+                # (and topic) so the penalty propagates to other items
+                # in the same IP. e.g. dislike on "原神 摄影 速通" should
+                # downweight any 原神 / 提瓦特 / 蒙德 candidate, not
+                # just blocking that exact bvid.
+                franchise = extract_franchise(
+                    str(row.get("title", "")),
+                    str(row.get("topic_key", "")),
+                )
+                if franchise:
+                    disliked_franchises.add(franchise)
             elif ftype in ("like", "save"):
                 topic = str(row.get("topic_key", "")).strip()
                 if topic:
@@ -155,6 +182,7 @@ class PoolCurator:
                 disliked_up_mids=frozenset(disliked_ups),
                 disliked_topic_keys=frozenset(disliked_topics),
                 liked_topic_keys=frozenset(liked_topics),
+                disliked_franchises=frozenset(disliked_franchises),
             ),
         )
 
@@ -301,7 +329,16 @@ class PoolCurator:
         item: DiscoveredContent,
         feedback: FeedbackSignals,
     ) -> float:
-        """Additive score adjustment based on recent user feedback."""
+        """Additive score adjustment based on recent user feedback.
+
+        Franchise penalty (since v0.3.17): if the user disliked any
+        item that resolved to franchise X, every candidate whose title
+        / topic resolves to X takes a soft hit. Without this layer,
+        disliking one 原神 video only blocks that exact bvid; the
+        related_chain strategy keeps surfacing other 原神 content.
+        """
+        from openbiliclaw.recommendation.franchise import extract_franchise
+
         adj = 0.0
         if item.up_mid and item.up_mid in feedback.disliked_up_mids:
             adj -= _FEEDBACK_DISLIKE_UP_PENALTY
@@ -310,6 +347,14 @@ class PoolCurator:
             adj -= _FEEDBACK_DISLIKE_TOPIC_PENALTY
         if topic and topic in feedback.liked_topic_keys:
             adj += _FEEDBACK_LIKE_TOPIC_BONUS
+        if feedback.disliked_franchises:
+            franchise = extract_franchise(
+                getattr(item, "title", "") or "",
+                topic,
+                getattr(item, "up_name", "") or "",
+            )
+            if franchise and franchise in feedback.disliked_franchises:
+                adj -= _FEEDBACK_DISLIKE_FRANCHISE_PENALTY
         return adj
 
     async def score_candidates_async(

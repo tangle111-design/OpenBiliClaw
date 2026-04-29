@@ -430,7 +430,8 @@ OpenBiliClaw/
 
 | 版本 | 日期 | 主要变更 |
 |---|---|---|
-| **[v0.3.16](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.16)** | 2026-04-30 | README 后端安装方式重排：一句话装机 / Docker / 自跑脚本 优先，未签名桌面包后置（折叠 details）· 新增「多源登录前置」段，明确小红书必须在装扩展的浏览器里登录（CDP 模式更稳） |
+| **[v0.3.17](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.17)** | 2026-04-30 | 修推荐流过度泛化 IP（一屏 5 条原神 / 提瓦特）：新增 heuristic franchise 提取器；`/api/recommendations` 最终对同 IP 去重（同一 franchise 最多出现 2 次）；点踩 1 条原神视频会软降权所有同 IP 候选，不再只屏蔽单条 |
+| [v0.3.16](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.16) | 2026-04-30 | README 后端安装方式重排：一句话装机 / Docker / 自跑脚本 优先，未签名桌面包后置（折叠 details）· 新增「多源登录前置」段，明确小红书必须在装扩展的浏览器里登录（CDP 模式更稳） |
 | [v0.3.15](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.15) | 2026-04-30 | 一连串 Windows 装机踩坑修复：CLI 启动强制 stdout=UTF-8 防 GBK 控制台 emoji 崩 · install.ps1 的 `python -c f"..."` 改成 `print(a, b)` 绕开 PS 5.1 引号 bug · agent-install.md 警告 Windows 上 `bash` 误踩 WSL · **修 Ollama embedding-only registry 误进 chat fallback 导致 「All providers failed」** |
 | [v0.3.14](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.14) | 2026-04-30 | 修 Windows GBK 默认编码导致 `/api/delight/pending-batch`、`/api/activity-feed` 等接口在简体中文 Windows 上返回 500：`MemoryLayer.load()/save()` 显式 `encoding="utf-8"`，`bilibili.auth` 同步加固。带 monkeypatch `builtins.open` 的回归测试 |
 | [v0.3.13](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.13) | 2026-04-30 | 各种安装路径都把「装扩展自动同步」放到 Cookie 步骤的首选：install.sh / install.ps1 / agent-install.md / CLI 向导 / docker-deployment.md / openclaw-quickstart.md 全部更新；F12 路径降级为兜底 |

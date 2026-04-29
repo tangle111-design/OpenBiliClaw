@@ -177,6 +177,41 @@ def test_feedback_neutral_when_no_signals() -> None:
     assert adj == 0.0
 
 
+def test_feedback_dislike_franchise_penalty_propagates_to_same_ip() -> None:
+    """Regression for the user-reported case: disliking ONE 原神
+    摄影 video used to only block that exact bvid; the related_chain
+    strategy then surfaced 5 other 原神 / 提瓦特 / 蒙德 candidates
+    untouched. Now the curator extracts a franchise key from the
+    disliked title, and any candidate whose own title resolves to
+    the same franchise eats a soft penalty so it ranks below
+    untouched alternatives.
+    """
+    feedback = FeedbackSignals(disliked_franchises=frozenset({"原神"}))
+    # Different topic_key, different up_mid — only the title shares the
+    # franchise. Pre-fix, this would get adj == 0.
+    item = DiscoveredContent(
+        bvid="BV2",
+        title="提瓦特 摄影 集锦",
+        topic_key="游戏摄影",
+        up_mid=99,
+    )
+    adj = PoolCurator._feedback_adjustment(item, feedback)
+    assert adj < 0
+
+
+def test_feedback_dislike_franchise_does_not_penalize_unrelated_ip() -> None:
+    """Counterpart: a 原神 dislike must NOT down-rank a 塞尔达 video.
+    Without this check the franchise penalty would over-fire."""
+    feedback = FeedbackSignals(disliked_franchises=frozenset({"原神"}))
+    item = DiscoveredContent(
+        bvid="BV3",
+        title="塞尔达传说 王国之泪 速通",
+        topic_key="游戏",
+    )
+    adj = PoolCurator._feedback_adjustment(item, feedback)
+    assert adj == 0.0
+
+
 # ---------------------------------------------------------------------------
 # Composite scoring
 # ---------------------------------------------------------------------------

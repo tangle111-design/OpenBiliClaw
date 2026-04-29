@@ -1339,10 +1339,18 @@ class Database:
         return [dict(row) for row in cursor.fetchall()]
 
     def get_feedback_signals(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        """Return recent feedback with UP/topic info for score adjustment."""
+        """Return recent feedback with UP/topic info for score adjustment.
+
+        ``title`` is included so the curator can run franchise extraction
+        on disliked items (v0.3.17+). Without the title field, disliking
+        one 原神 video could only ever block its exact bvid; with it,
+        the curator down-weights any candidate whose own title resolves
+        to the same franchise.
+        """
         cursor = self.conn.execute(
             """
-            SELECT r.feedback_type, c.up_mid, c.up_name, c.topic_key, c.source
+            SELECT r.feedback_type, c.up_mid, c.up_name, c.topic_key,
+                   c.source, c.title
             FROM recommendations AS r
             JOIN content_cache AS c ON c.bvid = r.bvid
             WHERE r.feedback_type IS NOT NULL

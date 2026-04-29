@@ -603,7 +603,15 @@ def create_app(
 
     @app.get("/api/recommendations", response_model=RecommendationListResponse)
     async def recommendations() -> RecommendationListResponse:
-        rows = ctx.database.get_recommendations(limit=20)
+        from openbiliclaw.recommendation.franchise import dedup_by_franchise
+
+        # Pull a 2x window so dedup_by_franchise still has 20 survivors
+        # to return after dropping over-represented franchises. Without
+        # the wider pool, capping 原神 at 2 in a 20-row request would
+        # leave gaps when other items further back in time would have
+        # filled them.
+        rows = ctx.database.get_recommendations(limit=40)
+        rows = dedup_by_franchise(rows, max_per_franchise=2)[:20]
         return RecommendationListResponse(
             items=[
                 RecommendationOut(

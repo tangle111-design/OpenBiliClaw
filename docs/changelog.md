@@ -4,6 +4,52 @@
 
 ---
 
+## v0.3.17: 修推荐流过度泛化 IP（一屏 5 条原神 / 提瓦特）（2026-04-30）
+
+社区报告：点了一条「AI 重绘原神地图」之后，推荐弹窗连续出 5 条原神 / 提瓦特 / 蒙德视频。深度分析定位了 5 个层级的问题，本次先修最影响视觉体验的 3 个：
+
+### 根因（社区分析，全部代码验证过）
+
+1. **正反馈泛化过强**：单次 `recommendation_click` 就能让 PreferenceAnalyzer 把「原神」写入 `interests` 权重 0.6（在 `preference.json` line 348 实际命中）
+2. **负反馈泛化不足**：点踩某条原神视频只记 `topic_key` 级 dislike，原神这个 IP 不会被降权（`curator.py:130-148` 验证）
+3. **多样性维度太粗**：当前用 `topic_group` 限流，但同一 IP 被 LLM 拆到「游戏」「游戏动漫」「人工智能」「游戏摄影」「游戏盘点」5 个 group，绕过限流（`engine.py` 验证）
+4. **`/api/recommendations` 无最终去重**：`LIMIT 20 ORDER BY DESC`，5 条原神在前则全数透传（`app.py:606`）
+5. **`related_chain` 缺 IP 上限**：只按 seed_index 限流，沿原神 seed 滚 5 个邻居 = 全是原神（`related_chain.py:159` 验证）
+
+### 本版本修复（focused subset）
+
+新增 `src/openbiliclaw/recommendation/franchise.py`：基于标题的 heuristic franchise 提取器。预置 13 个高频 IP 的 alias 表（原神 / 星穹铁道 / 崩坏 3 / 绝区零 / 鸣潮 / 明日方舟 / 黑神话 / 塞尔达 / 我的世界 / Apex / 英雄联盟 / ChatGPT / DeepSeek），中文别名走子串匹配，英文走 `\b` 词边界（避免「lol」匹配普通笑反应）。
+
+接入 2 个点：
+
+1. **`/api/recommendations` 最终去重**（fix 根因 #4）：拉 40 条候选，调 `dedup_by_franchise(max_per_franchise=2)` 限同一 IP 在窗口里最多出现 2 次，再截到 20 返回
+2. **Curator 的 `disliked_franchises` 集合**（fix 根因 #2）：`PoolCurator.build_context` 现在在处理 dislike 反馈时，从被踩 item 的 title 提取 franchise 加入 set；`_feedback_adjustment` 对 title 命中同 franchise 的候选扣 `_FEEDBACK_DISLIKE_FRANCHISE_PENALTY = 0.07`（比 topic 软一档，避免一条踩永久封 IP）
+
+`storage/database.py` 的 `get_feedback_signals` 同步加 `c.title` 到查询，因为 franchise 提取需要 title。
+
+### 没修的（留作后续）
+
+- 根因 #1（点击 → IP 兴趣过度强化）：需要改 PreferenceAnalyzer 的 prompt 或加 TTL/最小确认次数
+- 根因 #3（topic_group 多样性维度太粗）：需要在 content_cache 加 `franchise_key` 字段并由 LLM 评估时填，配合 SQL 限流
+- 根因 #5（related_chain IP 上限）：同上，需要 `franchise_key` 才能在 strategy 内部限
+
+这三个的正解都是把 franchise 上升为一等字段（DB column + LLM tag），而不是停留在 title heuristic。本次先用 heuristic 解掉用户最直接看到的问题，franchise_key 字段方案随后规划。
+
+### 测试
+
+- `tests/test_franchise.py`（10 个）：原神 / 提瓦特 / 蒙德 / 枫丹 / Genshin 都映射到同一 canonical key；`lol` 不会误匹配；多 franchise 时按声明顺序取首；无 franchise 的内容直接透传
+- `tests/test_pool_curator.py` 新增 2 个：disliked_franchises 含「原神」时，「提瓦特摄影集锦」（不同 topic_key + 不同 up_mid）扣分；`塞尔达` 不会被殃及
+
+### 编码乱码风险
+
+社区还提到部分 B 站标题在数据库里有编码迹象，可能导致关键词过滤不稳。**这次没动**——但 v0.3.14 修过 memory JSON 的 GBK→UTF-8，方向类似。如果用户能复现具体的乱码字段，可以再开 issue 单独修。
+
+### 致谢
+
+社区诊断质量极高：5 个根因 + 5 个具体行号 + 5 个修复建议，本次修复完全按照其中可执行子集落地。
+
+---
+
 ## v0.3.16: README 推荐顺序调整 + 多源登录前置说明（2026-04-30）
 
 两个 README/安装文档层面的调整，没动代码：
