@@ -670,8 +670,10 @@ class ContinuousRefreshController:
             # Pre-warm supergroup-merge embeddings so the popup's "换一批"
             # hot path always hits the L1/L2 cache. New labels added by
             # this refresh round get warmed before the user clicks.
-            with suppress(Exception):
+            try:
                 await self.recommendation_engine.prewarm_supergroup_embeddings()
+            except Exception:
+                logger.exception("prewarm_supergroup_embeddings failed")
             await self._publish_delight_if_available()
             await self._publish_interest_probe_if_available()
 

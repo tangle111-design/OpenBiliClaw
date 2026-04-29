@@ -162,6 +162,11 @@ class RecommendationEngine:
         self._curator = curator
         self._embedding_service = embedding_service
         self._classify_lock = asyncio.Lock()
+        # Background-computed supergroup canonical map. Populated by
+        # prewarm_supergroup_embeddings() during refresh ticks; consumed
+        # by serve()'s _merge_topic_supergroups for instant lookup.
+        # Keys/values are normalised (stripped+lowered).
+        self._supergroup_canonical_map: dict[str, str] = {}
 
     async def serve(
         self,
@@ -293,95 +298,41 @@ class RecommendationEngine:
         self,
         candidates: list[DiscoveredContent],
     ) -> None:
-        """Online union-find merge of equivalent topic_groups within this batch.
+        """Apply the precomputed supergroup canonical map to candidates.
 
-        For each unique ``topic_group`` in ``candidates``, embed
-        ``"label | sample_titles"`` (titles disambiguate short Chinese labels
-        like "动漫" vs "人工智能"). Pairs above the threshold get merged
-        into a single supergroup; the canonical label is the
-        alphabetically-first member. Mutates each candidate's
-        ``topic_group`` in place to the supergroup label so the downstream
-        diversifier treats the family as one bucket.
+        The actual semantic merging happens in
+        :meth:`prewarm_supergroup_embeddings`, which runs each refresh
+        tick and uses ``"label | sample_titles"`` for accurate
+        disambiguation of short Chinese labels (a label-only embedding
+        of "赛博朋克" vs "动漫" can land at sim ≥ 0.90 and falsely
+        collapse the entire entertainment family into one bucket).
 
-        No-op when embedding service is unavailable or fewer than 2 distinct
-        groups are present — preserves correctness in tests / cold start.
+        Serve-time is now a pure dict lookup — no embedding API calls,
+        no pairwise comparison. When the map is empty (cold start, or
+        the prewarmer hasn't run yet), this method is a no-op so we
+        do not produce false-positive merges from on-the-fly label-only
+        embeddings.
         """
-        if self._embedding_service is None or len(candidates) < 2:
+        if not self._supergroup_canonical_map or len(candidates) < 2:
             return
 
-        from openbiliclaw.llm.embedding import cosine_similarity
-
-        groups: dict[str, list[DiscoveredContent]] = {}
+        canonical_map = self._supergroup_canonical_map
+        merges: list[tuple[str, str]] = []
         for item in candidates:
             key = (item.topic_group or "").strip().lower()
-            if key:
-                groups.setdefault(key, []).append(item)
-
-        if len(groups) < 2:
-            return
-
-        # Embed labels alone (no sample_titles): the cache key now matches
-        # across rounds (titles rotate, labels don't), so the L1/L2 cache
-        # hit rate goes from ~0% to ~100% after the first encounter. The
-        # original "label | titles" form was meant to disambiguate very
-        # short Chinese labels, but coarse topic_group values like 动漫 /
-        # 游戏 / 人工智能 are already separable in embedding space — the
-        # titles bought a marginal disambiguation benefit at the cost of
-        # ~1.5s per reshuffle.
-        import asyncio as _asyncio
-
-        embedding_service = self._embedding_service  # narrow Optional for closure
-
-        async def _embed_label(label: str) -> tuple[str, list[float]]:
-            vec = await embedding_service.embed(label)
-            return label, vec
-
-        results = await _asyncio.gather(*(_embed_label(label) for label in groups))
-        embeddings: dict[str, list[float]] = {label: vec for label, vec in results if vec}
-
-        if len(embeddings) < 2:
-            return
-
-        labels = list(embeddings.keys())
-        parent: dict[str, str] = {label: label for label in labels}
-
-        def find(x: str) -> str:
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-
-        def union(a: str, b: str) -> None:
-            ra, rb = find(a), find(b)
-            if ra == rb:
-                return
-            # Canonical = alphabetically first (stable across rounds)
-            if rb < ra:
-                ra, rb = rb, ra
-            parent[rb] = ra
-
-        strict = self._SUPERGROUP_STRICT_THRESHOLD
-        loose = self._SUPERGROUP_LOOSE_THRESHOLD
-        prefix_len = self._SUPERGROUP_PREFIX_LEN
-        for i, ga in enumerate(labels):
-            for gb in labels[i + 1 :]:
-                sim = cosine_similarity(embeddings[ga], embeddings[gb])
-                shared_prefix = ga[:prefix_len] == gb[:prefix_len] and len(ga) >= prefix_len
-                if sim >= strict or (shared_prefix and sim >= loose):
-                    union(ga, gb)
-
-        merges: list[tuple[str, str]] = []
-        for label, items in groups.items():
-            canonical = find(label)
-            if canonical != label:
-                merges.append((label, canonical))
-                for item in items:
-                    item.topic_group = canonical
+            if not key:
+                continue
+            canonical = canonical_map.get(key)
+            if canonical and canonical != key:
+                merges.append((key, canonical))
+                item.topic_group = canonical
 
         if merges:
+            # Dedup the log line — each (src, dst) pair shows once.
+            unique_merges = sorted({m for m in merges})
             logger.info(
-                "Topic supergroup merges (serve): %s",
-                ", ".join(f"{src}→{dst}" for src, dst in merges),
+                "Topic supergroup merges (serve, cached): %s",
+                ", ".join(f"{src}→{dst}" for src, dst in unique_merges),
             )
 
     async def _select_relevant_interests(
@@ -428,28 +379,94 @@ class RecommendationEngine:
         return [item for item, _ in scored[:top_k]]
 
     async def prewarm_supergroup_embeddings(self) -> int:
-        """Pre-fetch embeddings for every distinct topic_group in the pool.
+        """Compute the supergroup canonical map for use by the popup hot path.
 
-        ``serve()``'s _merge_topic_supergroups embeds each unique
-        ``topic_group`` label and runs pairwise cosine similarity. The
-        embedding service has an L1/L2 cache, so calling embed() for
-        labels already cached returns immediately. Pre-warming on each
-        refresh tick means reshuffle never pays an API round-trip — new
-        labels introduced by the most recent discovery round get warmed
-        before the user clicks.
+        Embeds ``"{label} | {top-5 titles}"`` for every distinct
+        ``topic_group`` in the fresh pool, then runs the union-find
+        merge (strict 0.90, loose 0.80 with shared 2-char prefix) and
+        stores the resulting ``label → canonical`` mapping in
+        ``self._supergroup_canonical_map``. ``serve()`` then consumes
+        this map as a pure dict lookup — no API calls, no pairwise
+        comparison on the user's "换一批" click.
+
+        Title context matters here: short Chinese labels are deceptively
+        similar in raw embedding space (赛博朋克 ≈ 动漫 at sim ≥ 0.90
+        without titles), and that bug looked like "30 of 40 candidates
+        belong to one bucket" in production logs. The titles disambiguate.
 
         Returns the number of labels considered.
         """
         if self._embedding_service is None:
+            self._supergroup_canonical_map = {}
             return 0
-        labels = self._database.get_distinct_topic_groups()
-        if not labels:
-            return 0
-        # Parallel fan-out — cached labels short-circuit, only new labels
-        # actually hit the gemini API.
-        await asyncio.gather(
-            *(self._embedding_service.embed(label) for label in labels)
+
+        groups = self._database.get_topic_group_samples()
+        logger.info(
+            "Topic supergroup prewarm: %d groups (top-by-population)",
+            len(groups),
         )
+        if len(groups) < 2:
+            self._supergroup_canonical_map = {}
+            return len(groups)
+
+        from openbiliclaw.llm.embedding import cosine_similarity
+
+        embedding_service = self._embedding_service
+
+        async def _embed_with_titles(label: str, titles: list[str]) -> tuple[str, list[float]]:
+            text = f"{label} | {' | '.join(titles)}" if titles else label
+            vec = await embedding_service.embed(text)
+            return label.lower(), vec
+
+        results = await asyncio.gather(
+            *(_embed_with_titles(label, titles) for label, titles in groups)
+        )
+        embeddings: dict[str, list[float]] = {label: vec for label, vec in results if vec}
+        if len(embeddings) < 2:
+            self._supergroup_canonical_map = {}
+            return len(embeddings)
+
+        # Union-find on the embeddings to derive canonical labels
+        labels = list(embeddings.keys())
+        parent: dict[str, str] = {label: label for label in labels}
+
+        def find(x: str) -> str:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: str, b: str) -> None:
+            ra, rb = find(a), find(b)
+            if ra == rb:
+                return
+            if rb < ra:
+                ra, rb = rb, ra
+            parent[rb] = ra
+
+        strict = self._SUPERGROUP_STRICT_THRESHOLD
+        loose = self._SUPERGROUP_LOOSE_THRESHOLD
+        prefix_len = self._SUPERGROUP_PREFIX_LEN
+        for i, ga in enumerate(labels):
+            for gb in labels[i + 1 :]:
+                sim = cosine_similarity(embeddings[ga], embeddings[gb])
+                shared_prefix = ga[:prefix_len] == gb[:prefix_len] and len(ga) >= prefix_len
+                if sim >= strict or (shared_prefix and sim >= loose):
+                    union(ga, gb)
+
+        new_map: dict[str, str] = {}
+        for label in labels:
+            canonical = find(label)
+            if canonical != label:
+                new_map[label] = canonical
+        self._supergroup_canonical_map = new_map
+
+        if new_map:
+            logger.info(
+                "Topic supergroup canonical map rebuilt (prewarm): %d labels, %d merges",
+                len(labels),
+                len(new_map),
+            )
         return len(labels)
 
     async def precompute_pool_copy(
