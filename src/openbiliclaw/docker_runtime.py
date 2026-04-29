@@ -28,8 +28,28 @@ _PROXY_KEYS = (
 )
 
 
-def bootstrap_runtime_root(*, runtime_root: Path, template_path: Path) -> None:
-    """Create the isolated runtime root with config/data/logs when missing."""
+def bootstrap_runtime_root(
+    *,
+    runtime_root: Path,
+    template_path: Path,
+    env: MutableMapping[str, str] | None = None,
+) -> None:
+    """Create the isolated runtime root with config/data/logs when missing.
+
+    When ``OPENBILICLAW_SEED_OLLAMA_DEFAULTS`` is set in ``env`` (the
+    Docker compose file ships it on by default), the freshly-created
+    config gets two values pre-filled so the bundled Ollama sidecar
+    works out of the box:
+
+      * ``[llm.ollama] base_url`` → ``OPENBILICLAW_OLLAMA_BASE_URL``
+        (default ``http://ollama:11434/v1`` — the compose service name)
+      * ``[llm.embedding] provider`` → ``ollama``
+      * ``[llm.embedding] model`` → ``OPENBILICLAW_EMBEDDING_MODEL``
+        (default ``bge-m3``)
+
+    An existing ``config.toml`` is never overwritten — users who already
+    set up their own embedding stack keep their choices.
+    """
     runtime_root.mkdir(parents=True, exist_ok=True)
     (runtime_root / "data").mkdir(parents=True, exist_ok=True)
     (runtime_root / "logs").mkdir(parents=True, exist_ok=True)
@@ -39,6 +59,72 @@ def bootstrap_runtime_root(*, runtime_root: Path, template_path: Path) -> None:
         return
 
     shutil.copyfile(template_path, config_path)
+
+    resolved_env = env if env is not None else os.environ
+    if str(resolved_env.get("OPENBILICLAW_SEED_OLLAMA_DEFAULTS", "")).strip():
+        ollama_base = (
+            resolved_env.get("OPENBILICLAW_OLLAMA_BASE_URL", "").strip()
+            or "http://ollama:11434/v1"
+        )
+        embedding_model = (
+            resolved_env.get("OPENBILICLAW_EMBEDDING_MODEL", "").strip() or "bge-m3"
+        )
+        _seed_ollama_defaults(config_path, ollama_base, embedding_model)
+
+
+def _seed_ollama_defaults(
+    config_path: Path,
+    ollama_base_url: str,
+    embedding_model: str,
+) -> None:
+    """Patch ``base_url`` under [llm.ollama] and provider/model under
+    [llm.embedding] in a freshly-copied template config.
+
+    Line-based editor: the config template only uses single-line string
+    values for the fields we touch, so a small in-place edit is enough
+    and we avoid pulling in a TOML writer dependency just for this.
+    """
+    text = config_path.read_text(encoding="utf-8")
+    text = _set_toml_string(text, "llm.ollama", "base_url", ollama_base_url)
+    text = _set_toml_string(text, "llm.embedding", "provider", "ollama")
+    text = _set_toml_string(text, "llm.embedding", "model", embedding_model)
+    config_path.write_text(text, encoding="utf-8")
+
+
+def _set_toml_string(content: str, section: str, key: str, value: str) -> str:
+    """Replace ``key = "..."`` under ``[section]`` with ``key = "<value>"``.
+
+    Appends both the section header and the key/value pair when missing,
+    so the helper is idempotent on partial templates. Ignores commented
+    lines and inline tables.
+    """
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    new_line = f'{key} = "{escaped}"'
+    section_header = f"[{section}]"
+
+    lines = content.splitlines()
+    in_section = False
+    for index, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_section = stripped == section_header
+            continue
+        if not in_section or stripped.startswith("#") or "=" not in stripped:
+            continue
+        lhs = stripped.split("=", 1)[0].strip()
+        if lhs == key:
+            indent = raw_line[: len(raw_line) - len(raw_line.lstrip())]
+            lines[index] = f"{indent}{new_line}"
+            trailing_newline = "\n" if content.endswith("\n") else ""
+            return "\n".join(lines) + trailing_newline
+
+    # Section/key didn't exist: append a fresh block at the end.
+    suffix: list[str] = []
+    if not content.endswith("\n"):
+        suffix.append("")
+    suffix.append(section_header)
+    suffix.append(new_line)
+    return content + "\n".join(suffix) + "\n"
 
 
 def can_connect(host: str, port: int, timeout: float) -> bool:
@@ -112,7 +198,11 @@ def bootstrap_runtime_environment(
     """Bootstrap the isolated runtime root and optional proxy env in-place."""
     runtime_root = Path(env.get("OPENBILICLAW_PROJECT_ROOT", _DEFAULT_RUNTIME_ROOT))
     template_path = Path(env.get("OPENBILICLAW_CONFIG_TEMPLATE", _DEFAULT_TEMPLATE_PATH))
-    bootstrap_runtime_root(runtime_root=runtime_root, template_path=template_path)
+    bootstrap_runtime_root(
+        runtime_root=runtime_root,
+        template_path=template_path,
+        env=env,
+    )
     env.setdefault("OPENBILICLAW_PROJECT_ROOT", str(runtime_root))
 
     # Proxy auto-detection is ONLY safe inside container runtimes.

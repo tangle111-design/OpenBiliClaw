@@ -4,6 +4,54 @@
 
 ---
 
+## v0.3.11: Docker 自带 Ollama embedding sidecar + CLI 向导也能自动装 Ollama（2026-04-30）
+
+v0.3.10 把一句话装机（install.sh / install.ps1 → agent_bootstrap.py）的 Ollama 自动安装做齐了，但还有两条路径漏了：
+
+1. **Docker 模式**：用户跑 `docker compose up -d --build` 后，embedding 段默认空着，第一次发请求才发现「咦，需要个 embedding API key 或一个 host 上跑的 Ollama」
+2. **手动安装** + 直接跑 `openbiliclaw init`：CLI 向导只会检测 Ollama，没装的话提示用户去装，没启用「我帮你装」
+
+### 1. `docker-compose.yml` 多了 `ollama` sidecar
+
+```yaml
+services:
+  ollama:
+    image: ollama/ollama:latest
+    # 启动时拉 bge-m3，daemon 一直跑
+    # healthcheck 等到 bge-m3 就绪才报 healthy
+  openbiliclaw-backend:
+    depends_on: { ollama: { condition: service_healthy } }
+    environment:
+      OPENBILICLAW_SEED_OLLAMA_DEFAULTS: "1"
+      OPENBILICLAW_OLLAMA_BASE_URL: "http://ollama:11434/v1"
+      OPENBILICLAW_EMBEDDING_MODEL: "bge-m3"
+volumes:
+  openbiliclaw_ollama:  # bge-m3 持久化，重建容器不重拉
+```
+
+### 2. `docker_runtime.py` 启动时按 env 自动写 embedding 默认
+
+`bootstrap_runtime_root` 复制 `config.example.toml` 到 volume 后，如果 `OPENBILICLAW_SEED_OLLAMA_DEFAULTS` 为真，就把这三个值填进去：
+- `[llm.ollama] base_url = http://ollama:11434/v1`
+- `[llm.embedding] provider = ollama`
+- `[llm.embedding] model = bge-m3`
+
+已有的 `config.toml` 不会被覆盖——用户改过的偏好都会保留。
+
+效果：用户跑 `docker compose up -d --build` 后，**只需要一个 chat 模型的 API Key**，embedding 完全免费 + 离线 + 用完即走。第一次启动多花 2–4 分钟下载 bge-m3（~568MB），后续从 named volume `openbiliclaw_ollama` 直接复用。
+
+不要 sidecar 的用户：把 `docker-compose.yml` 的 `ollama` 服务块和后端的 `OPENBILICLAW_SEED_OLLAMA_DEFAULTS` env 删掉就行。
+
+### 3. CLI 向导（`openbiliclaw init` 直接跑）也支持自动装 Ollama
+
+新增两个 helper：
+- `_ollama_install_if_missing()`：检测 → 询问用户 → brew/winget/install.sh
+- `_ollama_start_serve_background()`：后台启动 daemon，轮询 `/api/version` 等 15s
+
+Phase 1（选 Ollama 做 chat）和 Phase 3 选项 2（选 Ollama 做 embedding）都接入了这套：用户不再需要先去外面装 Ollama，向导一条龙搞定。
+
+---
+
 ## v0.3.10: 选 Ollama 时一句话装机自己装 Ollama + 拉模型（2026-04-30）
 
 v0.3.6 把 Ollama 推荐成「新手默认」选项后，新问题来了：用户在向导里选了 Ollama，但实际上还得自己 `brew install ollama` / 装 Windows 安装包 / 跑 install.sh，再 `ollama pull llama3` —— 否则后端启动会卡在「Ollama not running」。这彻底违反了「一句话装机」的承诺。

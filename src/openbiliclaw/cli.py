@@ -685,6 +685,129 @@ def _ollama_pull_model(model: str, host: str = "http://localhost:11434") -> bool
         return False
 
 
+def _ollama_install_if_missing() -> bool:
+    """If Ollama isn't installed, offer to auto-install via package mgr.
+
+    Returns True iff the binary is available after this call. The user
+    can decline (we then return False — caller should fall back to
+    asking them to install manually). Mirrors agent_bootstrap.py's
+    install_ollama, but with an interactive consent prompt because
+    invoking package managers is a side-effect users should approve.
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("ollama"):
+        return True
+
+    console.print(
+        "[yellow]检测不到 ollama 命令。[/yellow] "
+        "OpenBiliClaw 可以帮你装上，过程透明：\n"
+        "  • macOS: 通过 brew install ollama\n"
+        "  • Windows: 通过 winget install Ollama.Ollama\n"
+        "  • Linux: 通过官方 install.sh（curl https://ollama.com/install.sh | sh）"
+    )
+    if not typer.confirm("是否现在帮你装 Ollama？", default=True):
+        console.print(
+            "[dim]已跳过自动安装。请手动从 https://ollama.com/download 下载，"
+            "然后重新跑一遍本命令。[/dim]"
+        )
+        return False
+
+    if sys.platform == "darwin":
+        if not shutil.which("brew"):
+            console.print(
+                "[red]没找到 brew。请从 https://ollama.com/download 下载 Mac 安装包，"
+                "装好后重新运行本命令。[/red]"
+            )
+            return False
+        subprocess.run(["brew", "install", "ollama"], check=False)
+    elif os.name == "nt":
+        if not shutil.which("winget"):
+            console.print(
+                "[red]没找到 winget。请从 https://ollama.com/download 下载 Windows 安装包，"
+                "装好后重新运行本命令。[/red]"
+            )
+            return False
+        subprocess.run(
+            [
+                "winget",
+                "install",
+                "-e",
+                "--id",
+                "Ollama.Ollama",
+                "--accept-source-agreements",
+                "--accept-package-agreements",
+            ],
+            check=False,
+        )
+    else:
+        # Linux: piped curl | sh — needs sudo for systemd registration.
+        subprocess.run(
+            "curl -fsSL https://ollama.com/install.sh | sh",
+            shell=True,
+            check=False,
+        )
+
+    if shutil.which("ollama"):
+        console.print("[green]Ollama 安装成功。[/green]")
+        return True
+    console.print(
+        "[red]安装似乎没成功。请从 https://ollama.com/download 手动装一下，"
+        "再重新跑本命令。[/red]"
+    )
+    return False
+
+
+def _ollama_start_serve_background() -> bool:
+    """Start `ollama serve` in the background, wait up to 15s for it
+    to start responding to /api/version. Returns whether the daemon is
+    healthy at exit.
+    """
+    import shutil
+    import subprocess
+
+    if _ollama_is_running():
+        return True
+
+    ollama = shutil.which("ollama")
+    if ollama is None:
+        return False
+
+    try:
+        if os.name == "nt":
+            creationflags = (
+                getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            )
+            subprocess.Popen(
+                [ollama, "serve"],
+                creationflags=creationflags,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+        else:
+            subprocess.Popen(
+                [ollama, "serve"],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+            )
+    except Exception as exc:
+        console.print(f"[red]启动 ollama serve 失败: {exc}[/red]")
+        return False
+
+    import time
+
+    for _ in range(30):
+        if _ollama_is_running():
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def _save_embedding_config(
     *,
     provider: str,
@@ -859,14 +982,34 @@ def _prompt_provider_triplet(menu_choice: str) -> tuple[str, str, str, str]:
     if provider == "ollama":
         console.print(
             "\n[bold]配置本地 Ollama[/bold]\n"
-            "[dim]需要 Ollama 服务在跑（`ollama serve` 或 Mac 直接打开 Ollama.app），"
-            "并且至少拉了一个模型。建议: ollama pull llama3。"
-            "无需 API Key。[/dim]"
+            "[dim]我会自动帮你装/启动/拉模型，无需 API Key。第一次拉模型可能要"
+            "几分钟（取决于网速）。[/dim]"
         )
+        # Phase 1: ensure binary exists (install if missing, with consent).
+        if not _ollama_install_if_missing():
+            return provider, default_base_url, "", default_model
+
+        # Phase 2: ensure daemon is up.
+        if not _ollama_start_serve_background():
+            console.print(
+                "[red]Ollama 已装好但服务没起来。请手动跑 `ollama serve` 后重试。[/red]"
+            )
+            return provider, default_base_url, "", default_model
+
+        # Phase 3: ask which model and pull if missing.
         model = typer.prompt(
-            "Ollama 上的模型名（已经 pull 过的）",
+            "选个 Ollama 模型（默认 llama3，按回车接受）",
             default=default_model,
         ).strip() or default_model
+        if not _ollama_has_model(model):
+            console.print(f"开始拉取 {model}（首次下载耗时几分钟）…")
+            if not _ollama_pull_model(model):
+                console.print(
+                    f"[red]{model} 拉取失败。可以稍后手动跑 `ollama pull {model}` "
+                    "再重启 backend。[/red]"
+                )
+        else:
+            console.print(f"[green]模型 {model} 已就绪。[/green]")
         return provider, default_base_url, "", model
 
     # Cloud providers: ask for key (mandatory), let model fall to default.
@@ -916,12 +1059,14 @@ def _interactive_embedding_setup(default_provider: str) -> None:
         return
 
     if choice == "2":
-        if not _ollama_is_running():
+        # Auto-install + start + pull. Same flow as Phase 1's Ollama
+        # branch — share the helpers so the user doesn't have to learn
+        # different setups for chat vs embedding.
+        if not _ollama_install_if_missing():
+            return
+        if not _ollama_start_serve_background():
             console.print(
-                "[yellow]检测不到 Ollama 服务（localhost:11434）。[/yellow]\n"
-                "  Mac:     brew install ollama && ollama serve\n"
-                "  Windows: 从 https://ollama.com/download 下载安装包\n"
-                "  装好后重新运行 `openbiliclaw setup-embedding` 即可启用。"
+                "[red]Ollama 已装好但服务没起来。请手动跑 `ollama serve` 后重试。[/red]"
             )
             return
 
