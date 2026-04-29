@@ -101,12 +101,36 @@ The Chrome extension (`extension/`) captures user behavior on bilibili.com pages
 
 ## Documentation Requirements
 
-When completing a task from `docs/v0.1-todolist.md`, these doc updates are **mandatory**:
+**Every commit/merge to main, and every release, must keep docs and architecture diagrams in sync with the code.** Not optional. Branches without doc updates should not merge. Scope is not limited to "todolist tasks" — any change that touches interfaces, module boundaries, data flow, config, CLI, dependencies, or external integrations triggers this rule.
 
-1. `docs/modules/<module>.md` - Update "implemented features" table and "public API" section
-2. `docs/changelog.md` - Add entry under the relevant milestone
-3. `docs/modules/cli.md` - If CLI commands changed
-4. `docs/modules/config.md` - If config fields changed
+Mandatory updates (apply whichever match the PR's scope):
+
+1. `docs/modules/<module>.md` — update "implemented features" table and "public API" section for any module whose code changed
+2. `docs/changelog.md` — every release adds a top entry (`## vX.Y.Z: theme (YYYY-MM-DD)`); every PR also adds a short bullet under the current version block
+3. **Architecture diagrams** — when a PR changes cross-module wiring, adds modules / adapters, alters data flow, or introduces a new dependency block (e.g. embedding service, xhs path):
+   - `docs/architecture.md` (text layers + module roles)
+   - `docs/spec.md` §3 system architecture ASCII diagram
+   - `README.md` and `README_EN.md` top-of-page architecture diagrams
+   The architecture diagram is not decorative — it MUST reflect what's on main.
+4. `docs/modules/cli.md` — when CLI commands are added / removed / renamed
+5. `docs/modules/config.md` — when `config.toml` fields are added / renamed / removed
+
+Update on demand based on PR type:
+
+6. `docs/index.md` — new module docs, module-status changes, highlighted docs
+7. `README.md` / `README_EN.md` — positioning changes, tagline changes, core feature list changes, install flow changes, version releases
+8. GitHub About (`gh repo edit --description`) — when project positioning shifts
+9. `scripts/install.sh` post-install summary, `docs/agent-install.md`, `docs/docker-deployment.md` — installer flow / dependencies / opt-in steps changing
+10. `README.md` 📌 v0.X.Y highlights callout — every user-perceivable change (perf, behaviour difference, new dependency)
+
+Pre-merge checklist:
+
+- [ ] `docs/modules/<modules touched>.md` updated
+- [ ] `docs/changelog.md` has a new entry
+- [ ] Architecture changed → `docs/architecture.md` + `docs/spec.md` diagram + README diagrams synced
+- [ ] CLI / config changed → corresponding module doc synced
+- [ ] Installer flow changed → `install.sh` output + agent-install.md + docker-deployment.md synced
+- [ ] Positioning / tagline changed → README CN/EN + GitHub About synced
 
 ## Development Order
 
