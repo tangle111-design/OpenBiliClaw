@@ -4,6 +4,23 @@
 
 ---
 
+## v0.3.3: 修复本地 Ollama embedding 兜底实际不生效（2026-04-29）
+
+### 关键 bug 修复
+
+**症状**：v0.3.0 引入的本地 Ollama embedding 兜底功能在用户跑 `setup-embedding` 配好后看似生效（`config.toml` 写入 `[llm.embedding] provider="ollama"`），但实际所有 embedding 调用仍然打到 Gemini。线上日志显示 100% 的 embedding 都在 `generativelanguage.googleapis.com/v1beta/.../gemini-embedding-001:batchEmbedContents`，0% 在 `localhost:11434`。
+
+**根因**：`_maybe_ollama_provider` 只在 `[llm.ollama] model` 或 `base_url` 有填的时候才注册 ollama provider，但 `setup-embedding` 向导只写 `[llm.embedding]`，没碰 `[llm.ollama]`。Embedding 服务找不到 ollama provider，静默回退到 default LLM provider（Gemini）。
+
+**修复**：
+
+- `_maybe_ollama_provider` 现在也在 `[llm.embedding].provider == "ollama"` 时自动注册 ollama，使用默认 base_url `http://localhost:11434/v1`（不影响 default chat provider）
+- `_save_embedding_provider_config` 在写 `[llm.embedding]` 时如果 `[llm.ollama] base_url` 还是空，自动填 `http://localhost:11434/v1`，避免后续配置检视时 `[llm.ollama]` 全空带来的疑惑
+
+线上 backend 重启后实测 embedding 调用立刻切到 `localhost:11434/api/embeddings` ✓
+
+---
+
 ## v0.3.2: supergroup 合并迁离 serve 热路径（2026-04-29）
 
 ### 推荐 serve 路径零 API 调用
