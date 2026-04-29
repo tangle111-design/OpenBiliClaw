@@ -1288,6 +1288,16 @@ def init() -> None:
     soul_engine = _build_soul_engine()
 
     _print_page_title("初始化 OpenBiliClaw", "首次运行引导")
+    console.print(
+        "[bold yellow]⏱  这一步首次运行预计需要 2–5 分钟，"
+        "请保持网络畅通别中断。[/bold yellow]\n"
+        "  四个阶段会依次跑：\n"
+        "    1/4  拉 B 站历史 / 收藏 / 关注（≈ 20–60s，看你的列表大小）\n"
+        "    2/4  分析偏好（LLM 调用，≈ 30–90s）\n"
+        "    3/4  生成灵魂画像（LLM 调用，≈ 30–60s）\n"
+        "    4/4  发现首轮内容池（多策略并发 + LLM 评估，≈ 1–3 分钟）\n"
+        "[dim]全程会打印进度，不要以为卡住了——LLM 单次响应可能就要 10–30s。[/dim]\n"
+    )
 
     # Fetch all data sources in a single event loop to avoid httpx session closure.
     # Init signal mix:
