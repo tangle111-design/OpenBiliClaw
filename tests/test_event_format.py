@@ -213,3 +213,65 @@ def test_bilibili_and_xiaohongshu_events_share_consumer_contract() -> None:
     for event in (bili, xhs):
         assert consumer_view_keys.issubset(event.keys())
         assert consumer_metadata_keys.issubset(event["metadata"].keys())
+
+
+def test_extension_ingested_events_normalise_dict_context() -> None:
+    """Pre-v0.3.22 the /api/events ingest endpoint passed item.context
+    through verbatim, so dict-shaped context (extension-collected click
+    metadata) ended up in the database as a JSON blob and corrupted
+    LLM prompts. v0.3.22+ coerces non-string context to "" and folds
+    the original payload into metadata.raw_context for diagnostics.
+
+    This test covers the coercion logic by replicating what
+    ``ingest_events`` in api/app.py does (importing build_event from
+    sources.event_format) — keeps the contract pinned even if the
+    endpoint is later refactored.
+    """
+    raw_context_dict = {"video_id": "BV1", "ts": 12345}
+    metadata: dict = {"timestamp": 1700000000}
+    if not isinstance(raw_context_dict, str) and raw_context_dict:
+        metadata.setdefault("raw_context", raw_context_dict)
+    event = build_event(
+        event_type="click",
+        source_platform=SOURCE_BILIBILI,
+        title="一个视频",
+        url="https://www.bilibili.com/video/BV1",
+        author="某 UP",
+        context="",  # coerced from dict
+        metadata=metadata,
+    )
+    # Context is now a non-empty natural-language string
+    assert isinstance(event["context"], str)
+    assert event["context"]
+    assert "B 站" in event["context"]
+    # Original dict payload preserved for diagnostics
+    assert event["metadata"]["raw_context"] == raw_context_dict
+
+
+def test_feedback_event_uses_natural_language_context() -> None:
+    """v0.3.22+: /api/feedback now builds a custom context with the
+    feedback verb (点赞/踩/评论) instead of leaving context empty.
+    Replicates the api/app.py logic so the contract stays pinned."""
+    feedback_label = {"like": "点赞了", "dislike": "踩了", "comment": "评论了"}["dislike"]
+    rec_title = "某个视频"
+    note = "封面太花哨"
+    feedback_context = f"在 B 站{feedback_label}《{rec_title}》"
+    if note:
+        feedback_context = f"{feedback_context},备注:{note}"
+
+    event = build_event(
+        event_type="feedback",
+        source_platform=SOURCE_BILIBILI,
+        title=rec_title,
+        context=feedback_context,
+        metadata={
+            "recommendation_id": "rec-1",
+            "bvid": "BV1",
+            "feedback_type": "dislike",
+            "feedback_note": note,
+        },
+    )
+    assert "踩了" in event["context"]
+    assert "封面太花哨" in event["context"]
+    assert event["metadata"]["feedback_type"] == "dislike"
+    assert event["metadata"]["source_platform"] == SOURCE_BILIBILI

@@ -140,6 +140,8 @@ def build_preference_analysis_prompt(
 5. 所有文本字段（name、category、context 下的 patterns/session_type、disliked_topics）必须用中文。
 6. favorite_up_users 必须从事件的 up_name 字段原样复制，一个字都不能改。先逐条扫描所有事件收集 up_name 值，再与 existing_preference.favorite_up_users 合并去重。严禁根据话题推测可能的UP主名称。如果本批事件中无 up_name 字段，保留 existing_preference 中的原有列表不变。
 7. cognitive_style 描述用户的信息处理偏好（如思维方式、阅读习惯、理解路径），3~5 条，基于观看行为模式推断，不要照搬兴趣标签。
+8. 每条事件都自带一个 `context` 字段（v0.3.22+ 起所有源都统一填充），它是该事件的中文自然语言摘要（如"在 B 站收藏了《讲透历史叙事》,作者:历史实验室"或"小红书点赞:手冲咖啡入门 作者:豆子老师"）。**优先把 context 作为人类可读的事件描述**来理解用户行为；同时用 metadata 里的结构化字段（up_name、bvid、folder、source_platform 等）做精确匹配 / 复制。
+9. 用户的兴趣信号可能跨平台（B 站 / 小红书 / 等）；通过 metadata.source_platform 区分来源，但兴趣分析本身要把所有平台的信号一视同仁，不要因为来自小红书就降权。
 </rules>
 
 <output_schema>
@@ -544,6 +546,7 @@ def build_awareness_prompt(
 2. observation 只能描述观察到的行为倾向，不要下人格定论。
 3. trend 和 emotion_guess 必须使用保守表述。
 4. 如果证据不足，可以返回空数组。
+5. 每条事件自带 `context` 字段（v0.3.22+ 跨源统一），是中文自然语言摘要——优先以 context 来理解事件本身，配合 metadata.source_platform 区分平台。所有平台信号都参与觉察推断,不区别对待。
 </rules>
 
 <output_schema>
@@ -863,11 +866,11 @@ def build_content_evaluation_prompt(
         "light_chat（闲聊/杂谈/其他）\n"
         "8. franchise_key（可空）：内容如果明确属于某个具体 IP / 系列 / 作品 / 品牌，"
         "填它的规范名（中文优先），用于跨 topic_group 的同 IP 去重。例：\n"
-        "   - 「AI 重绘原神地图」「提瓦特摄影」「蒙德角色真实化」 → \"原神\"\n"
-        "   - 「星穹铁道 1.6 实战」「崩铁 角色养成」 → \"崩坏:星穹铁道\"\n"
-        "   - 「ChatGPT 工作流」「OpenAI 新模型」 → \"ChatGPT\"\n"
-        "   - 「黑神话悟空 二周目」 → \"黑神话:悟空\"\n"
-        "   - 「番茄炒蛋 5 分钟教程」「读书博主 推荐书单」 → \"\""
+        '   - 「AI 重绘原神地图」「提瓦特摄影」「蒙德角色真实化」 → "原神"\n'
+        '   - 「星穹铁道 1.6 实战」「崩铁 角色养成」 → "崩坏:星穹铁道"\n'
+        '   - 「ChatGPT 工作流」「OpenAI 新模型」 → "ChatGPT"\n'
+        '   - 「黑神话悟空 二周目」 → "黑神话:悟空"\n'
+        '   - 「番茄炒蛋 5 分钟教程」「读书博主 推荐书单」 → ""'
         "（一般科普 / 美食 / 通用资讯都填空字符串，不要硬凑）\n"
         "   - 同一 IP 必须用相同写法，不要在「原神」「Genshin」「米哈游 原神」之间切换。\n"
         "</rules>\n\n"
@@ -936,12 +939,12 @@ def build_batch_content_evaluation_prompt(
         "7. franchise_key 规则：内容如果明确属于某个具体 IP / 系列 / 作品 / 品牌，"
         "填它的规范名（中文优先），用于跨 topic_group 的同 IP 去重。例：\n"
         "   - 「AI 重绘原神地图」「提瓦特摄影」「蒙德角色真实化」"
-        "→ franchise_key = \"原神\"\n"
+        '→ franchise_key = "原神"\n'
         "   - 「星穹铁道 1.6 实战」「崩铁 角色养成」"
-        "→ franchise_key = \"崩坏:星穹铁道\"\n"
-        "   - 「ChatGPT 工作流」「OpenAI 新模型」 → franchise_key = \"ChatGPT\"\n"
-        "   - 「黑神话悟空 二周目」 → franchise_key = \"黑神话:悟空\"\n"
-        "   - 「番茄炒蛋 5 分钟教程」「读书博主 推荐书单」 → franchise_key = \"\""
+        '→ franchise_key = "崩坏:星穹铁道"\n'
+        '   - 「ChatGPT 工作流」「OpenAI 新模型」 → franchise_key = "ChatGPT"\n'
+        '   - 「黑神话悟空 二周目」 → franchise_key = "黑神话:悟空"\n'
+        '   - 「番茄炒蛋 5 分钟教程」「读书博主 推荐书单」 → franchise_key = ""'
         "（一般科普 / 美食 / 通用资讯都填空字符串，不要硬凑）\n"
         "   - 同一 IP 必须用相同写法，不要在「原神」「Genshin」「米哈游 原神」之间切换。\n"
         "8. 评分要尊重画像里的多样性诉求，双向保护：\n"
@@ -1268,7 +1271,7 @@ def build_speculation_generation_prompt(
         "   ≤5%  MBTI（**仅作弱参考**）\n"
         "\n"
         "MBTI 标签本身带显著语料偏置（网上写 INTP/INTJ 的人远多于 ESFP/ESTP），\n"
-        "看到\"拆解 / 原理 / 审慎\"这类词不要反射性套\"INTP 该看什么\"模板。\n"
+        '看到"拆解 / 原理 / 审慎"这类词不要反射性套"INTP 该看什么"模板。\n'
         "当 likes 分布与 MBTI 暗示方向冲突时，**永远优先 likes**。\n"
         "</signal_weights>\n\n"
         "<rules>\n"
@@ -1350,7 +1353,7 @@ def build_speculation_generation_prompt(
         "- 用户在某 category 上权重 0.95+，结果生成 5/5 都是其他 category\n"
         "  （漏掉用户主轴，违反 signal_weights）\n"
         "- 强行 blend：每条都套『因为 ta 有 deep_need X』的同一个心理学模板\n"
-        "- domain 抽象到\"经济学 / 心理学 / 社会学 / 科学\"层级\n"
+        '- domain 抽象到"经济学 / 心理学 / 社会学 / 科学"层级\n'
         "  （ta 实际不会在 B 站搜这种学术词）\n"
         "</bridge_examples>\n\n"
         "<output_schema>\n"

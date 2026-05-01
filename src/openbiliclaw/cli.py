@@ -1650,7 +1650,15 @@ def _import_xhs_bootstrap_events() -> tuple[list[dict[str, Any]], dict[str, int]
 
 
 def _xhs_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert XHS bootstrap events into profile-builder history rows."""
+    """Convert XHS bootstrap events into profile-builder history rows.
+
+    Preserves the natural-language ``context`` field from the source
+    event so downstream consumers that opt into context-aware
+    summarisation can use it. Profile_builder's current
+    ``_summarize_history`` doesn't read ``context``, but keeping it
+    intact means the data flows uniformly across sources without
+    blocking future analyzer enhancements.
+    """
     rows: list[dict[str, Any]] = []
     for event in events:
         metadata = event.get("metadata", {})
@@ -1662,6 +1670,10 @@ def _xhs_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str,
                 "url": str(event.get("url", "")).strip(),
                 "author": str(metadata.get("author", "")).strip(),
                 "event_type": str(event.get("event_type", "")).strip(),
+                # v0.3.22+: preserve natural-language context so the
+                # history list carries the same single-source-of-truth
+                # description as the underlying event.
+                "context": str(event.get("context", "")).strip(),
                 "metadata": metadata,
                 "source_platform": "xiaohongshu",
             }

@@ -277,8 +277,7 @@ def create_app(
                 return BilibiliCookieResponse(
                     ok=False,
                     authenticated=False,
-                    message=status.message
-                    or "Cookie validation failed; not saved.",
+                    message=status.message or "Cookie validation failed; not saved.",
                 )
             authenticated = True
             username = status.username or ""
@@ -611,20 +610,42 @@ def create_app(
 
     @app.post("/api/events", response_model=EventIngestResponse)
     async def ingest_events(payload: BehaviorEventBatchIn) -> EventIngestResponse:
+        from openbiliclaw.sources.event_format import build_event
+
         accepted = 0
         for item in payload.events:
             source_platform = (item.source_platform or "bilibili").strip() or "bilibili"
-            event = {
-                "event_type": item.type,
-                "url": item.url,
-                "title": item.title,
-                "context": item.context,
-                "metadata": {
-                    **item.metadata,
-                    "timestamp": item.timestamp,
-                    "source_platform": source_platform,
-                },
+            # Coerce context to a string for downstream LLM consumers.
+            # Pre-v0.3.22 this passed item.context through verbatim — when
+            # the extension sent a dict (e.g. structured click context),
+            # database serialization stored it as a JSON blob and prompt
+            # builders surfaced "[object Object]"-like noise. build_event
+            # fills in a natural-language fallback when context is empty
+            # / non-string.
+            raw_context = item.context
+            if isinstance(raw_context, str):
+                context_str = raw_context.strip()
+            elif raw_context is None:
+                context_str = ""
+            else:
+                # Dict / list / other — fold into metadata so it's
+                # preserved without polluting the LLM-facing context.
+                context_str = ""
+            metadata = {
+                **item.metadata,
+                "timestamp": item.timestamp,
             }
+            if not isinstance(raw_context, str) and raw_context:
+                metadata.setdefault("raw_context", raw_context)
+            event = build_event(
+                event_type=item.type,
+                source_platform=source_platform,
+                title=item.title or "",
+                url=item.url or "",
+                author=str(metadata.get("author", "") or metadata.get("up_name", "") or ""),
+                context=context_str,
+                metadata=metadata,
+            )
             await ctx.memory_manager.propagate_event(event)
             accepted += 1
         refresh_after_event_ingest = getattr(
@@ -971,10 +992,7 @@ def create_app(
         disliked_phrases = load_phrases() if callable(load_phrases) else []
 
         def passes_filter(row: dict[str, Any]) -> bool:
-            haystack = (
-                f"{str(row.get('title', '')).lower()} "
-                f"{str(row.get('tags', '')).lower()}"
-            )
+            haystack = f"{str(row.get('title', '')).lower()} {str(row.get('tags', '')).lower()}"
             return not any(p and p in haystack for p in disliked_phrases)
 
         items = [
@@ -1353,6 +1371,7 @@ def create_app(
                 # next profile-summary refresh.
                 tick_fn = getattr(speculator, "force_tick", None)
                 if callable(tick_fn):
+
                     async def _bg_force_tick() -> None:
                         try:
                             profile = await ctx.soul_engine.get_profile()
@@ -1362,6 +1381,7 @@ def create_app(
                                 tick_fn(profile)
                         except Exception:
                             logger.exception("Background force_tick after confirm failed")
+
                     asyncio.create_task(_bg_force_tick())
                 # Record cognition update so it shows in "阿b最近记住了什么"
                 _record_probe_cognition(
@@ -1480,17 +1500,36 @@ def create_app(
             feedback_type=feedback_type,
             feedback_note=note,
         )
+        from openbiliclaw.sources.event_format import (
+            SOURCE_BILIBILI,
+            build_event,
+        )
+
+        rec_title = str(recommendation.get("title", ""))
+        # Tailor a natural-language context per feedback type — the
+        # "feedback" verb in the generic table doesn't capture the
+        # like/dislike/comment distinction the LLM cares about.
+        feedback_label = {
+            "like": "点赞了",
+            "dislike": "踩了",
+            "comment": "评论了",
+        }.get(feedback_type, "反馈了")
+        feedback_context = f"在 B 站{feedback_label}《{rec_title}》"
+        if note:
+            feedback_context = f"{feedback_context},备注:{note}"
         await ctx.memory_manager.propagate_event(
-            {
-                "event_type": "feedback",
-                "title": str(recommendation.get("title", "")),
-                "metadata": {
+            build_event(
+                event_type="feedback",
+                source_platform=SOURCE_BILIBILI,
+                title=rec_title,
+                context=feedback_context,
+                metadata={
                     "recommendation_id": payload.recommendation_id,
                     "bvid": recommendation.get("bvid", ""),
                     "feedback_type": feedback_type,
                     "feedback_note": note,
                 },
-            }
+            )
         )
         record_immediate_feedback_cognition = getattr(
             ctx.soul_engine,
@@ -1551,19 +1590,36 @@ def create_app(
             raise HTTPException(status_code=422, detail="bvid is required.")
 
         # Persist the click as an event so history/query paths can see it.
+        from openbiliclaw.sources.event_format import (
+            SOURCE_BILIBILI,
+            build_event,
+        )
+
+        click_extra_parts: list[str] = []
+        if topic_label:
+            click_extra_parts.append(f"主题:{topic_label}")
+        if up_name:
+            click_extra_parts.append(f"UP:{up_name}")
+        click_context = f"在 B 站点开了《{title}》"
+        if click_extra_parts:
+            click_context = f"{click_context}({','.join(click_extra_parts)})"
         with suppress(Exception):
             await ctx.memory_manager.propagate_event(
-                {
-                    "event_type": "click",
-                    "title": title,
-                    "metadata": {
+                build_event(
+                    event_type="click",
+                    source_platform=SOURCE_BILIBILI,
+                    title=title,
+                    url=f"https://www.bilibili.com/video/{bvid}" if bvid else "",
+                    author=up_name,
+                    context=click_context,
+                    metadata={
                         "recommendation_id": payload.recommendation_id,
                         "bvid": bvid,
                         "topic_label": topic_label,
                         "up_name": up_name,
                         "source": "recommendation_click",
                     },
-                }
+                )
             )
 
         # Push a strong signal into the profile update pipeline.
