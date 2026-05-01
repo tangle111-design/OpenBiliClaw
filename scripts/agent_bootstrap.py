@@ -62,6 +62,14 @@ HEALTH_POLL_INTERVAL = 2.0
 SUPPORTED_PROVIDERS = ("openai", "claude", "gemini", "deepseek", "ollama", "openrouter")
 REMOTE_PROVIDERS = ("openai", "claude", "gemini", "deepseek", "openrouter")
 
+# Providers whose backend has no embeddings endpoint. When a user picks
+# one of these as the primary LLM and doesn't explicitly configure
+# embedding, we auto-wire local Ollama bge-m3 so the install actually
+# pulls the embedding model (otherwise embeddings silently fall back at
+# runtime to whatever the registry can find — see registry.py
+# build_embedding_service).
+PROVIDERS_WITHOUT_EMBED = ("claude", "deepseek", "openrouter")
+
 
 # ---------------------------------------------------------------------------
 # Immutable status + exit codes
@@ -391,9 +399,8 @@ def start_ollama_serve(wait_seconds: float = 15.0) -> bool:
 
     devnull = subprocess.DEVNULL
     if os.name == "nt":
-        creationflags = (
-            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        creationflags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
         )
         subprocess.Popen(  # noqa: S603 — known binary path from PATH
             [ollama, "serve"],
@@ -724,6 +731,54 @@ def update_config_secret(config_path: Path, section: str, key: str, value: str) 
         config_path.write_text(updated, encoding="utf-8")
 
 
+def clear_toml_string_value(content: str, section: str, key: str) -> tuple[str, bool]:
+    """Reset ``key = "..."`` under ``[section]`` to empty (``key = ""``).
+
+    Returns ``(new_content, did_change)``. We **set to empty** rather than
+    deleting the line because the rest of the codebase reads config via
+    Pydantic models that expect every field to exist. Setting to empty
+    string lets defaults take over (e.g. ``base_url=""`` → OpenAI SDK
+    uses its built-in ``https://api.openai.com/v1``).
+    """
+
+    new_line = f'{key} = ""'
+    section_header = f"[{section}]"
+    lines = content.splitlines()
+    in_section = False
+    changed = False
+    for index, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_section = stripped == section_header
+            continue
+        if not in_section:
+            continue
+        if stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            continue
+        lhs = stripped.split("=", 1)[0].strip()
+        if lhs == key:
+            indent = raw_line[: len(raw_line) - len(raw_line.lstrip())]
+            new_full = f"{indent}{new_line}"
+            if new_full != raw_line:
+                lines[index] = new_full
+                changed = True
+            break
+    trailing_newline = "\n" if content.endswith("\n") else ""
+    return "\n".join(lines) + trailing_newline, changed
+
+
+def clear_config_value(config_path: Path, section: str, key: str) -> bool:
+    """Reset a config field to empty in-place. Returns True if it changed."""
+
+    original = config_path.read_text(encoding="utf-8")
+    updated, changed = clear_toml_string_value(original, section, key)
+    if changed:
+        config_path.write_text(updated, encoding="utf-8")
+    return changed
+
+
 def reuse_config_secrets(project_dir: Path, source_dir: Path) -> dict[str, Any]:
     """Copy API keys + Bilibili cookie from an existing OpenBiliClaw checkout."""
 
@@ -838,9 +893,7 @@ def apply_embedding_config(
     if target_provider == "ollama":
         existing = read_simple_toml(config_path).get("llm", {}).get("ollama", {})
         if not str(existing.get("base_url", "")).strip():
-            update_config_secret(
-                config_path, "llm.ollama", "base_url", "http://localhost:11434/v1"
-            )
+            update_config_secret(config_path, "llm.ollama", "base_url", "http://localhost:11434/v1")
             written.append("llm.ollama.base_url(seeded)")
 
     return {"written": written, "provider": target_provider}
@@ -1238,6 +1291,26 @@ def run(args: argparse.Namespace) -> int:
                 {"provider": provider, "base_url": args.llm_base_url},
             )
         )
+    elif args.provider == "openai":
+        # User picked OpenAI 官方 (option 2 in agent-install.md). If a
+        # previous run wrote a gateway URL into [llm.openai] base_url
+        # (option 4), it would silently keep routing to that gateway.
+        # Reset the field to "" so the OpenAI SDK falls back to its
+        # built-in https://api.openai.com/v1.
+        if clear_config_value(project_dir / "config.toml", "llm.openai", "base_url"):
+            emit(
+                BootstrapResult(
+                    "ok",
+                    "base_url_reset",
+                    {
+                        "provider": "openai",
+                        "reason": (
+                            "--provider openai given without --llm-base-url; "
+                            "cleared stale value so SDK uses official OpenAI endpoint"
+                        ),
+                    },
+                )
+            )
 
     if args.llm_model is not None:
         provider = args.provider or current_provider
@@ -1265,6 +1338,47 @@ def run(args: argparse.Namespace) -> int:
             api_key=args.embedding_api_key,
         )
         emit(BootstrapResult("ok", "embedding_set", summary))
+
+    # When the primary LLM is a provider with no embeddings endpoint
+    # (Claude / DeepSeek / OpenRouter) AND the user didn't configure
+    # embedding explicitly, auto-wire local Ollama bge-m3. This makes
+    # the install actually pull the embedding model in the same run
+    # instead of leaving the user in a "primary works, embedding
+    # silently broken" state.
+    auto_embedding_to_ollama = False
+    effective_provider = (args.provider or detect_missing_secrets(project_dir)["provider"]) or ""
+    if effective_provider in PROVIDERS_WITHOUT_EMBED and not embedding_touched:
+        # Don't overwrite an existing [llm.embedding] provider that the
+        # user (or a prior bootstrap run) set. Only auto-wire when the
+        # field is empty.
+        existing_emb = (
+            read_simple_toml(project_dir / "config.toml")
+            .get("llm", {})
+            .get("embedding", {})
+            .get("provider", "")
+        )
+        if not str(existing_emb).strip():
+            apply_embedding_config(
+                project_dir,
+                provider="ollama",
+                model="bge-m3",
+                base_url=None,
+                api_key=None,
+            )
+            auto_embedding_to_ollama = True
+            emit(
+                BootstrapResult(
+                    "ok",
+                    "embedding_auto_ollama",
+                    {
+                        "primary_provider": effective_provider,
+                        "reason": (
+                            f"{effective_provider!r} has no embeddings endpoint; "
+                            "wired local Ollama bge-m3 so install pulls the model now"
+                        ),
+                    },
+                )
+            )
 
     if args.module_override:
         try:
@@ -1302,7 +1416,18 @@ def run(args: argparse.Namespace) -> int:
         ollama_models_needed.append((args.llm_model or "llama3").strip())
     if (args.embedding_provider or "").strip() == "ollama":
         ollama_models_needed.append((args.embedding_model or "bge-m3").strip())
+    # When we auto-wired Ollama for embedding (Claude / DeepSeek /
+    # OpenRouter primary path), make sure bge-m3 is pulled so the
+    # embedding service has a working backend at first run.
+    if auto_embedding_to_ollama:
+        ollama_models_needed.append("bge-m3")
     ollama_models_needed = [m for m in ollama_models_needed if m]
+    # Dedupe while preserving order (chat model first, then embedding).
+    deduped: list[str] = []
+    for model_name in ollama_models_needed:
+        if model_name not in deduped:
+            deduped.append(model_name)
+    ollama_models_needed = deduped
     if ollama_models_needed and not args.skip_ollama_setup and mode != "docker":
         ollama_summary = ensure_ollama_ready(ollama_models_needed)
         emit(BootstrapResult("ok", "ollama_ready", ollama_summary))

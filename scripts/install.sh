@@ -284,10 +284,25 @@ PY
         health_url="http://${HOST}:${PORT}/api/health"
     fi
 
+    # Distinguish "only Bilibili cookie missing" (the expected state for
+    # users on the recommended browser-extension auto-sync path) from
+    # "still need an LLM key" (a genuinely missing prerequisite). The
+    # YELLOW + "partial / credentials still missing" wording on the
+    # cookie-only case used to read like an install failure to users.
+    local missing_only_cookie=0
+    if [ -n "$missing" ] && [ "$missing" = "bilibili.cookie" ]; then
+        missing_only_cookie=1
+    fi
+
     echo ""
     echo "================================================================"
     if [ "$status" = "complete" ]; then
         printf '%s OpenBiliClaw install complete%s\n' "$C_GREEN" "$C_RESET"
+    elif [ "$missing_only_cookie" = "1" ]; then
+        # Backend is up and configured; the extension will deliver the
+        # cookie when the user installs it. This is the happy path, not
+        # a failure — show it green-ish.
+        printf '%s OpenBiliClaw backend ready — waiting for browser extension to sync B站 Cookie%s\n' "$C_GREEN" "$C_RESET"
     elif [ "$status" = "running_with_missing_secrets" ] || [ "$status" = "needs_secrets" ]; then
         printf '%s OpenBiliClaw install partial (credentials still missing)%s\n' "$C_YELLOW" "$C_RESET"
     else
@@ -298,6 +313,11 @@ PY
     echo "Checkout:    $INSTALL_DIR"
     if [ -n "$REUSE_FROM" ]; then
         echo "Reused from: $REUSE_FROM"
+        echo "             ⓘ Reused API keys are NOT validated. If the backend"
+        echo "               returns 401 / auth errors after start-up, the old"
+        echo "               key is probably expired — re-run with"
+        echo "               REUSE_FROM= curl -fsSL ... | bash"
+        echo "               to skip auto-reuse and supply fresh credentials."
     fi
     echo "Health URL:  $health_url"
     if [ -n "$missing" ]; then
@@ -307,7 +327,28 @@ PY
     fi
     echo ""
 
-    if [ -n "$missing" ]; then
+    if [ "$missing_only_cookie" = "1" ]; then
+        echo "Next step — get your B站 Cookie to the backend (pick ONE):"
+        echo ""
+        echo "  (A) [recommended, zero config]"
+        echo "      Install the browser extension and log in to bilibili.com."
+        echo "      It auto-syncs your cookie to this backend within seconds."
+        echo "        Extension: https://github.com/whiteguo233/OpenBiliClaw/releases"
+        echo "      Once the cookie arrives, the backend automatically runs"
+        echo "      'openbiliclaw init' (pulls history, builds soul profile,"
+        echo "      runs first discovery — 2-5 min)."
+        echo ""
+        echo "  (B) [manual fallback]"
+        echo "      F12 → Network → copy the 'Cookie' header from any"
+        echo "      bilibili.com request, then run:"
+        echo "        python3 $INSTALL_DIR/scripts/agent_bootstrap.py \\"
+        echo "            --project-dir $INSTALL_DIR \\"
+        echo "            --bilibili-cookie '<YOUR_COOKIE>' \\"
+        echo "            --port $PORT --host $HOST"
+        echo ""
+        echo "  Verify the backend is healthy any time:"
+        echo "      curl -sS $health_url"
+    elif [ -n "$missing" ]; then
         echo "Next steps (credentials are missing):"
         echo ""
         echo "  1. Choose your LLM provider (default: openai):"

@@ -4,6 +4,35 @@
 
 ---
 
+## v0.3.20: 装机流程 UX 修复 + Embedding 自动 fallback（2026-05-01）
+
+针对"一句话给智能体安装"流程从普通用户视角做了若干修复：3 个真 bug（Claude/DeepSeek/OpenRouter 主模型 + 跟随 LLM 的 embedding 静默失败、`base_url` 残留、复用旧 Key 无校验）和 5 个 UX 改进（主菜单去掉自建网关 / Embedding 改成"有默认值的取舍提问" / 状态块软化 / README 加 AI Agent 前置 / Ollama 加硬件门槛说明）。
+
+### 修复
+
+- **B1 真 bug**：`build_embedding_service` 现在用新增的 `LLMProvider.supports_embedding` 标志做 fallback，而不是脆弱的 `hasattr(provider, "embed")`。Claude / DeepSeek / OpenRouter 标记为 `False`（前两个没 embedding API、OpenRouter 路由覆盖不全）；OpenAI / Gemini / Ollama 标记为 `True`。当主 LLM 无 embedding 能力时自动回退到 ollama → gemini → openai 链中第一个能用的，而不是返回 `None` 让推荐管线在运行时炸。同时 `OpenAIProvider` 新增 `embed()` 走 `/v1/embeddings`，为之前 OpenAI 用户没显式配 embedding 时的同样静默 None bug 补上一刀
+- **B1 配套**：`agent_bootstrap.py` 在主 LLM 是 Claude / DeepSeek / OpenRouter 且用户没显式传 `--embedding-*` 时，自动写 `[llm.embedding] provider="ollama" model="bge-m3"`，并把 `bge-m3` 加进 ollama 模型预拉清单，让首次装机就把模型拉好——不再"装完了才发现 embedding 没拉模型"
+- **B2 真 bug**：`set_toml_string_value` 之前只更新不删除，从自建网关（option 4）切回 OpenAI 官方（option 2）会留 `base_url` 残留，请求继续打老网关。新增 `clear_toml_string_value` / `clear_config_value`；当 `--provider openai` 显式给出且 `--llm-base-url` 未给时，自动清空 `[llm.openai] base_url`，让 SDK 回到 `https://api.openai.com/v1`，并发 `base_url_reset` 事件
+- **B4 提示**：`install.sh` 复用既有 checkout 的 API Key 时摘要里加一段 ⓘ 提示，说明复用 Key 不会做校验，401 时怎么用 `REUSE_FROM=` 跳过。复用本身保持原行为（无侵入），只把"信息可见性"从隐式抬到显式
+
+### 体验
+
+- **D1 / D3 主菜单**：`docs/agent-install.md` Step 1 把"OpenAI 协议兼容自建网关"从平级 4 选 1 移到 "Advanced" 折叠节，主菜单只剩 3 项；新主推改成 DeepSeek（¥0.001/千 token，几乎免费），Ollama 改回"完全离线 / 不要 Key"路径并明确加上 16GB+ 内存 / CPU 推理慢的硬件门槛——不再误导新手把 Ollama 当"零摩擦"
+- **D2 Embedding 改成"有默认的取舍提问"**：早期版本是"三选一让用户读 200 字解释"，本次改 v1（完全隐藏）发现霸道，最终落地 v2 ——Step 3 仍然问，但每个选项有清晰的取舍说明 + 默认推荐"不确定就回 1"：① 本地 Ollama bge-m3（默认 / 免费 / 离线）② 云端 Gemini（质量更高 / 跨语言更稳 / 需要 Key）③ 跟随主 LLM。同时保留"用户跳过 / 选项 3 + 主 LLM 是 Claude/DeepSeek/OpenRouter"时 bootstrap 的自动写 Ollama 兜底，避免运行时静默失败
+- **D4 状态文案**：`install.sh` 摘要在"只缺 B 站 Cookie"这种走扩展自动同步路径的预期状态下，不再打印黄字 `partial / credentials still missing`（普通用户读成"装失败了"），改为绿字 `backend ready — waiting for browser extension to sync B站 Cookie`，并把 Next steps 改成专门的扩展安装引导
+- **D5 README 前置**：`README.md` / `README_EN.md` 在"复制粘贴给 AI 智能体一键部署"上方加 📌 前置说明——你需要先有 Claude Code / Codex CLI / Cursor / Windsurf 任一；没有的用户直接看下方"自己跑一句话装机脚本"，而不是被动卡在"AI 智能体是啥"上
+
+### 测试
+
+- `tests/test_llm_registry.py` 新增 4 个回归测试：`test_build_embedding_service_falls_back_when_claude_is_default`（Claude → Ollama 自动回退）、`..._when_deepseek_is_default`（同上，重点验证 DeepSeek 即便继承了 OpenAIProvider.embed 也会被 `supports_embedding=False` 排除）、`..._returns_none_with_no_capable_provider`（无可用 embedding provider 时 None 而不是崩）、`test_openai_provider_supports_embedding_flag_is_set`（六个 provider 的 supports_embedding 标志正确）
+
+### 影响范围
+
+- 修改文件：`src/openbiliclaw/llm/{base,openai_provider,openrouter_provider,gemini_provider,registry}.py`、`scripts/{agent_bootstrap.py,install.sh}`、`docs/agent-install.md`、`README.md`、`README_EN.md`
+- 行为变化：之前 OpenAI 用户没显式配 embedding 也会静默返回 None；这次 OpenAI 用户会自动用 OpenAI 的 `text-embedding-3-small`，会少量计费。如果想省 quota 显式传 `--embedding-provider ollama --embedding-model bge-m3`
+
+---
+
 ## v0.3.19: 初始化画像混入小红书信号（2026-05-01）
 
 本次把小红书初始化画像导入接到现有事件层：`openbiliclaw init` 会继续拉 B 站历史 / 收藏 / 关注，同时 best-effort 等待浏览器插件执行 `bootstrap_profile` 任务，把小红书收藏、点赞和小红书页面内浏览记录信号混入首轮偏好分析与画像生成。

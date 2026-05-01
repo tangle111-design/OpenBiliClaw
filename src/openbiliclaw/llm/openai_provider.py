@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 class OpenAIProvider(LLMProvider):
     """OpenAI and compatible API provider."""
 
+    # OpenAI's API has a working embeddings endpoint
+    # (text-embedding-3-small / -large). Subclasses pointing at backends
+    # that don't expose embeddings (DeepSeek, OpenRouter, etc.) override
+    # this back to False — see DeepSeekProvider / OpenRouterProvider.
+    supports_embedding = True
+
     _MAX_RETRIES = 3
     _BASE_RETRY_DELAY = 0.25
 
@@ -135,6 +141,29 @@ class OpenAIProvider(LLMProvider):
             return False
         return isinstance(exc, (LLMProviderError, LLMTimeoutError))
 
+    async def embed(self, text: str, *, model: str = "text-embedding-3-small") -> list[float]:
+        """Get text embedding via OpenAI's ``/v1/embeddings`` endpoint.
+
+        Returns an empty list on failure so callers can degrade
+        gracefully (the embedding service treats empty vectors as
+        "no embedding"). This matches the contract Gemini/Ollama
+        providers already follow.
+        """
+        try:
+            response = await self._client.embeddings.create(
+                model=model,
+                input=text,
+            )
+            return list(response.data[0].embedding)
+        except Exception:
+            logger.warning(
+                "%s embedding failed (model=%s)",
+                self._provider_name,
+                model,
+                exc_info=True,
+            )
+            return []
+
     def _extra_headers(self) -> dict[str, str]:
         """Return optional provider-specific request headers."""
         return {}
@@ -172,6 +201,13 @@ class DeepSeekProvider(OpenAIProvider):
     level as top-level body fields (the DeepSeek API accepts both
     schemas).
     """
+
+    # DeepSeek's API does not expose an embeddings endpoint. The
+    # inherited ``embed()`` would 404 at call time, which used to
+    # silently break the recommendation pipeline for DeepSeek users
+    # who never ran ``setup-embedding``. Marking it False makes
+    # ``build_embedding_service`` fall back to ollama / gemini.
+    supports_embedding = False
 
     def __init__(
         self,

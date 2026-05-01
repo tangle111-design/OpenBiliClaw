@@ -234,6 +234,106 @@ def test_build_embedding_service_respects_explicit_model_override(
     assert service._model == "custom-embed-v2"
 
 
+# ---------------------------------------------------------------------------
+# Regression: providers without an embeddings endpoint must NOT silently
+# return None. v0.3.18 and earlier handed the request to Claude / DeepSeek /
+# OpenRouter via ``hasattr(provider, "embed")`` — DeepSeek and OpenRouter
+# inherit ``embed`` from OpenAIProvider so the check passed even though
+# the backend has no embeddings route, and the call would 404 at runtime.
+# v0.3.19+ uses the ``supports_embedding`` flag and falls back to a
+# provider that actually works.
+
+
+def test_build_embedding_service_falls_back_when_claude_is_default(
+    tmp_path,
+) -> None:
+    """Claude has no embeddings API. When it's the default LLM and the
+    [llm.embedding] section is empty, embedding must transparently fall
+    back to a registered provider that can actually embed (Ollama in this
+    fixture). Previously this returned None and the recommendation
+    pipeline silently lost diversity / dedup."""
+    config = Config(
+        llm=LLMConfig(
+            default_provider="claude",
+            claude=LLMProviderConfig(api_key="claude-key"),
+            ollama=LLMProviderConfig(model="llama3", base_url="http://localhost:11434/v1"),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+    service = build_embedding_service(config, registry)
+    assert service is not None, "embedding must fall back, not silently disable"
+    # Ollama wins the fallback chain (ordered: requested → ollama → gemini → openai).
+    assert service._provider.name == "ollama"
+    assert service._model == "bge-m3"
+
+
+def test_build_embedding_service_falls_back_when_deepseek_is_default(
+    tmp_path,
+) -> None:
+    """DeepSeek inherits ``embed`` from OpenAIProvider but its backend has
+    no embeddings route. ``supports_embedding=False`` makes the fallback
+    chain skip it instead of letting the call 404 at runtime."""
+    config = Config(
+        llm=LLMConfig(
+            default_provider="deepseek",
+            deepseek=LLMProviderConfig(api_key="deepseek-key"),
+            ollama=LLMProviderConfig(model="llama3", base_url="http://localhost:11434/v1"),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+    service = build_embedding_service(config, registry)
+    assert service is not None
+    assert service._provider.name == "ollama"
+
+
+def test_build_embedding_service_returns_none_with_no_capable_provider(
+    tmp_path,
+) -> None:
+    """When no registered provider can actually embed (e.g. Claude only),
+    the service returns None — but logs a warning so the failure mode is
+    observable, not silent."""
+    config = Config(
+        llm=LLMConfig(
+            default_provider="claude",
+            claude=LLMProviderConfig(api_key="claude-key"),
+        ),
+        data_dir=str(tmp_path),
+    )
+    registry = build_llm_registry(config)
+    service = build_embedding_service(config, registry)
+    assert service is None
+
+
+def test_openai_provider_supports_embedding_flag_is_set() -> None:
+    """``supports_embedding`` must be True for providers with a working
+    embeddings endpoint and False for those that don't. This is the
+    canonical signal used by ``build_embedding_service`` — replacing the
+    fragile ``hasattr(provider, "embed")`` check."""
+    from openbiliclaw.llm.claude_provider import ClaudeProvider
+    from openbiliclaw.llm.gemini_provider import gemini_sdk_available
+    from openbiliclaw.llm.ollama_provider import OllamaProvider
+    from openbiliclaw.llm.openai_provider import DeepSeekProvider, OpenAIProvider
+    from openbiliclaw.llm.openrouter_provider import OpenRouterProvider
+
+    # Have a working /v1/embeddings backend
+    assert OpenAIProvider.supports_embedding is True
+    assert OllamaProvider.supports_embedding is True
+
+    # Inherit from OpenAIProvider but their backend has no embeddings route
+    assert DeepSeekProvider.supports_embedding is False
+    assert OpenRouterProvider.supports_embedding is False
+
+    # No embeddings API at all
+    assert ClaudeProvider.supports_embedding is False
+
+    if gemini_sdk_available():
+        from openbiliclaw.llm.gemini_provider import GeminiProvider
+
+        assert GeminiProvider.supports_embedding is True
+
+
 @pytest.mark.asyncio
 async def test_registry_falls_back_on_retryable_errors() -> None:
     registry = build_llm_registry(
@@ -366,9 +466,7 @@ async def test_embedding_only_ollama_is_excluded_from_chat_fallback() -> None:
         )
     )
 
-    openai_fake = FakeProvider(
-        "openai", errors=[LLMProviderError("primary failed")]
-    )
+    openai_fake = FakeProvider("openai", errors=[LLMProviderError("primary failed")])
     ollama_fake = FakeProvider(
         "ollama",
         # If the bug is back, the chain will reach this — and we'd want
@@ -422,9 +520,7 @@ async def test_ollama_with_explicit_chat_model_is_chat_capable() -> None:
     registry = build_llm_registry(
         cfg,
         provider_overrides={
-            "openai": FakeProvider(
-                "openai", errors=[LLMProviderError("primary failed")]
-            ),
+            "openai": FakeProvider("openai", errors=[LLMProviderError("primary failed")]),
             "ollama": FakeProvider(
                 "ollama", responses=[LLMResponse(content="ok", provider="ollama")]
             ),

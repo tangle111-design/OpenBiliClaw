@@ -74,45 +74,100 @@ Next action (init has been run automatically):
 
 ## Handling missing credentials
 
-When `Missing` is non-empty, you (the AI agent) need to walk the user through
-**three things in order**: pick an LLM, decide on embedding, get a Bilibili
-cookie. Don't dump all questions at once — most users hit "I don't know what
-that means" if you do. Ask one block at a time, **explain what each thing
-does in plain language**, and offer the easy path first.
+When `Missing` is non-empty, you (the AI agent) walk the user through
+**three questions, in order**: pick an LLM, pick an embedding service,
+get a B 站 cookie. Each question must have a clear default — most users
+will accept it. The previous "tell me what an embedding is" framing
+was the failure mode; the new framing is "pick a default I prepared
+for you, or override it if you have an opinion."
+
+Don't dump all questions at once — ask one at a time, **explain what
+each thing does in plain language**, and offer the easy path first.
 
 ### Step 1 — Pick an LLM service
 
 Tell the user, in plain Chinese (or the conversation's language):
 
-> 「OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。你可以选：」
+> 「OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。你可以选:」
 
-Then list options **in this order**, with this framing:
+Present **three top-level options** (the OpenAI-compatible gateway path
+is folded into "Advanced" further down — do **not** put it in the
+user's main menu unless they explicitly mention having a gateway):
 
-| 选项 | 适合谁 | 是否需要 API Key | 是否要钱 |
+| 选项 | 适合谁 | 是否需要 API Key | 钱 / 速度 |
 |---|---|---|---|
-| 1. **本地 Ollama**（推荐新手 / 想白嫖 / 想离线用） | 不想花钱、不想申请 API Key、电脑跑得动小模型 | ❌ 不需要 | ❌ 完全免费 |
-| 2. OpenAI 官方（GPT-4o 等） | 已有 OpenAI 账户和 Key | ✅ 需要 | 按 token 计费 |
-| 3. Claude / Gemini / DeepSeek / OpenRouter（其他官方厂商） | 已有对应账户 | ✅ 需要 | 按 token 计费 |
-| 4. **OpenAI 协议兼容的自建/第三方网关**（Azure / vLLM / LMStudio / OneAPI / Together / 自建反代…） | 自己有部署、或团队提供了内网 LLM 网关 | ✅ 通常需要 | 看部署 |
+| 1. **DeepSeek**（默认推荐 / 极便宜） | 想几毛钱体验完整功能、不想自建 | ✅ 需要 | ¥0.001 / 千 token，几乎免费 |
+| 2. **OpenAI 官方** / **Gemini** / **Claude** / **OpenRouter** | 已有对应账户 | ✅ 需要 | 按 token 计费 |
+| 3. **本地 Ollama**（完全免费 / 离线 / 不要 Key） | 16GB+ 内存，能接受 1–3 分钟首次响应，想完全离线 | ❌ 不需要 | ✅ 免费 / ⚠️ CPU 推理慢 |
 
-**Why Ollama first**: it's the only zero-friction option. Users without any
-LLM API Key today can install Ollama in 30 seconds and have the project
-working end-to-end. Cloud providers are kept as the explicit "I have a key
-already" branch.
+**Why DeepSeek default, not Ollama**: previous versions called Ollama
+"推荐新手 / 白嫖" but in practice CPU inference on a 16 GB Mac is slow
+enough that users think the install is broken. DeepSeek charges roughly
+¥0.001 per thousand tokens — running OpenBiliClaw for a month costs
+under ¥1 for most users. That's the actual zero-friction path. Ollama
+remains a first-class option for people who genuinely want offline /
+no-key setups, but should not be sold as "新手友好".
 
-**Critical: option 2 ≠ option 4.** They both write to `[llm.openai]` in
-config.toml because they share the OpenAI protocol, but the *user's* mental
-model is different — option 2 means "I'll use OpenAI the company"; option 4
-means "I have a self-hosted or third-party gateway that speaks the OpenAI
-API." If the user picks option 4, **always ask for `--llm-base-url`**. If
-the user picks option 2, leave `--llm-base-url` unset (defaults to
-`https://api.openai.com/v1`).
+**Hardware caveat for option 3 (Ollama)**: tell the user upfront —
+"本地模型的首次响应会比较慢（CPU 推理），内存建议 16GB 以上。如果你介意等待，
+选 1 或 2 更顺。" Don't wave them into Ollama if they have a 4-core
+Windows laptop with 8 GB.
+
+### Advanced — OpenAI-compatible self-hosted gateway
+
+**Skip this whole section unless the user explicitly says** "I have a
+self-hosted gateway / Azure OpenAI / OneAPI / vLLM / LMStudio / 内网反代".
+Most users have no idea what these are — surfacing this option in the
+main menu used to confuse people who just wanted GPT-4o.
+
+When the user *does* mention a gateway, ask **all three**:
+
+> 「你的网关需要给我三件套：
+>   - **Base URL**：网关的 `/v1` 端点（例：`http://localhost:8000/v1` 或
+>     `https://your-gateway.example.com/v1`）
+>   - **API Key**：网关要不要鉴权？要的话给我 Key；不要的话填 `none` 或留空
+>   - **模型名**：网关上具体部署的是哪个模型？（例：vLLM 上的
+>     `meta-llama/Llama-3.1-70B`，Azure 上是你的 deployment 名）」
+
+Run with `--provider openai --llm-base-url <URL> --llm-api-key <KEY> --llm-model <MODEL>`.
+
+> ⚠️ **Switching back from gateway to OpenAI 官方** (v0.3.20+): if
+> a previous run wrote a `base_url` into `[llm.openai]` and the user
+> later runs `--provider openai` *without* `--llm-base-url`, the
+> bootstrap automatically clears the stale base URL so the SDK falls
+> back to `https://api.openai.com/v1`. You'll see a `base_url_reset`
+> event in the JSON stream. Earlier versions silently kept routing
+> to the old gateway.
 
 ### Step 2 — Configure the chosen LLM
 
 Once they've picked, only ask the **fields that option actually needs**.
 
-#### Option 1 (Ollama):
+#### Option 1 (DeepSeek, default recommendation):
+
+> 「请给我你的 DeepSeek API Key。从 https://platform.deepseek.com/api_keys
+>   创建一个。月度费用通常在几毛钱以内。」
+
+Run with `--provider deepseek --llm-api-key <KEY>`. The bootstrap will
+automatically wire local Ollama bge-m3 for embedding (DeepSeek has no
+embeddings endpoint) and pull the model in the same run — see
+"Embedding (handled automatically)" below.
+
+#### Option 2 (OpenAI 官方 / Gemini / Claude / OpenRouter):
+
+Substitute the right vendor name and Key URL:
+
+- OpenAI: https://platform.openai.com/api-keys (Key starts with `sk-`)
+- Gemini: https://aistudio.google.com/apikey
+- Claude: https://console.anthropic.com/ → Settings → API Keys
+- OpenRouter: https://openrouter.ai/keys
+
+Run with `--provider <name> --llm-api-key <KEY>`. Don't ask for Base URL.
+For Claude / OpenRouter the bootstrap will auto-wire Ollama bge-m3 for
+embedding (those backends don't expose embeddings); OpenAI and Gemini
+use their own native embedding endpoints.
+
+#### Option 3 (Ollama, fully offline / no key):
 
 **You don't need to ask the user to install Ollama themselves.** Since
 v0.3.10, `agent_bootstrap.py` auto-installs Ollama (macOS via `brew`,
@@ -121,7 +176,8 @@ daemon in the background, and pulls the chat model. All you tell the
 user is:
 
 > 「我会帮你装 Ollama 和拉模型，需要 1–3 分钟（取决于你的网速）。
->   不需要你做任何事，全程会打印进度。」
+>   不需要你做任何事，全程会打印进度。
+>   首次推理会比较慢（CPU 跑模型），不是装坏了。」
 
 Then run with `--provider ollama --llm-model llama3` (or
 `qwen2.5:3b` for a smaller model on weaker hardware). No `--llm-api-key`
@@ -140,54 +196,61 @@ user must run the host-side `ollama` themselves; the bootstrap just
 checks `[llm.ollama] base_url`. Tell Docker users to install Ollama
 on their host first.
 
-#### Option 2 (OpenAI 官方):
+### Step 3 — Embedding (向量化)
 
-> 「请给我你的 OpenAI API Key（以 sk- 开头）。可以从 https://platform.openai.com/api-keys 创建。」
-
-Run with `--provider openai --llm-api-key <KEY>`. Don't ask for Base URL.
-
-#### Option 3 (Claude / Gemini / DeepSeek / OpenRouter):
-
-Substitute the right vendor name and Key URL:
-
-- Claude: https://console.anthropic.com/ → Settings → API Keys
-- Gemini: https://aistudio.google.com/apikey
-- DeepSeek: https://platform.deepseek.com/api_keys
-- OpenRouter: https://openrouter.ai/keys
-
-Run with `--provider <name> --llm-api-key <KEY>`.
-
-#### Option 4 (OpenAI 协议兼容自建网关):
-
-Ask **all three**, with explanations:
-
-> 「你的网关需要给我三件套：
->   - **Base URL**：网关的 `/v1` 端点（例：`http://localhost:8000/v1` 或 `https://your-gateway.example.com/v1`）。这是 OpenBiliClaw 实际去打的 HTTP 地址
->   - **API Key**：网关要不要鉴权？要的话给我 Key；不要的话填 `none` 或留空
->   - **模型名**：网关上具体部署的是哪个模型？（例：vLLM 上的 `meta-llama/Llama-3.1-70B`，Azure 上是你的 deployment 名）」
-
-Run with `--provider openai --llm-base-url <URL> --llm-api-key <KEY> --llm-model <MODEL>`.
-
-### Step 3 — Embedding（向量化服务，独立的一个问题）
-
-**Embedding 是和聊天模型分开的**。它负责把文本变成向量，用于：「这条视频和你之前喜欢的那条是不是同一个主题」「换一批的时候去重」等。它调用频次很高，所以单独拎出来配。
+Embedding is the service that turns video titles / descriptions into
+vectors so the recommendation pipeline can ask "is this clip
+semantically close to ones the user already liked?". It's separate from
+the chat LLM, gets called frequently (every reshuffle, every dedup
+check), and **the choice has a real effect on recommendation quality**.
 
 Tell the user:
 
-> 「OpenBiliClaw 还需要一个 embedding（向量化）服务。它做的事：把视频标题/简介变成向量，跨视频做相似度对比，决定换一批时哪些是『重复的』。**你可以三选一：**
+> 「OpenBiliClaw 还需要一个向量化(embedding)服务,把视频标题和简介压成向量,
+>   用来做"这条和你之前喜欢的那条是不是同一类"的判断。它和聊天 LLM 是分开的。
 >
->   1. **跟随你刚才选的 LLM**（最省事）—— 如果你刚才选了 Ollama，embedding 也用 Ollama；如果选了 OpenAI/Gemini，embedding 也用同一家
->   2. **本地 Ollama + bge-m3**（推荐：免费 + 离线 + 跨模型一致）—— 即使你聊天模型用 OpenAI/Claude，embedding 也单独走本地，省 quota
->   3. **跳过，先不配**（默认跟随 LLM）」
+>   三选一,**不确定就回 1**:
+>
+>   1. **本地 Ollama bge-m3**(默认推荐 / 免费 / 离线 / 不消耗主 LLM 配额)
+>      —— 我会自动装 Ollama 并拉 568MB 的 bge-m3 模型
+>      —— 多语言效果在开源模型里属于第一档,日常推荐够用
+>
+>   2. **云端 Gemini embedding**(质量更高 / 跨语言更稳)
+>      —— 用 Google 的 `gemini-embedding-001`,在中英混合、长文本、
+>         小众词上比本地 bge-m3 略好,推荐能更准一些
+>      —— 需要一个 Gemini API Key(免费档每天 1500 次,日常用足够)
+>      —— 适合追求推荐质量、能去 Google AI Studio 拿 Key 的人
+>
+>   3. **跟随你的主 LLM**(最省事,但有取舍)
+>      —— OpenAI 主模型 → 用 OpenAI 的 text-embedding-3-small(会消耗 OpenAI 配额)
+>      —— Gemini 主模型 → 等同于选项 2
+>      —— Claude / DeepSeek / OpenRouter 主模型 → 它们没 embedding 接口,
+>         会自动回退到选项 1
+>
+>   日常使用选项 1 完全够用;如果你已经选了 Gemini 当主 LLM,选项 3 等同于
+>   选项 2,免费额度通常一天用不完。」
 
-If the user picks option 2 (local Ollama embedding), use:
-`--embedding-provider ollama --embedding-model bge-m3`. **Don't tell
-them to pull `bge-m3` themselves** — `agent_bootstrap.py` auto-pulls it
-during the Ollama setup phase (since v0.3.10), same as the chat model.
-The bootstrap also auto-installs Ollama if it isn't there yet.
+**Mapping the user's answer to bootstrap flags**:
 
-If option 1 or 3, leave embedding flags off entirely (don't pass empty
-strings, just omit the flags).
+| 用户选 | 命令行参数 | 备注 |
+|---|---|---|
+| 1 (本地 Ollama, 默认) | `--embedding-provider ollama --embedding-model bge-m3` | bootstrap 会自动装 Ollama + 拉 bge-m3 |
+| 2 (Gemini) | `--embedding-provider gemini --embedding-model gemini-embedding-001 --embedding-api-key <KEY>` | 用户已有 Gemini Key 就用现有的;没有就引导去 https://aistudio.google.com/apikey 拿 |
+| 3 (跟随主 LLM) | (不传任何 `--embedding-*` flag) | bootstrap 在主 LLM 是 Claude/DeepSeek/OpenRouter 时会自动改写为选项 1 等价配置(发 `embedding_auto_ollama` 事件);其它主 LLM 则用各自的 native endpoint |
+
+**Special case — Gemini Key reuse**: if the user picks option 2 *and*
+already configured Gemini as their primary LLM (i.e. you ran
+`--provider gemini --llm-api-key sk-...` earlier), don't ask for the
+key again. Just pass `--embedding-provider gemini --embedding-model gemini-embedding-001`
+without `--embedding-api-key`; the registry shares the `[llm.gemini]`
+section.
+
+**Safety net (no-op for the agent)**: even when the user picks option 3
+or skips entirely, the registry's runtime fallback chain
+(`build_embedding_service` in `src/openbiliclaw/llm/registry.py`) still
+catches the case where the configured provider has no embeddings
+endpoint and falls through ollama → gemini → openai. The chain is the
+last line of defence, not the primary UX.
 
 ### Step 4 — B 站 Cookie
 
@@ -217,9 +280,13 @@ Tell the user, in this order:
 >   3. Headers 区域找到 cookie: 这一行，右键复制整行 value
 >   4. 把那一长串（含 SESSDATA / bili_jct / DedeUserID）粘给我」
 
-**If user picks A**: don't pass `--bilibili-cookie` to bootstrap.
-Bootstrap will report `running_with_missing_secrets` because cookie
-isn't there yet — that's **expected and fine**. Tell the user:
+**If user picks A**: don't pass `--bilibili-cookie` to bootstrap. The
+v0.3.20+ install.sh status block will explicitly print
+`OpenBiliClaw backend ready — waiting for browser extension to sync
+B站 Cookie` in **green** when this is the only thing missing — this is
+the success state, not a failure. (Earlier versions printed yellow
+`partial / credentials still missing` here, which routinely scared
+users into thinking the install crashed.) Tell the user:
 
 > 「我已经把后端跑起来了。现在请你装扩展（链接 ↑），登录 B 站，
 >   等几秒——扩展会自动把 Cookie 推过来。然后我帮你跑 `openbiliclaw init`
@@ -241,16 +308,65 @@ once everything's present.
 
 ### Putting it all together — example commands
 
-**新手白嫖路径**（Ollama + 跟随 embedding + B 站 cookie）：
+The shape of the command depends on what the user picked at each step.
+Match each example to the user's actual answers — don't copy-paste blindly.
+
+**默认推荐路径** (DeepSeek + 选项 1 本地 Ollama embedding + 扩展 Cookie)：
+
+```bash
+python3 scripts/agent_bootstrap.py \
+  --provider deepseek \
+  --llm-api-key sk-... \
+  --embedding-provider ollama \
+  --embedding-model bge-m3
+```
+
+Pass embedding flags explicitly because the user actively picked option 1 —
+this records their choice and survives a future primary-LLM swap. The
+bootstrap auto-installs Ollama and pulls `bge-m3` in the same run.
+Cookie comes via the extension after the backend is up; don't ask the
+user to F12 if you can lead them to the extension first.
+
+**质量优先路径** (Gemini 主 + 选项 2 Gemini embedding + 扩展 Cookie)：
+
+```bash
+python3 scripts/agent_bootstrap.py \
+  --provider gemini \
+  --llm-api-key AIza... \
+  --embedding-provider gemini \
+  --embedding-model gemini-embedding-001
+```
+
+Note: no `--embedding-api-key` because the same Gemini API key the
+user already gave for the primary LLM is reused. The free tier
+(1500 req/day) covers daily personal use comfortably.
+
+**完全离线路径** (Ollama 主 + 选项 1 Ollama embedding + 扩展 Cookie)：
 
 ```bash
 python3 scripts/agent_bootstrap.py \
   --provider ollama \
   --llm-model llama3 \
-  --bilibili-cookie "SESSDATA=...; bili_jct=...; DedeUserID=..."
+  --embedding-provider ollama \
+  --embedding-model bge-m3
 ```
 
-**自建网关 + Ollama embedding 兜底**（最常见的进阶路径）：
+**"我不想想这个,跟随主 LLM" 路径** (选项 3 / 用户跳过)：
+
+```bash
+python3 scripts/agent_bootstrap.py \
+  --provider deepseek \
+  --llm-api-key sk-...
+```
+
+When no `--embedding-*` flag is passed AND the primary is Claude /
+DeepSeek / OpenRouter, the bootstrap auto-wires `[llm.embedding]
+provider=ollama model=bge-m3` and emits `embedding_auto_ollama`. For
+OpenAI / Gemini / Ollama primaries, the embedding follows that
+provider's native endpoint. Either way the user has a working
+embedding service.
+
+**自建网关路径** (Advanced — only when user explicitly mentions a gateway)：
 
 ```bash
 python3 scripts/agent_bootstrap.py \
@@ -259,9 +375,12 @@ python3 scripts/agent_bootstrap.py \
   --llm-api-key sk-or-none \
   --llm-model meta-llama/Llama-3.1-70B-Instruct \
   --embedding-provider ollama \
-  --embedding-model bge-m3 \
-  --bilibili-cookie "SESSDATA=...; ..."
+  --embedding-model bge-m3
 ```
+
+Embedding explicitly pinned to local Ollama because most self-hosted
+gateways (vLLM, LMStudio) don't expose `/v1/embeddings`; relying on
+the runtime fallback would still work but adds a startup warning.
 
 > ⚠️ **Do NOT pass `--skip-init`** here. The point of running the
 > bootstrap with credentials is to reach a usable state. When all

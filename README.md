@@ -142,11 +142,18 @@ OpenBiliClaw 不爬登录态——它复用**你**当前浏览器的登录会话
 
 **首选方式：复制粘贴给 AI 智能体一键部署**（Claude Code / Codex CLI / Cursor 等都支持）：
 
+> 📌 **前置：你需要先有一个 AI 编程助手**。如果还没装，三选一：
+> - [Claude Code](https://docs.anthropic.com/claude/docs/claude-code) — Anthropic 官方 CLI
+> - [Codex CLI](https://github.com/openai/codex) — OpenAI 官方 CLI
+> - [Cursor](https://cursor.com) / [Windsurf](https://codeium.com/windsurf) — 带 AI 的 IDE
+>
+> 没装过的话，跳到下面"自己跑一句话装机脚本"那段，效果一样。
+
 ```text
 请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
 ```
 
-AI 会按文档把仓库 clone 到本机、装依赖、起后端、做健康检查、再问你 LLM/Embedding 配置 + B 站 Cookie，最后自动跑 `init`（拉历史 + 生成画像 + 首轮发现），全程透明。**这是最推荐的路径**，对绝大多数用户来说零摩擦。
+AI 会按文档把仓库 clone 到本机、装依赖、起后端、做健康检查，**问你三个有默认值的问题**：选哪个 LLM、选哪个向量化(embedding)服务、怎么提供 B 站 Cookie。每一项都有"不确定就回 1"的默认推荐——v0.3.20+ 起 embedding 默认推荐本地 Ollama bge-m3（免费 + 离线 + 不消耗主 LLM 配额），同时清楚告诉你 Gemini 云端 embedding 质量更高的取舍。最后自动跑 `init`（拉历史 + 生成画像 + 首轮发现），全程透明。**这是最推荐的路径**，对绝大多数用户来说零摩擦。
 
 **或者：让 AI 智能体用 Docker 部署**（适合有 Docker Desktop 的用户，v0.3.11+ 自带 Ollama embedding sidecar）：
 
@@ -431,7 +438,8 @@ OpenBiliClaw/
 
 | 版本 | 日期 | 主要变更 |
 |---|---|---|
-| **[v0.3.19](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.19)** | 2026-05-01 | `openbiliclaw init` 会 best-effort 混入小红书收藏 / 点赞 / 页面内浏览记录信号。插件在用户已登录的小红书会话中执行 `bootstrap_profile`，先跳到当前用户 profile 读收藏 / 赞过 state；显式滚动任务会用 `partial` 批次持续回传，后端把 notes 转成普通 `favorite / like / view` 事件，不直接爬小红书 |
+| **[v0.3.20](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.20)** | 2026-05-01 | 装机流程 UX 修复 + Embedding fallback：Claude/DeepSeek/OpenRouter 主模型 + 跟随 LLM 的 embedding 静默失败修复（用新增的 `LLMProvider.supports_embedding` 标志做 fallback，自动回退到 ollama → gemini → openai）· `--provider openai` 不带 `--llm-base-url` 时自动清空残留网关 URL · 主菜单去掉自建网关 · Embedding 改成"有默认值的取舍提问"（推荐本地 Ollama bge-m3，同时说明 Gemini 云端质量更高的取舍）· 状态摘要改成"等扩展同步 Cookie"绿字，不再吓人 · README 加 AI Agent 前置说明 |
+| [v0.3.19](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.19) | 2026-05-01 | `openbiliclaw init` 会 best-effort 混入小红书收藏 / 点赞 / 页面内浏览记录信号。插件在用户已登录的小红书会话中执行 `bootstrap_profile`，先跳到当前用户 profile 读收藏 / 赞过 state；显式滚动任务会用 `partial` 批次持续回传，后端把 notes 转成普通 `favorite / like / view` 事件，不直接爬小红书 |
 | **[v0.3.18](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.18)** | 2026-04-30 | 把 `franchise_key` 升成 content_cache 一等字段：LLM 评估时直接打 IP 标签（不再用硬编码 alias 表），下游 curator dislike 传播 + `/api/recommendations` 同 IP 去重全都基于这一列。撤掉 v0.3.17 的标题 heuristic |
 | [v0.3.17](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.17) | 2026-04-30 | 修推荐流过度泛化 IP（一屏 5 条原神 / 提瓦特）：新增 heuristic franchise 提取器；`/api/recommendations` 最终对同 IP 去重（同一 franchise 最多出现 2 次）；点踩 1 条原神视频会软降权所有同 IP 候选，不再只屏蔽单条 |
 | [v0.3.16](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.16) | 2026-04-30 | README 后端安装方式重排：一句话装机 / Docker / 自跑脚本 优先，未签名桌面包后置（折叠 details）· 新增「多源登录前置」段，明确小红书必须在装扩展的浏览器里登录（CDP 模式更稳） |

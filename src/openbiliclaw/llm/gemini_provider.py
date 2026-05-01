@@ -46,6 +46,8 @@ def _raise_missing_sdk() -> NoReturn:
 class GeminiProvider(LLMProvider):
     """Gemini provider using the official Gemini Developer API client."""
 
+    supports_embedding = True
+
     _MAX_RETRIES = 3
     _BASE_RETRY_DELAY = 0.25
 
@@ -74,9 +76,7 @@ class GeminiProvider(LLMProvider):
             temperature=temperature,
             max_output_tokens=max_tokens,
             response_mime_type="application/json" if json_mode else None,
-            thinking_config=(
-                types.ThinkingConfig(thinking_budget=0) if json_mode else None
-            ),
+            thinking_config=(types.ThinkingConfig(thinking_budget=0) if json_mode else None),
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
         response = await self._request_with_retry(

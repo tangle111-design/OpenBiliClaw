@@ -14,6 +14,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 class LLMProviderError(Exception):
     """Base exception for provider request failures."""
 
@@ -61,6 +62,15 @@ class LLMProvider(ABC):
     All providers must implement a unified interface so the agent
     can switch between them transparently.
     """
+
+    # Subclasses set True if they implement an ``async embed()`` method
+    # backed by a working embeddings endpoint. Used by
+    # ``build_embedding_service`` to pick a fallback when the user's
+    # primary provider has no embedding API (e.g. Anthropic Claude,
+    # DeepSeek). ``hasattr(provider, "embed")`` is unreliable because
+    # subclassing OpenAIProvider auto-inherits ``embed`` even for
+    # vendors whose backend doesn't actually expose it.
+    supports_embedding: bool = False
 
     @property
     @abstractmethod
@@ -270,10 +280,7 @@ class LLMRegistry:
         whenever it's chat-capable; if the user picked an embedding-only
         provider as default we still skip it from the chat chain.
         """
-        chat_pool = [
-            name for name in self.available_providers
-            if name not in self._chat_disabled
-        ]
+        chat_pool = [name for name in self.available_providers if name not in self._chat_disabled]
         if not chat_pool:
             # Edge case: every provider is embedding-only. Surface the
             # problem rather than silently doing nothing — complete()

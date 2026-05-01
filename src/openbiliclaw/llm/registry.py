@@ -94,16 +94,70 @@ def build_embedding_service(
     """Build an EmbeddingService from config, or None if unavailable.
 
     Uses ``[llm.embedding]`` config section for model and threshold.
-    Falls back to the Gemini provider from the registry.
+    When the requested provider doesn't expose an embeddings endpoint
+    (Claude, DeepSeek, OpenRouter), falls back to the next available
+    embedding-capable provider in the registry — preferring local
+    Ollama > Gemini > OpenAI — so the recommendation pipeline doesn't
+    silently lose embeddings.
     """
     try:
-        from openbiliclaw.llm.embedding import EmbeddingCache, EmbeddingService
+        from typing import cast
+
+        from openbiliclaw.llm.embedding import EmbeddingCache, EmbeddingService, SupportsEmbed
 
         emb_cfg = config.llm.embedding
-        provider_name = emb_cfg.provider.strip() or config.llm.default_provider
-        provider = registry.get(provider_name)
-        if not hasattr(provider, "embed"):
+        requested_name = emb_cfg.provider.strip() or config.llm.default_provider
+
+        # Pick a sensible default model per provider when config didn't pin one
+        default_model_by_provider = {
+            "gemini": "gemini-embedding-001",
+            "openai": "text-embedding-3-small",
+            "ollama": "bge-m3",
+        }
+
+        # Build fallback chain: requested provider first, then prefer
+        # local-first (ollama) → gemini → openai. We exclude providers
+        # that explicitly opt out via ``supports_embedding=False``
+        # (Claude, DeepSeek, OpenRouter) so we never hand an embedding
+        # call to a backend that will 404.
+        fallback_order = [requested_name]
+        for name in ("ollama", "gemini", "openai"):
+            if name not in fallback_order:
+                fallback_order.append(name)
+
+        chosen_provider = None
+        chosen_name = ""
+        for name in fallback_order:
+            try:
+                candidate = registry.get(name)
+            except Exception:
+                continue
+            if not getattr(candidate, "supports_embedding", False):
+                continue
+            chosen_provider = candidate
+            chosen_name = name
+            break
+
+        if chosen_provider is None:
+            logger.warning(
+                "No embedding-capable provider available (requested=%r). "
+                "Embedding service disabled — recommendation diversity and "
+                "deduplication will degrade. Run 'openbiliclaw setup-embedding' "
+                "to install local Ollama bge-m3, or configure a Gemini API key.",
+                requested_name,
+            )
             return None
+
+        if chosen_name != requested_name:
+            logger.warning(
+                "Embedding provider %r has no embeddings endpoint; "
+                "falling back to %r. To silence this, set "
+                "[llm.embedding] provider=%r explicitly in config.toml, "
+                "or run 'openbiliclaw setup-embedding'.",
+                requested_name,
+                chosen_name,
+                chosen_name,
+            )
 
         # Persistent L2 cache: store embeddings in SQLite alongside main DB
         l2_cache: EmbeddingCache | None = None
@@ -114,20 +168,18 @@ def build_embedding_service(
         except Exception:
             logger.debug("Failed to init embedding L2 cache", exc_info=True)
 
-        # Pick a sensible default model per provider when config didn't pin one
-        default_model_by_provider = {
-            "gemini": "gemini-embedding-001",
-            "openai": "text-embedding-3-small",
-            "ollama": "bge-m3",
-        }
-        effective_model = (
-            emb_cfg.model
-            or default_model_by_provider.get(provider_name)
-            or "gemini-embedding-001"
-        )
+        # If the user pinned an embedding model in [llm.embedding], honour
+        # it — but only when it makes sense for the *chosen* provider. If
+        # we fell back from openai to ollama, ``text-embedding-3-small``
+        # is meaningless on Ollama; switch to that provider's default.
+        effective_model = emb_cfg.model
+        if chosen_name != requested_name or not effective_model:
+            effective_model = default_model_by_provider.get(chosen_name) or "gemini-embedding-001"
 
+        # The supports_embedding gate above guarantees ``embed()`` exists
+        # at runtime; cast for the SupportsEmbed Protocol.
         return EmbeddingService(
-            provider,
+            cast("SupportsEmbed", chosen_provider),
             model=effective_model,
             similarity_threshold=emb_cfg.similarity_threshold,
             persistent_cache=l2_cache,
