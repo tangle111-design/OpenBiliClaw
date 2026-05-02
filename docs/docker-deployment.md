@@ -64,8 +64,8 @@ docker compose ps
 
 `init` 是 v0.3.20+ 的交互式向导，自动检测 `config.toml` 缺哪些配置并按需引导。每一步都有"不确定就回 1"的默认推荐：
 
-1. **Phase 1 — 选 LLM 服务（7 项菜单）**：默认推荐 **DeepSeek**(默认模型 `deepseek-v4-flash` / ¥0.001/千 token,几乎免费;可选 `deepseek-v4-pro`,旧 `deepseek-chat` / `deepseek-reasoner` 将于 2026/07/24 弃用)。其它选项也都标了默认模型: OpenAI(`gpt-4o-mini`) / Gemini(`gemini-2.0-flash-exp`) / Claude(`claude-sonnet-4-5`) / OpenRouter(`openai/gpt-4o-mini`) / Ollama(`llama3`,16GB+ 内存,CPU 推理首次响应慢)。**OpenAI 协议兼容自建网关**（Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关）保留在菜单第 7 项的"高级"位置,需自填 Base URL + 模型名——**不要和选项 2 (OpenAI 官方) 混淆**。Phase 2 配置阶段会再次显示模型可选项让你确认。
-2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。Ollama 不问 Key（自动装 + 拉模型）；云厂商只问 API Key；自建网关问 Base URL + API Key + 模型名。
+1. **Phase 1 — 选 LLM 服务（7 项菜单）**：默认推荐 **DeepSeek**(默认模型 `deepseek-v4-flash` / ¥0.001/千 token,几乎免费;可选 `deepseek-v4-pro`,旧 `deepseek-chat` / `deepseek-reasoner` 将于 2026/07/24 弃用)。其它选项也都标了默认模型: OpenAI(`gpt-4o-mini`) / Gemini(`gemini-2.0-flash-exp`) / Claude(`claude-sonnet-4-5`) / OpenRouter(`openai/gpt-4o-mini`) / Ollama(`llama3`,16GB+ 内存,CPU 推理首次响应慢)。**第 7 项 "OpenAI 协议兼容服务"** 是个**子菜单(9 个 preset)**,覆盖 Kimi / MiniMax / 通义千问 / 智谱 ChatGLM / 零一万物 Yi / 自建 vLLM-LMStudio / 中转站 OneAPI / Azure OpenAI / 其它手填——**不要和选项 2 (OpenAI 官方) 混淆**。Phase 2 配置阶段会再次显示模型可选项让你确认。
+2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。Ollama 不问 Key（自动装 + 拉模型）；云厂商只问 API Key；选 7(协议兼容)进子菜单后,Base URL + 默认模型自动填好,只用填 API Key 和确认模型。
 3. **Phase 3 — Embedding（向量化，独立提问，3 选 1 + 高级）**：
    - **1) 本地 Ollama bge-m3**（默认推荐 / 免费 / 离线 / 不消耗主 LLM 配额）
    - **2) 云端 Gemini embedding**（质量略高 / 跨语言更稳 / 免费档每天 1500 次够用）

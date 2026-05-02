@@ -75,8 +75,17 @@ docker exec -it openbiliclaw-backend openbiliclaw init
    - **4) Claude 官方** —— 默认 `claude-sonnet-4-5` / 按 token 付费,质量高
    - **5) OpenRouter 聚合** —— 默认 `openai/gpt-4o-mini` / 一个 Key 跑多家
    - **6) 本地 Ollama（完全离线）** —— 默认 `llama3` / 无 Key / 16GB+ 内存
-   - **7) （高级）OpenAI 协议兼容自建网关** —— Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关,需自填 Base URL + 模型。**不要和选项 2 (OpenAI 官方) 混淆**。模型名得是网关上**真实部署的那个**(vLLM/LMStudio = HuggingFace 路径如 `meta-llama/Llama-3.1-70B-Instruct`;Azure = deployment name;OneAPI = 网关里配的别名),写错会 404
-2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。**所有 provider 在 prompt 模型名前都会显示一行"可选/常见模型"提示**(DeepSeek 列 v4-flash / v4-pro,OpenAI 列 gpt-4o-mini / gpt-4o / gpt-4-turbo,Gemini / Claude / Ollama 同样,自建网关明示要按你网关上真实部署的那个填),用户主动确认而不是回车跳过一个不知道是啥的字符串。Ollama 不问 Key(自动装 + 拉模型);自建网关必须自填 Base URL + 模型(default 留空,强制确认)。
+   - **7) （高级）OpenAI 协议兼容服务** —— **不要和选项 2 (OpenAI 官方) 混淆**。选这个会进**子菜单(9 个 preset)**,Base URL + 默认模型自动填好,只用填 API Key 和确认模型:
+     - **1) Kimi (Moonshot AI 月之暗面)** —— `https://api.moonshot.cn/v1` / 默认 `moonshot-v1-8k`,可选 32k / 128k 长上下文
+     - **2) MiniMax 海螺 AI** —— `https://api.minimaxi.chat/v1` / 默认 `abab6.5s-chat`,可选 abab6.5-chat / abab7-preview
+     - **3) 通义千问 (阿里 DashScope)** —— `https://dashscope.aliyuncs.com/compatible-mode/v1` / 默认 `qwen-plus`,可选 turbo / max
+     - **4) 智谱 ChatGLM** —— `https://open.bigmodel.cn/api/paas/v4` / 默认 `glm-4-flash` (免费档够用),可选 glm-4-air / glm-4-plus
+     - **5) 零一万物 (Yi)** —— `https://api.lingyiwanwu.com/v1` / 默认 `yi-medium`,可选 yi-spark / yi-large
+     - **6) 自建 vLLM / LMStudio / Ollama 网关** —— `http://localhost:8000/v1` / 模型名 = HuggingFace 路径(如 `meta-llama/Llama-3.1-70B-Instruct`),**强制手填**
+     - **7) 中转站 / OneAPI / 公司团队 LLM 网关** —— Base URL 自填 / 默认模型 `gpt-4o-mini`(看你中转站后端代理的是 OpenAI 还是 Claude),按你充值的那家选
+     - **8) Azure OpenAI** —— `https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEPLOYMENT` / 模型名 = **deployment name**(不是底层 gpt-4o)
+     - **9) 其它(完全手填)** —— Base URL + 模型全自填的 escape hatch
+2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段。**所有 provider 在 prompt 模型名前都会显示一行"可选/常见模型"提示**(DeepSeek 列 v4-flash / v4-pro,OpenAI 列 gpt-4o-mini / gpt-4o / gpt-4-turbo,Gemini / Claude / Ollama 同样,OpenAI 协议兼容子菜单见上 9 个 preset),用户主动确认而不是回车跳过一个不知道是啥的字符串。Ollama 不问 Key(自动装 + 拉模型);自建网关 / 其它路径强制手填模型名(写错会 404)。
 3. **Phase 3 — Embedding（向量化，3 选 1 + 高级）**：默认推荐 **本地 Ollama bge-m3**（免费、离线、效果够用），其次 Gemini（云端、效果最好但要 Key），再次「跟随主 LLM」（仅当主 LLM 提供 embedding 接口时可用，否则自动 fallback 到 Ollama）。高级选项里有"自定义 OpenAI 兼容 endpoint"。
 4. **Phase 4 — Per-module 覆盖**（高级，默认跳过）：可单独给 soul / discovery / recommendation / evaluation 指定不同模型。
 

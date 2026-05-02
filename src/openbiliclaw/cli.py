@@ -678,12 +678,117 @@ _PROVIDER_MODEL_HINT: dict[str, str] = {
         "常见模型: llama3 (默认 / 通用) / qwen2.5 (中文好) / "
         "gemma2 (Google 小模型) / mistral (轻量)。模型名要和 Ollama 库里完全一致"
     ),
-    "openai-compat": (
-        "[bold yellow]模型名必须是你网关上真实部署的那个[/bold yellow],写错会 404。"
-        "常见举例: vLLM/LMStudio → HuggingFace 路径(如 meta-llama/Llama-3.1-70B-Instruct);"
-        "Azure OpenAI → 你的 deployment name;OneAPI/团队 LLM 网关 → 网关里配的别名(如 gpt-4o)"
-    ),
 }
+
+
+# Sub-menu shown when user picks "OpenAI 协议兼容自建网关" from
+# _LLM_MENU. Order = menu order. Each entry pre-fills base_url so the
+# user doesn't have to copy from a doc; default_model is a sensible
+# starting point but the prompt still lets them change it. ``hint``
+# is a one-liner shown right above the model prompt listing real
+# main-line models for that service.
+#
+# When adding a new compat-protocol vendor:
+# 1. Verify they speak true OpenAI Chat Completions protocol (Bearer
+#    auth + ``/v1/chat/completions`` shape). Many "OpenAI compatible"
+#    APIs subtly differ on tools / streaming / function_call format —
+#    try a smoke call before listing here.
+# 2. Pick a representative low-cost default_model so users get a
+#    cheap experience by default; advanced users can switch in
+#    Phase 2.
+_OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
+    (
+        "kimi",
+        {
+            "label": "Kimi (Moonshot AI 月之暗面)",
+            "base_url": "https://api.moonshot.cn/v1",
+            "default_model": "moonshot-v1-8k",
+            "hint": "moonshot-v1-8k (默认 / 8K 上下文 / 便宜) / moonshot-v1-32k / moonshot-v1-128k (超长)",
+        },
+    ),
+    (
+        "minimax",
+        {
+            "label": "MiniMax 海螺 AI",
+            "base_url": "https://api.minimaxi.chat/v1",
+            "default_model": "abab6.5s-chat",
+            "hint": "abab6.5s-chat (默认 / 便宜) / abab6.5-chat (更强) / abab7-preview",
+        },
+    ),
+    (
+        "qwen",
+        {
+            "label": "通义千问 (阿里 DashScope)",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "default_model": "qwen-plus",
+            "hint": "qwen-turbo (便宜) / qwen-plus (默认 / 平衡) / qwen-max (最强但贵)",
+        },
+    ),
+    (
+        "zhipu",
+        {
+            "label": "智谱 ChatGLM",
+            "base_url": "https://open.bigmodel.cn/api/paas/v4",
+            "default_model": "glm-4-flash",
+            "hint": "glm-4-flash (默认 / 免费档够用) / glm-4-air / glm-4-plus (旗舰)",
+        },
+    ),
+    (
+        "yi",
+        {
+            "label": "零一万物 (Yi)",
+            "base_url": "https://api.lingyiwanwu.com/v1",
+            "default_model": "yi-medium",
+            "hint": "yi-spark (最便宜) / yi-medium (默认 / 平衡) / yi-large (最强)",
+        },
+    ),
+    (
+        "self-hosted",
+        {
+            "label": "自建 vLLM / LMStudio / Ollama 网关",
+            "base_url": "http://localhost:8000/v1",
+            "default_model": "",  # force user to type their deployed model
+            "hint": "看你网关上部署的是什么。HuggingFace 路径,如 meta-llama/Llama-3.1-70B-Instruct / Qwen/Qwen2.5-72B-Instruct",
+        },
+    ),
+    (
+        "relay",
+        {
+            "label": "中转站 / OneAPI / 公司团队 LLM 网关",
+            "base_url": "",  # user-supplied
+            "default_model": "gpt-4o-mini",
+            "hint": (
+                "看你中转站后端代理到哪个真实模型。"
+                "中转站 / OneAPI 通常代理 OpenAI(gpt-4o-mini / gpt-4o / gpt-4-turbo) "
+                "或 Claude(claude-sonnet-4-5),按你充值的那家选"
+            ),
+        },
+    ),
+    (
+        "azure",
+        {
+            "label": "Azure OpenAI",
+            "base_url": "https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEPLOYMENT",
+            "default_model": "",
+            "hint": (
+                "Azure 模型名 = 你创建 deployment 时指定的 deployment name(不是底层 gpt-4o)。"
+                "Base URL 把 YOUR-RESOURCE / YOUR-DEPLOYMENT 替换成你自己的"
+            ),
+        },
+    ),
+    (
+        "custom",
+        {
+            "label": "其它 (完全手填)",
+            "base_url": "",
+            "default_model": "",
+            "hint": (
+                "Base URL 必须以 /v1 (或网关等价路径)结尾。"
+                "模型名得是网关上真实部署 / 提供的那个,写错会 404"
+            ),
+        },
+    ),
+)
 
 
 def _ollama_is_running(host: str = "http://localhost:11434") -> bool:
@@ -1026,6 +1131,83 @@ def _resolve_menu_choice(raw: str) -> str | None:
     return None
 
 
+def _prompt_openai_compat() -> tuple[str, str, str, str]:
+    """openai-compat sub-flow — preset menu → base_url → key → model.
+
+    All compat-protocol services write to the ``[llm.openai]`` section
+    (the ``openai_provider.OpenAIProvider`` class is the universal
+    Bearer-auth + ``/v1/chat/completions`` client). The point of this
+    sub-menu is to remove the two error-prone fields — Base URL format
+    and model name — by pre-filling them from a vetted preset table,
+    while still giving advanced users a "完全手填" exit.
+    """
+    console.print(
+        "\n[bold]配置 OpenAI 协议兼容服务[/bold]\n"
+        r"[dim]后端会按 OpenAI 协议(Bearer 鉴权 + /v1/chat/completions)去打你给的 Base URL,"
+        r"配置写到 config.toml 的 \[llm.openai] 段。[/dim]\n"
+    )
+    table = Table(show_lines=False, show_header=True)
+    table.add_column("#", style="cyan", no_wrap=True)
+    table.add_column("服务", no_wrap=True)
+    table.add_column("Base URL")
+    table.add_column("默认模型")
+    for index, (_, preset) in enumerate(_OPENAI_COMPAT_PRESETS, start=1):
+        bu = preset["base_url"] or "[dim](需自填)[/dim]"
+        dm = preset["default_model"] or "[dim](需自填)[/dim]"
+        table.add_row(str(index), preset["label"], bu, dm)
+    console.print(table)
+    console.print(
+        "[dim]Tip: 不知道选哪个就看你的 API Key 是哪家发的——"
+        "Kimi/MiniMax/通义/智谱/Yi 是各自国内大模型厂商;"
+        "中转站 = 第三方代理 OpenAI/Claude 的二级商家;Azure = 微软的 OpenAI;"
+        "其它 / 自建 = 你自己跑的 vLLM/LMStudio。[/dim]\n"
+    )
+    raw = typer.prompt(f"选服务类型 (1-{len(_OPENAI_COMPAT_PRESETS)})", default="1").strip()
+    try:
+        choice_index = max(1, min(len(_OPENAI_COMPAT_PRESETS), int(raw))) - 1
+    except ValueError:
+        choice_index = 0
+    preset_key, preset = _OPENAI_COMPAT_PRESETS[choice_index]
+
+    base_url_default = preset["base_url"]
+    if base_url_default:
+        base_url = (
+            typer.prompt(
+                f"Base URL (回车 = {base_url_default})",
+                default=base_url_default,
+                show_default=False,
+            ).strip()
+            or base_url_default
+        )
+    else:
+        base_url = typer.prompt(
+            "Base URL (必填,见上面的表格)",
+        ).strip()
+
+    api_key = typer.prompt(
+        f"{preset['label']} 的 API Key (网关不鉴权可留空)",
+        hide_input=True,
+        default="",
+        show_default=False,
+    ).strip()
+
+    if preset.get("hint"):
+        console.print(f"[dim]  {preset['hint']}[/dim]")
+    default_model = preset["default_model"]
+    if default_model:
+        model = (
+            typer.prompt(
+                f"模型名 (回车 = {default_model})",
+                default=default_model,
+                show_default=False,
+            ).strip()
+            or default_model
+        )
+    else:
+        model = typer.prompt("模型名 (必填,见上面的提示)").strip()
+    return "openai", base_url, api_key, model
+
+
 def _prompt_provider_triplet(menu_choice: str) -> tuple[str, str, str, str]:
     """Phase 2 — collect (provider, base_url, api_key, model) for the choice.
 
@@ -1036,29 +1218,7 @@ def _prompt_provider_triplet(menu_choice: str) -> tuple[str, str, str, str]:
     company" from "I have my own gateway that speaks the OpenAI API."
     """
     if menu_choice == "openai-compat":
-        console.print(
-            "\n[bold]配置 OpenAI 协议兼容服务[/bold]\n"
-            r"[dim]这一项写到 config.toml 的 \[llm.openai] 段——后端会按 OpenAI "
-            "协议去打你给的 Base URL。如果你后来想切回 OpenAI 官方，把 base_url "
-            "改回 https://api.openai.com/v1 就行。[/dim]"
-        )
-        base_url = typer.prompt("你的网关 Base URL（必填，例 http://localhost:8000/v1）").strip()
-        if not base_url:
-            base_url = "https://api.openai.com/v1"
-        api_key = typer.prompt(
-            "API Key（如果网关不鉴权可留空）",
-            hide_input=True,
-            default="",
-            show_default=False,
-        ).strip()
-        compat_hint = _PROVIDER_MODEL_HINT.get("openai-compat")
-        if compat_hint:
-            console.print(f"[dim]  {compat_hint}[/dim]")
-        # No default — user MUST type the model their gateway actually
-        # serves. A leftover "gpt-4o-mini" default would just produce
-        # confusing 404s on a self-hosted vLLM / LMStudio gateway.
-        model = typer.prompt("模型名（必填,见上面的提示）").strip()
-        return "openai", base_url, api_key, model
+        return _prompt_openai_compat()
 
     provider = menu_choice
     defaults = _PROVIDER_DEFAULTS.get(provider, {})

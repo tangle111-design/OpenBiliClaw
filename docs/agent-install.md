@@ -102,9 +102,25 @@ user's main menu unless they explicitly mention having a gateway):
 | 4. **Claude** | `claude-sonnet-4-5` | Anthropic console | ✅ 需要 | 按 token,质量高 |
 | 5. **OpenRouter** | `openai/gpt-4o-mini` | 一个 Key 跑多家 | ✅ 需要 | 按调用计费 |
 | 6. **本地 Ollama**（完全免费 / 离线 / 不要 Key） | `llama3` | 16GB+ 内存，能接受 1–3 分钟首次响应，想完全离线 | ❌ 不需要 | ✅ 免费 / ⚠️ CPU 推理慢 |
-| 7. **(高级) OpenAI 协议兼容自建网关** | 用户自填 | Azure / vLLM / LMStudio / OneAPI / 团队 LLM 网关 | 看网关 | 看网关 |
+| 7. **(高级) OpenAI 协议兼容服务** | 选 preset 后自动填 / 也支持手填 | Kimi / MiniMax / 通义千问 / 智谱 / Yi / 自建 vLLM-LMStudio / 中转站 / Azure | 看服务 | 看服务 |
 
-> ⚠️ **不要把选项 2 (OpenAI 官方) 和选项 7 (自建网关) 混淆**:走 OpenAI API 官方端点选 2;有自己跑的兼容服务(Azure / 公司团队 LLM 网关 / 本地 vLLM/LMStudio)选 7,选 7 必须自填 Base URL + 模型名。
+> ⚠️ **不要把选项 2 (OpenAI 官方) 和选项 7 (协议兼容) 混淆**:走 OpenAI API 官方端点选 2;走任何"OpenAI 协议兼容"的第三方 / 自建服务选 7。
+
+**选项 7 的子菜单(9 个 preset)** —— 选完后 Base URL + 默认模型自动填好,只用填 API Key:
+
+| 子菜单# | 服务 | Base URL | 默认模型 / 备选 |
+|---|---|---|---|
+| 1 | **Kimi (Moonshot AI 月之暗面)** | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` / `-32k` / `-128k` |
+| 2 | **MiniMax 海螺 AI** | `https://api.minimaxi.chat/v1` | `abab6.5s-chat` / `abab6.5-chat` / `abab7-preview` |
+| 3 | **通义千问 (阿里 DashScope)** | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` / `qwen-turbo` / `qwen-max` |
+| 4 | **智谱 ChatGLM** | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` (免费档) / `glm-4-air` / `glm-4-plus` |
+| 5 | **零一万物 (Yi)** | `https://api.lingyiwanwu.com/v1` | `yi-medium` / `yi-spark` / `yi-large` |
+| 6 | **自建 vLLM / LMStudio / Ollama 网关** | `http://localhost:8000/v1` | 用户自填(HuggingFace 路径如 `meta-llama/Llama-3.1-70B-Instruct`) |
+| 7 | **中转站 / OneAPI / 公司团队 LLM 网关** | 用户自填 | `gpt-4o-mini`(看你中转站后端代理 OpenAI / Claude / 哪家) |
+| 8 | **Azure OpenAI** | `https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEPLOYMENT` | 用户自填 deployment name(不是底层 gpt-4o) |
+| 9 | **其它(完全手填)** | 用户自填 | 用户自填 |
+
+> 💡 **AI agent 注意**: 当用户提到"我有 Kimi / 通义 / 智谱 / Yi / Moonshot / MiniMax / Qwen / GLM / 中转站 / OneAPI / Azure / vLLM / LMStudio"等关键词时,优先引导走选项 7 子菜单的对应 preset。子菜单选完后,bootstrap 会写到 `[llm.openai]` 段(provider 字段都是 `openai`,因为底层走的是 OpenAI Chat Completions 协议)。
 
 **Why DeepSeek default, not Ollama**: previous versions called Ollama
 "推荐新手 / 白嫖" but in practice CPU inference on a 16 GB Mac is slow
