@@ -66,24 +66,32 @@ docker exec -it openbiliclaw-backend openbiliclaw init
 
 > ⏱  **首次运行预计 2–5 分钟**。LLM 单次响应可能就要 10–30s，全程会打印进度，不要以为卡住了。
 
-`init` 是 v0.3.5+ 的 4 阶段交互式向导，会自动检测缺什么并按需补齐：
+`init` 是 v0.3.27+ 的交互式向导，自动检测 `config.toml` 缺哪些字段并按需补齐。每一步都有"不确定就回 1"的默认值：
 
-1. **Phase 1 — LLM 服务选择**：菜单首选「本地 Ollama」（免费 / 离线 / 无需 API Key）；其他云厂商按需选；「OpenAI 协议兼容自建网关」是单独的菜单项。
-2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段（Ollama 只问模型名；云厂商问 Key + 模型；OpenAI 协议兼容问 Base URL + Key + 模型）。
-3. **Phase 3 — Embedding（独立提问）**：4 选 1（跟随主 LLM / Ollama bge-m3 / 自定义 OpenAI 兼容 / 其他 provider）。
-4. **Phase 4 — Per-module 覆盖**（高级，默认跳过）。
+1. **Phase 1 — LLM 服务选择（3 选 1 + 高级）**：默认推荐 **DeepSeek**（性价比高、效果好），其次 OpenAI、Gemini，第 4 项「高级」里包含本地 Ollama 与 OpenAI 协议兼容自建网关。
+2. **Phase 2 — 给所选服务填配置**：每个选项只问该选项需要的字段（DeepSeek/OpenAI/Gemini 问 Key + 模型；Ollama 只问模型名；自建网关问 Base URL + Key + 模型）。
+3. **Phase 3 — Embedding（向量化，3 选 1 + 高级）**：默认推荐 **本地 Ollama bge-m3**（免费、离线、效果够用），其次 Gemini（云端、效果最好但要 Key），再次「跟随主 LLM」（仅当主 LLM 提供 embedding 接口时可用，否则自动 fallback 到 Ollama）。高级选项里有"自定义 OpenAI 兼容 endpoint"。
+4. **Phase 4 — Per-module 覆盖**（高级，默认跳过）：可单独给 soul / discovery / recommendation / evaluation 指定不同模型。
 
 接着 B 站登录态走 **2 选 1**（v0.3.12+）：
 
 - 装浏览器扩展自动同步（推荐，零配置）—— 选这条向导先退出，等扩展同步后再 `openbiliclaw init` 跑剩下的
 - 现场手动贴 Cookie —— 向导附 F12 → Network 取 cookie 的 5 步教程
 
+> 🌸 **小红书数据是否加入（v0.3.27+ 新增可选项）**：拉 B 站数据之前会单独弹一个交互式问题——把小红书收藏 / 点赞混进画像吗？
+> - 想加就回 Y（默认），会有准备清单提示你装扩展 + 登录小红书 + 让浏览器是活跃窗口。**注意：扩展会在浏览器开一个前台 tab（会抢一次焦点）跑 ~10–30s 抓数据，完成后自动关**
+> - 不想加就回 N，只用 B 站数据建画像
+> - 脚本化场景用 `--no-xhs` 跳过 / `--yes-xhs` 强制启用 / `OPENBILICLAW_NO_XHS=1` 环境变量永久跳过
+
 最后进入真正的 init 阶段：
 
-1. 拉取 B 站历史 / 收藏 / 关注（≈ 20–60s）
-2. 分析偏好（LLM 调用，≈ 30–90s）
-3. 生成初始画像（LLM 调用，≈ 30–60s）
-4. 自动补首轮内容池（多策略并发 + LLM 评估，≈ 1–3 分钟）
+1. （可选）拉取小红书收藏 / 点赞 —— 仅在上面回 Y 时执行；与 B 站拉取并行跑
+2. 拉取 B 站历史 / 收藏 / 关注（≈ 20–60s）
+3. 分析偏好（LLM 调用，≈ 30–90s）
+4. 生成初始画像（LLM 调用，≈ 30–60s）—— 若有小红书数据会一并喂入
+5. 自动补首轮内容池（多策略并发 + LLM 评估，≈ 1–3 分钟）
+
+跑完后可以用 `openbiliclaw cost` 查看本次 init 在 LLM 上花了多少钱（v0.3.26+ 计费台账）。
 
 如果当前终端**不是**交互式（CI / 服务器脚本），`init` 不会等待输入，而是直接报错——这是为了避免把脚本挂死。这时改用 `python3 scripts/agent_bootstrap.py --provider ... --llm-api-key ... --bilibili-cookie ...`（详见 [docs/agent-install.md](agent-install.md)）。
 
@@ -129,7 +137,7 @@ cp config.example.toml config.toml
 openbiliclaw init
 ```
 
-> ⏱  **首次运行预计 2–5 分钟**。同 Docker 路径，触发同一份 4 阶段交互式向导（LLM → Embedding → Cookie），后跑实际 init（拉历史 / 生成画像 / 首轮发现）。
+> ⏱  **首次运行预计 2–5 分钟**。同 Docker 路径，触发同一份 4 阶段交互式向导（LLM → Embedding → Cookie → Per-module 覆盖），然后弹 🌸 小红书可选问题，最后跑实际 init（可选拉小红书 → 拉 B 站历史 → 生成画像 → 首轮发现）。
 
 如果你想跳过交互式向导（自动化场景），用 `scripts/agent_bootstrap.py` 的命令行 flag 一次性把所有字段传进去——见 [docs/agent-install.md](agent-install.md)。
 

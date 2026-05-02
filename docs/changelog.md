@@ -4,6 +4,14 @@
 
 ---
 
+## v0.3.27: 安装文档全面同步至 init wizard 当前形态（2026-05-02）
+
+### 修改
+
+- `docs/openclaw-quickstart.md` —— 把 `init` 4 阶段向导描述同步到 v0.3.27+ 当前形态:Phase 1 LLM(DeepSeek 默认 / Ollama+网关收进高级)、Phase 2 配置、Phase 3 Embedding(Ollama bge-m3 默认)、Phase 4 Per-module 覆盖。新增独立的 🌸 小红书数据可选问题(在 wizard 之后、数据拉取之前),并明确"扩展会在浏览器开前台 tab 抢一次焦点"的真实行为。`init` 阶段列表新增可选小红书拉取步,并提示用 `openbiliclaw cost` 查看花费
+
+---
+
 ## v0.3.26: LLM 计费模块 + 默认配置成本调优（2026-05-02）
 
 新增本地 LLM 用量与花费追踪,顺手把 `config.example.toml` 里几个会让新装用户立刻烧钱的默认值改了。重启 daemon 后,跑 `openbiliclaw cost` 就能看每天实际花了多少。
