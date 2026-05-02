@@ -98,17 +98,19 @@ user's main menu unless they explicitly mention having a gateway):
 
 | 选项 | 默认模型 | 适合谁 | 是否需要 API Key | 钱 / 速度 |
 |---|---|---|---|---|
-| 1. **DeepSeek**（默认推荐 / 极便宜） | `deepseek-v4-flash`(可选 `deepseek-v4-pro`;旧 `deepseek-chat`/`deepseek-reasoner` **2026/07/24 弃用**) | 想几毛钱体验完整功能 | ✅ 需要 | ¥0.001 / 千 token,几乎免费 |
-| 2. **OpenAI 官方** | `gpt-5-nano`(最便宜的 GPT-5;可选 gpt-5.4-nano / -mini / gpt-5.5 旗舰) | 已有 sk- 开头的 Key | ✅ 需要 | $0.05/M(nano) ~ $30/M(5.5-pro) |
-| 3. **Gemini** | `gemini-2.5-flash`(稳定;可选 gemini-3-flash-preview / gemini-3.1-pro 旗舰) | Google AI Studio 申请 Key | ✅ 需要 | 免费档每天 1500 次 |
-| 4. **Claude** | `claude-sonnet-4-6`(1M ctx;可选 claude-haiku-4-5 便宜 / claude-opus-4-7 旗舰) | Anthropic console | ✅ 需要 | $3-$75/M,按 token,质量高 |
-| 5. **OpenRouter** | `openai/gpt-5-nano`(格式 `<vendor>/<model>`) | 一个 Key 跑多家 | ✅ 需要 | 按调用计费 |
-| 6. **本地 Ollama**（完全免费 / 离线 / 不要 Key） | `qwen2.5:7b`(中文好;可选 llama3.2 / gemma2 / mistral / deepseek-r1) | 16GB+ 内存,能接受 1–3 分钟首次响应 | ❌ 不需要 | ✅ 免费 / ⚠️ CPU 推理慢 |
-| 7. **(高级) OpenAI 协议兼容服务** | 选 preset 后自动填 | Kimi / MiniMax / 通义千问 / 智谱 / Yi / 自建 vLLM-LMStudio / 中转站 / Azure | 看服务 | 看服务 |
+| 1. **DeepSeek** ★第一推荐(极便宜 / 国内可直连) | `deepseek-v4-flash`(可选 `deepseek-v4-pro`;旧 `deepseek-chat`/`deepseek-reasoner` **2026/07/24 弃用**) | 想几毛钱体验完整功能 | ✅ 需要 | ¥0.001 / 千 token,几乎免费 |
+| 2. **★ 中转站 / OpenAI 协议兼容服务** ★第二推荐 | 选 preset 后自动填 | **国内买中转站 / OneAPI Key 的人走这个**;也覆盖 Kimi / MiniMax / 通义 / 智谱 / Yi 官方 + Azure / vLLM / LMStudio | 看服务 | 看服务 |
+| 3. **OpenAI 官方** | `gpt-5-nano`(最便宜的 GPT-5;可选 gpt-5.4-nano / -mini / gpt-5.5 旗舰) | 已有 sk- 开头 Key,**国内访问受限**(建议用 #2 中转站) | ✅ 需要 | $0.05/M(nano) ~ $30/M(5.5-pro) |
+| 4. **Gemini 官方** | `gemini-2.5-flash`(稳定;可选 gemini-3-flash-preview / gemini-3.1-pro 旗舰) | Google AI Studio 申请 Key,**国内需翻墙** | ✅ 需要 | 免费档每天 1500 次 |
+| 5. **Claude 官方** | `claude-sonnet-4-6`(1M ctx;可选 claude-haiku-4-5 便宜 / claude-opus-4-7 旗舰) | Anthropic console,**国内需翻墙** | ✅ 需要 | $3-$75/M,按 token,质量高 |
+| 6. **OpenRouter** | `openai/gpt-5-nano`(格式 `<vendor>/<model>`) | 一个 Key 跑多家 | ✅ 需要 | 按调用计费 |
+| 7. **本地 Ollama**（完全免费 / 离线 / 不要 Key） | `qwen2.5:7b`(中文好;可选 llama3.2 / gemma2 / mistral / deepseek-r1) | 16GB+ 内存,能接受 1–3 分钟首次响应 | ❌ 不需要 | ✅ 免费 / ⚠️ CPU 推理慢 |
 
-> ⚠️ **不要把选项 2 (OpenAI 官方) 和选项 7 (协议兼容) 混淆**:走 OpenAI API 官方端点选 2;走任何"OpenAI 协议兼容"的第三方 / 自建服务选 7。
+> ⚠️ **不要把选项 3 (OpenAI 官方) 和选项 2 (协议兼容) 混淆**:走 OpenAI API 官方端点选 3;走任何"OpenAI 协议兼容"的第三方 / 自建服务选 2。
 
-**选项 7 的核心场景:你买了第三方中转站 / OneAPI 的 Key**,想用人民币付钱跑 OpenAI / Claude / 国产模型 —— 这是国内绝大多数用户用这个选项的真正原因。子菜单 9 个 preset 中,**第 1 个就是中转站(默认)**:
+**AI agent 决策建议**: 国内用户**默认引导 #1 DeepSeek**(无需 VPN,几毛钱搞定);如果用户明确说"我有中转站 Key / OneAPI / 通义 / 智谱 / Kimi / MiniMax / Yi / Azure / vLLM 等任何 OpenAI 兼容服务"→ 引导 #2(进子菜单后再细分);只有用户明确说"我能直连 OpenAI / Gemini / Claude 官方"才走 #3-5;Ollama 仅在用户明确要求"本地 / 离线"时引导。
+
+**选项 2 的核心场景:你买了第三方中转站 / OneAPI 的 Key**,想用人民币付钱跑 OpenAI / Claude / 国产模型 —— 这是国内绝大多数用户用这个选项的真正原因。子菜单 9 个 preset 中,**第 1 个就是中转站(默认)**:
 
 | 子菜单# | 服务 | Base URL | 默认模型 / 备选 |
 |---|---|---|---|
@@ -123,8 +125,8 @@ user's main menu unless they explicitly mention having a gateway):
 | 9 | **其它(完全手填)** | 用户自填 | 用户自填 |
 
 > 💡 **AI agent 注意**:
-> - 用户说"我有中转站 / OneAPI / 团队网关 / 公司给的 Key"等(国内最常见)→ 选项 7 子菜单 #1 (relay)
-> - 用户说"我有 Kimi / 通义 / 智谱 / Yi / Moonshot / MiniMax / Qwen / GLM 官方 Key" → 选项 7 子菜单 #2-6 对应 preset
+> - 用户说"我有中转站 / OneAPI / 团队网关 / 公司给的 Key"等(国内最常见)→ 选项 2 子菜单 #1 (relay)
+> - 用户说"我有 Kimi / 通义 / 智谱 / Yi / Moonshot / MiniMax / Qwen / GLM 官方 Key" → 选项 2 子菜单 #2-6 对应 preset
 > - 用户说"Azure OpenAI / 公司 Azure 部署" → 子菜单 #7 (azure)
 > - 用户说"自己跑的 vLLM / LMStudio / Ollama OpenAI 兼容 shim" → 子菜单 #8 (self-hosted)
 >

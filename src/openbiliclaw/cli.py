@@ -1202,19 +1202,24 @@ _LLM_MENU: tuple[tuple[str, str, str], ...] = (
         "默认 deepseek-v4-flash (V4)。¥0.001/千 token 几乎免费,国内可直连",
     ),
     (
+        "openai-compat",
+        "★ 第二推荐 — 中转站 / OpenAI 协议兼容服务",
+        "买了中转站 Key 选这个 (国内最常见)。也覆盖 Kimi / 通义 / 智谱 / Yi / MiniMax 官方 / Azure / vLLM",
+    ),
+    (
         "openai",
         "OpenAI 官方",
-        "默认 gpt-5-nano (最便宜的 GPT-5)。api.openai.com,需要 sk- 开头的 Key",
+        "默认 gpt-5-nano。api.openai.com 国内访问受限,大多数人用上面 #2 的中转站会更顺",
     ),
     (
         "gemini",
         "Gemini 官方",
-        "默认 gemini-2.5-flash (稳定 / 便宜)。Google AI Studio 申请 Key,免费档每天 1500 次够用",
+        "默认 gemini-2.5-flash。Google AI Studio 申请 Key,免费档每天 1500 次,国内需翻墙",
     ),
     (
         "claude",
         "Claude 官方",
-        "默认 claude-sonnet-4-6。Anthropic console,按 token 付费,质量高",
+        "默认 claude-sonnet-4-6。Anthropic console,按 token 付费,质量高,国内需翻墙",
     ),
     (
         "openrouter",
@@ -1226,16 +1231,11 @@ _LLM_MENU: tuple[tuple[str, str, str], ...] = (
         "本地 Ollama（完全离线）",
         "默认 qwen2.5:7b (中文好)。不要 Key / 完全免费,但需 16GB+ 内存,CPU 推理首次响应 10-60s",
     ),
-    (
-        "openai-compat",
-        "中转站 / OpenAI 协议兼容服务（OneAPI / 团队网关 / 国产官方 / Azure / 自建）",
-        "买了中转站 Key 就选这个。也覆盖 Kimi / 通义 / 智谱 / Yi / MiniMax 官方 / Azure / vLLM 等",
-    ),
 )
 
 
 def _print_provider_table() -> None:
-    """Render the provider menu — DeepSeek-default, gateway demoted to advanced (v0.3.20+)."""
+    """Render the provider menu — DeepSeek default, 协议兼容 second (v0.3.27+)."""
     console.print("[bold]OpenBiliClaw 需要一个语言模型来理解你的兴趣、写推荐文案。[/bold]")
     console.print("请选一个 LLM 服务：\n")
     table = Table(show_lines=False, show_header=True)
@@ -1246,9 +1246,8 @@ def _print_provider_table() -> None:
         table.add_row(str(index), label, hint)
     console.print(table)
     console.print(
-        "[dim]Tip：不确定就选 1（DeepSeek），¥0.001/千 token 几乎免费，"
-        "月度通常 ¥0.5-2。想完全离线选 6（Ollama），但 CPU 推理首次响应慢。"
-        "选项 7（自建网关）是高级选项，普通用户用不到。[/dim]"
+        "[dim]Tip:不确定就选 1 (DeepSeek),¥0.001/千 token 几乎免费,月度通常 ¥0.5-2。"
+        "已经买了中转站 / OneAPI Key 选 2 (协议兼容);想完全离线选 7 (Ollama,但 CPU 推理慢)。[/dim]"
     )
 
 
