@@ -50,7 +50,10 @@ class OllamaProvider(OpenAIProvider):
         """
         url = f"{self._native_root()}/api/embeddings"
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            # trust_env=False bypasses the user's HTTP_PROXY / HTTPS_PROXY env
+            # vars, which would otherwise route localhost embedding calls
+            # through e.g. a 127.0.0.1:7897 VPN proxy and time out.
+            async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
                 response = await client.post(
                     url,
                     json={"model": model, "prompt": text},

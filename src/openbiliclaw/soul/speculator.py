@@ -217,6 +217,26 @@ def _split_chinese_keywords(text: str) -> list[str]:
     return [p.strip() for p in parts if len(p.strip()) >= 2]
 
 
+def _chinese_bigrams(text: str) -> set[str]:
+    """Extract distinct 2-char bigrams from continuous Chinese runs.
+
+    For LLM-generated probe domains like ``"AI图像生成工作流深度拆解"`` the
+    delimiter-based splits + whitespace-tokenization both fail (no
+    delimiters, the entire 11-char run is one token). Bigrams give the
+    matcher enough granularity to confirm probes against real video
+    titles like "ComfyUI图像生成入门" (overlaps 图像, 像生, 生成).
+    """
+    import re
+
+    bigrams: set[str] = set()
+    for run in re.findall(r"[一-鿿]+", text):
+        if len(run) < 2:
+            continue
+        for i in range(len(run) - 1):
+            bigrams.add(run[i : i + 2])
+    return bigrams
+
+
 def _build_event_text(event: dict[str, Any]) -> str:
     """Extract searchable text from an event."""
     title = str(event.get("title", "")).lower()
@@ -240,10 +260,21 @@ def _text_matches_keywords(event_text: str, name: str, category: str = "") -> bo
             return True
 
     spec_tokens = _tokenize(name) | _tokenize(category)
-    if not spec_tokens:
-        return False
     event_tokens = _tokenize(event_text)
-    return len(spec_tokens & event_tokens) >= 2
+    if spec_tokens and len(spec_tokens & event_tokens) >= 2:
+        return True
+
+    # Chinese bigram fallback for long composite phrases that delimiter-
+    # splits and whitespace-tokenization cannot break apart. Require a
+    # name-side bigram pool of at least 4 distinct bigrams (i.e. ≥5-char
+    # Chinese run) to guard against over-matching short generic names,
+    # and ≥2 overlapping bigrams to count as a hit. With
+    # ``confirmation_threshold=3`` upstream, two stray bigram hits across
+    # three unrelated events still won't promote a probe.
+    name_bigrams = _chinese_bigrams(name) | _chinese_bigrams(category)
+    if len(name_bigrams) < 4:
+        return False
+    return len(name_bigrams & _chinese_bigrams(event_text)) >= 2
 
 
 def _event_matches_speculation(
@@ -461,8 +492,17 @@ class InterestSpeculator:
 
         # 3. Generate new speculations if interval elapsed and caps not reached
         if self._should_generate(state, now, profile):
+            pre_active_domains = {s.domain for s in state.active if s.status == "active"}
             state = await self._generate(profile, state, now)
-            result.generated = [s for s in state.active if s.status == "active"]
+            # Only include domains that didn't exist before this _generate call
+            # — otherwise the "generated N" log re-prints the carried-over
+            # active set every tick, falsely suggesting work happened when
+            # the LLM proposed only duplicates that dedup filtered out.
+            result.generated = [
+                s
+                for s in state.active
+                if s.status == "active" and s.domain not in pre_active_domains
+            ]
 
         self._save_state(state)
 
@@ -520,8 +560,13 @@ class InterestSpeculator:
             and self._llm_service is not None
         )
         if can_generate:
+            pre_active_domains = {s.domain for s in state.active if s.status == "active"}
             state = await self._generate(profile, state, now)
-            result.generated = [s for s in state.active if s.status == "active"]
+            result.generated = [
+                s
+                for s in state.active
+                if s.status == "active" and s.domain not in pre_active_domains
+            ]
 
         self._save_state(state)
         # Only log at INFO when something meaningful happened, otherwise
@@ -549,7 +594,17 @@ class InterestSpeculator:
         state, match_count = observe_events(events, state)
         if match_count > 0:
             self._save_state(state)
-            logger.debug("Speculator observed %d matches from %d events", match_count, len(events))
+            # Promoted to INFO so the live confirmation pulse is visible
+            # in production logs (DEBUG was effectively invisible at our
+            # default file_level).  Surfaces the active probe count too
+            # so a reader can sanity-check "events arrived but matched 0
+            # of 5 active probes" diagnostics.
+            logger.info(
+                "Speculator observed %d match(es) from %d event(s) against %d active probe(s)",
+                match_count,
+                len(events),
+                active_count,
+            )
         return match_count
 
     def ingest_seeds(

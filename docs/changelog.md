@@ -12,11 +12,15 @@
 - **满池时也能恢复已 suppressed 的小红书高分候选**:`reactivate_under_quota_pool_sources()` 会在来源族低于配额时，从 `pool_status='suppressed'` 且带 `xsec_token` 的可打开候选中复活一批，再由 `trim_pool_to_target_count(source_share_quotas=...)` 按统一配额裁掉过量来源。现有被压住的小红书内容不必等重新浏览同一页面才有机会回到 fresh pool。
 - **池子计数排除不可打开的小红书裸 URL**:`count_pool_candidates()` 和 `count_pool_candidates_by_source()` 现在只把带 `xsec_token` 的小红书行算作可用候选，避免 runtime 状态显示“池子满了”但 UI 实际不能推荐。
 - **explore 域生成遇到 DeepSeek 空内容会自愈一次**:线上日志里的 `deepseek returned empty content` 来自 DeepSeek HTTP 200 但 `content=""`，之前普通模式没有 provider 层重试，导致 `discovery.explore.queries` 直接返回 0 个探索域。`DeepSeekProvider` 现在对空内容统一重试一次；`reasoning_effort` 开启时仍关闭 thinking 重试，普通模式按原参数重试。
+- **Ollama embedding 在系统代理环境下全失败**:用户开了本地 HTTP 代理（如 7897 端口的 VPN 客户端）时，`httpx.AsyncClient` 默认 `trust_env=True` 会把 localhost embedding 请求也走代理 → 全部 `httpx.ReadTimeout`。日志统计显示一天 140+ 次失败，**直接拖垮惊喜推荐**：`DelightScorer` 的 `likes_alignment` / `deep_need_alignment` / `dislike_penalty` 全返 0，99.5% 池内 item（604/607）落到 0.01-0.50 区间永远过不了 0.65 阈值。`OllamaProvider.embed()` 现强制 `trust_env=False`，绕开代理直连本地 Ollama。
+- **Speculator 探针长复合中文短语永远匹配不上事件**:LLM 生成的 probe 域名常是 `'AI图像生成工作流深度拆解'` 这种 13 字连续中文，原匹配器三条路径全失效（整串 substring 不命中、`[与和·、/\s及]+` 切不动、whitespace-tokenize 只产 1 个 token）→ 一天观察 0 次匹配，所有探针挂在 active 槽 3 天后 TTL 过期被拒。新增 Chinese-bigram 兜底：name 端要求 ≥4 个 distinct bigram、event 端要求 ≥2 个 bigram 重叠才算命中，配合上游 `confirmation_threshold=3` 防误升。
+- **Speculator "generated N new" 日志骗人**:`result.generated` 之前取 `state.active` 全集，导致每轮 tick 都把携带过来的老探针重复打成 "generated 2 new"，制造在工作的假象。改成取 `_generate` 调用前后的 domain 集合差，只展示真正新增的；空集时落到 `force_tick: no-op (active full)` DEBUG 行。`Speculator observed` 日志同步从 DEBUG 升到 INFO，让事件→探针确认信号在生产日志里可见。
 
 ### 测试
 
 - 新增 storage / refresh runtime 回归测试覆盖小红书来源族归一、under-quota suppressed 复活、满池裁剪传递小红书配额。
 - 新增 LLM provider 回归测试覆盖 DeepSeek 普通模式空内容重试。
+- 新增 `test_observe_matches_long_chinese_composite_phrase` 覆盖 bigram 匹配兜底（命中真实标题、不误中无关内容）。
 
 ---
 
