@@ -4,6 +4,19 @@
 
 ---
 
+## v0.3.35: 惊喜推荐改两段式检索（粗召 + 精排）（2026-05-04）
+
+### 改动
+
+- **粗召回**: `get_pool_candidates_needing_delight_score` 加 `min_relevance_score=0.55` 参数,SQL `WHERE` 加上 `relevance_score >= 0.55` 过滤。原来 SQL 只 `ORDER BY relevance_score DESC LIMIT N`,池稀疏时会喂给 LLM 一堆 weak-fit 垃圾。0.55 对齐 discovery rubric「moderate fit」基准——再惊喜也得至少半 fit。
+- **精排扩容**: `precompute_delight_scores` 的 `limit` 默认 30 → 50,每 cycle 让 LLM 多看 20 条候选,提高真惊喜被命中的概率。成本从 ¥0.06/cycle 升到 ¥0.10/cycle (¥0.80/天 vs ¥0.48/天),换约 67% 更宽的搜索面。
+
+### 思路
+
+`relevance_score` 是 discovery 阶段 LLM 已经判过的「用户-内容匹配度」,免费可用。当作粗召回信号 + LLM-judge 做精排,经典两段式: 砍掉 95% 没望命中的低质 item,把 LLM 调用集中在最值得评判的 candidate 上。
+
+---
+
 ## v0.3.34: 惊喜推荐改用 LLM 评分（2026-05-04）
 
 ### 改动

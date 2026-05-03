@@ -2424,8 +2424,22 @@ class Database:
         limit: int = 30,
         *,
         min_delight_score_for_reason: float | None = None,
+        min_relevance_score: float = 0.55,
     ) -> list[dict[str, Any]]:
-        """Return pool candidates that still need delight evaluation or copy."""
+        """Return pool candidates that still need delight evaluation or copy.
+
+        Two-stage retrieval: ``relevance_score >= min_relevance_score``
+        is the cheap pre-filter (the discovery LLM already judged user-
+        content fit during ``evaluate_batch``), then the caller runs the
+        expensive LLM delight scorer only on this shortlist.
+
+        Default 0.55 is calibrated to the discovery rubric:
+          0.6+ strong fit, 0.5-0.6 moderate, <0.5 weak fit.
+        Items below ``min_relevance_score`` skip delight scoring
+        entirely — they're not going to delight anyone they don't
+        already half-fit, and burning LLM calls on weak-fit items just
+        wastes budget.
+        """
         if min_delight_score_for_reason is None:
             cursor = self.conn.execute(
                 """
@@ -2434,6 +2448,7 @@ class Database:
                 WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'suppressed')
                   AND COALESCE(feedback_type, '') != 'dislike'
                   AND COALESCE(delight_score, 0.0) = 0.0
+                  AND COALESCE(relevance_score, 0.0) >= ?
                   AND NOT EXISTS (
                     SELECT 1
                     FROM recommendations AS r
@@ -2442,7 +2457,7 @@ class Database:
                 ORDER BY relevance_score DESC, discovered_at DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (min_relevance_score, limit),
             )
         else:
             cursor = self.conn.execute(
@@ -2451,6 +2466,7 @@ class Database:
                 FROM content_cache
                 WHERE COALESCE(pool_status, 'fresh') IN ('fresh', 'suppressed')
                   AND COALESCE(feedback_type, '') != 'dislike'
+                  AND COALESCE(relevance_score, 0.0) >= ?
                   AND (
                     COALESCE(delight_score, 0.0) = 0.0
                     OR (
@@ -2473,7 +2489,7 @@ class Database:
                     discovered_at DESC
                 LIMIT ?
                 """,
-                (min_delight_score_for_reason, limit),
+                (min_relevance_score, min_delight_score_for_reason, limit),
             )
         return [dict(row) for row in cursor.fetchall()]
 

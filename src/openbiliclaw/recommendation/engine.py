@@ -725,15 +725,23 @@ class RecommendationEngine:
         self,
         *,
         profile: SoulProfile,
-        limit: int = 30,
+        limit: int = 50,
     ) -> int:
         """Score un-scored pool candidates for proactive delight potential.
 
-        v0.3.34+: switched from per-item embedding-cosine scoring (which
-        biased toward similarity, not surprise) to LLM batch scoring via
-        ``LLMDelightScorer``. Each batched call returns score + rationale
-        + hook in one shot, eliminating the secondary
-        ``_generate_delight_reason`` LLM hop for above-threshold items.
+        Two-stage retrieval:
+          1. Coarse: ``get_pool_candidates_needing_delight_score`` filters
+             by ``relevance_score >= 0.55`` and orders by relevance DESC,
+             capped at ``limit`` (default 50). Free — uses scores already
+             computed by discovery's ``evaluate_batch``.
+          2. Fine: ``LLMDelightScorer.score_batch`` LLM-judges those 50
+             against a delight rubric (cross-domain bridge / hidden need /
+             quality, not naive similarity).
+
+        Default ``limit=50`` (raised from 30 once relevance gate landed):
+        more head-room for the LLM to find true delights without burning
+        cycles on weak-fit junk. Cost: 50/5 = 10 batches × ~¥0.01 ≈
+        ¥0.10/cycle, ¥0.80/day at 8 cycles.
         """
         from openbiliclaw.recommendation.delight import LLMDelightScorer
 
