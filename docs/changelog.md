@@ -4,6 +4,33 @@
 
 ---
 
+## v0.3.52: discovery 候选并发评估 30 → 90（2026-05-05 spec wave 2）
+
+### 背景
+
+`docs/plans/2026-05-05-discovery-runtime-fix-spec.md` U2：
+
+production logs `evaluate_content_batch: truncating 300+ -> 30 items` 反复出现，最高 480→30。**90% 候选直接被丢弃**——里面可能有不少好内容。
+
+根因：`_EVALUATE_BATCH_HARD_CAP=30` 永远只评估前 30 条。pre-v0.3.51 因为单批 LLM 要 8-16 min，不敢并发跑多批；v0.3.51 关了 reasoning 后单批 30s 完成 → 现在可以并发评估更多候选。
+
+### 改动
+
+- `_EVALUATE_BATCH_HARD_CAP: 30 → 90`（`discovery/engine.py`）
+- `_run_batch` 的 `asyncio.gather` 调度无变化，但现在 90 条 → 3 个 batch × 30 items 并发
+- `llm_evaluation_concurrency` 已有的 semaphore 兜底防止 provider rate limit
+
+### 影响
+
+- 单 round 评估候选从 30 → 90（3× 提速）
+- 总耗时不增加（并发跑），结合 v0.3.51 的 reasoning-disabled，3 个并发 batch 总耗时 ≈ 单批 v0.3.50 一次的耗时
+- LLM 月成本：单 round 提升 3×，但 v0.3.51 已经降 80%，净仍比 v0.3.50 便宜
+- truncation 90% 浪费降到 ~70%（很多 round 候选不到 90 也无 truncation）
+
+测试：830/830 通过，无新增。
+
+---
+
 ## v0.3.51: discovery LLM 关 reasoning + style cap（2026-05-05 spec wave 1）
 
 ### 背景

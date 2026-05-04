@@ -714,7 +714,19 @@ class ContentDiscoveryEngine:
     # default — see below). Truncation is top-of-list (natural ranking
     # from strategies), and a WARNING is emitted so we see when
     # strategies hit the cap.
-    _EVALUATE_BATCH_HARD_CAP = 30
+    #
+    # v0.3.52+: cap raised 30 → 90 to evaluate ~3× more candidates per
+    # discovery round. Production logs (2026-05-05) routinely truncated
+    # 300-480 candidates down to 30 — 90% data wasted. The 30/batch
+    # constant stays so each individual LLM call is the same size,
+    # but ``_run_batch`` already gathers multiple batches in parallel
+    # via ``asyncio.gather``, so the new cap means 3 parallel LLM
+    # batches of 30 items each. Concurrency is bounded by
+    # ``llm_evaluation_concurrency`` so we don't blow up provider
+    # rate limits. Combined with v0.3.51's reasoning-disabled batches
+    # (~30s each), three parallel batches finish in roughly the same
+    # wall time as one used to take.
+    _EVALUATE_BATCH_HARD_CAP = 90
 
     async def evaluate_content_batch(
         self,
