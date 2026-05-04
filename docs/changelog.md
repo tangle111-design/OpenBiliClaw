@@ -4,6 +4,60 @@
 
 ---
 
+## v0.3.57: pool quality trio (2026-05-05)
+
+### 背景
+
+`docs/plans/2026-05-05-pool-quality-trio-spec.md` 三个 P 级问题——都直接污染 popup 显示质量,但互不耦合。配套发布 **extension v0.3.10** 完成 P2 的扩展端配套。
+
+### P1 — cookie race 阻塞 history 7 分钟
+
+**现象**:daemon 启动时 cookie 还没从扩展同步到位,`AccountSyncService` 第一个 tick 用空 cookie 拉 history,拿到 `[]` 并 stamp `last_account_sync_at`,把 6 小时 throttle 锁死。production logs 实测 03:33:25 cookie 缺失 → 03:40:22 才第一次成功——**7 分钟空窗**。
+
+**修法**(`runtime/account_sync.py`):
+- `sync_now` / `sync_if_due` 在 `bilibili_client.is_authenticated` 为 False 时短路返回 `reason=no_auth`,**不写时间戳**。
+- `run_forever` 在第一次成功 auth 之前用 15s 重试间隔(`_UNAUTH_RETRY_INTERVAL_SECONDS`),之后切回常规 5 min。
+- 首次 auth 抵达时打一行 INFO 日志(`account_sync: bilibili cookie now ready ...`),让 operator 能 grep 到 gate 释放。
+- Stub client 没 `is_authenticated` 属性时默认认为已 auth,保留既有测试行为。
+
+**预期**:首次 history 拉取从 7 min → ≤30s。
+
+### P2 — XHS 用户自己发布的笔记进推荐池
+
+**现象**:`agent-bootstrap.log` line 610–615 sample_titles 里出现"自家宝安领航城165㎡大五房出售"等用户本人发布的笔记。XHS 平台的 search/explore feed 会把登录用户自己的笔记混进结果,而推荐入池路径里**只有 bootstrap_profile 抽 self_info**:passive collector 和 search/creator task 都没抽,race 一打开就漏。
+
+**后端修法**(`api/app.py`):
+- `_extract_self_info_from_payload(payload)` 统一接入:**先**看顶层 `self_info`,fallback 到旧的 `debug.xhs_bootstrap.steps[*].self_info`。
+- `/api/sources/xhs/observed-urls` 新增:读 self_info → `_persist_xhs_self_info` → 传给 `_cache_xhs_notes`。
+- `/api/sources/xhs/task-result` 切换到统一 extractor。
+- `_purge_self_authored_pool_items(database, self_info)` 启动钩子:扫 `content_cache where source_platform='xiaohongshu' and lower(up_name)=lower(?)` 把已存量行翻成 `pool_status='suppressed'`,修复升级前已经污染的 pool。
+
+**扩展修法**(extension v0.3.10,`xhs/passive.ts` + `xiaohongshu.ts` + `xhs/task-executor.ts`):
+- `passive.ts:filterSelfAuthoredNotes` + `XhsSelfInfo` 类型 + `XhsUrlObservation.self_info` 可选字段。
+- `runPassiveCollection` 读 `__INITIAL_STATE__.user.userInfo`,scrape-time drop `note.author === self.nickname`,把 self_info 塞进 observation。
+- `executeTaskInPage` 非 bootstrap 分支同样抽 self_info + scrape-time 过滤,加入 `TaskResultPayload.self_info`。
+
+**预期**:任意 XHS 页面一打开就抓 self_info;不再依赖 bootstrap_profile 先跑;升级用户的存量污染会被启动 purge 修掉。
+
+### P3 — popup 推荐文案落到占位模板
+
+**现象**:popup 卡片下文案是 `"《xxx》这条切口挺顺的，先丢给你看看，说不定正好能对上你当下的兴趣"` —— `_fallback_expression` 兜底模板,直接命中。原因:`get_pool_candidates`/`count_pool_candidates` 没对 `pool_expression` 做非空过滤,discovery 写完→precompute 跑完之间 60–90s 窗口,serve() 取到空 row 走 fallback。
+
+**修法**(`storage/database.py` + `recommendation/engine.py`):
+- `get_pool_candidates` 两个 SQL 分支(`max_per_topic_group<=0` 和 window function)的 WHERE 加上 `AND COALESCE(pool_expression, '') != '' AND COALESCE(pool_topic_label, '') != ''`。
+- `count_pool_candidates` 同样加上,popup "还有 N 条" 不再误导。
+- `engine.py:320` 的 fallback 路径改成 `logger.warning("Pool gate leak: ...")` + 仍兜底——race-window 安全网,触发即报警。
+- 测试 fixture 加 `_seed_visible(db, bvid, **kwargs)` helper,默认填充两个字段;两个 gate-test 仍走 `cache_content` 直接路径以验证空行被过滤。
+
+**预期**:popup 永远只显示 LLM 生成的个性化文案;init 窗口可视 pool 出现时间从 30s 后移 ~90s,但所有露出来的内容都有真理由。
+
+### 兼容性
+
+- 后端先发,扩展后发——后端的 `_extract_self_info_from_payload` 用 `dict.get + isinstance` 防御,老扩展(v0.3.9)payload 不带 self_info 不报错,只是 P2 不生效。
+- 新扩展(v0.3.10)发到老后端会 500 ——只在升级窗口期短暂,文档强调要一起升级。
+
+---
+
 ## v0.3.56: topic_group supergroup 合并下沉到 DB（2026-05-05 spec wave 6 / 完结）
 
 ### 背景

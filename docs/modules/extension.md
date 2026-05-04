@@ -131,6 +131,18 @@ dispatcher 会把这两个字段透传给 content script；如果 `scroll_wait_m
 
 这条链路仍不直接调用小红书 API、不读取 cookie、不接触 Chrome 浏览器历史。这里的 `xhs_history` 指“小红书网页自己明确暴露的浏览记录 / 足迹 state”，不会把普通 `/explore` 推荐流当成浏览记录；如果小红书网页没有暴露稳定入口，就返回 0 条并让初始化继续。
 
+#### v0.3.10 self_info 全路径捕获
+
+**任意** XHS 页面只要登录,`window.__INITIAL_STATE__.user.userInfo` 就带 self user_id + nickname。v0.3.10 起把抽取从只在 bootstrap_profile 任务里发生,扩到三条入池路径全覆盖:
+
+| 路径 | 文件 | 行为 |
+|------|------|------|
+| 被动采集(任意 XHS 页) | `src/content/xiaohongshu.ts:runPassiveCollection` + `src/content/xhs/passive.ts` | 读 state,scrape-time `filterSelfAuthoredNotes` 把 `note.author === self.nickname` 的卡片直接 drop;observation 里塞 `self_info` 给后端 |
+| search / creator 任务 | `src/content/xhs/task-executor.ts:executeTaskInPage` 非 bootstrap 分支 | 同上,`TaskResultPayload.self_info` 带回 |
+| bootstrap_profile 任务 | `src/content/xhs/task-executor.ts:executeBootstrapTaskInPage` | 既有路径不变,debug 里仍嵌 `xhs_bootstrap.steps[*].self_info` 兼容老后端 |
+
+后端 v0.3.57 的 `_extract_self_info_from_payload` 优先读顶层 `self_info`,fallback 到旧的 nested 位置,**新旧扩展+新旧后端的四种组合都不破**(老扩展配老后端不动;新扩展配老后端会 500——升级窗口期短暂)。这把"用户自己发的笔记进推荐池"问题(屎屎/自家165㎡大五房等)从 race condition 治成确定性过滤。
+
 ### `popup/`
 
 `popup/` 目录当前承载 side panel 页面，已具备：

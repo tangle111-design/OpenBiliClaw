@@ -423,6 +423,7 @@ OpenBiliClaw/
 
 | 版本 | 日期 | 主要变更 |
 |---|---|---|
+| **v0.3.57** | 2026-05-05 | popup 推荐文案不再有占位模板("这条切口挺顺的…")· XHS 自己发布的笔记不再混入推荐池(所有 ingest 路径统一抽 `self_info` + 启动 purge)· daemon cookie 就绪后立即拉 history(从 7 min 空窗 → ≤30s)。**配套 extension v0.3.10 必须一起更新** |
 | **[v0.3.26](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.26)** | 2026-05-02 | LLM 计费模块:每次调用写一条到 `llm_usage` 表;`openbiliclaw cost` CLI 显示按天/按 provider 的花费分布。`config.example.toml` 默认值改成成本友好版(`reasoning_effort=""` 关思考链,`discovery_cron 8h`),新装用户日花费 ≈ ¥0.5 |
 | [v0.3.25](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.25) | 2026-05-02 | discovery 评估 batch_size 10→30(摊薄 3500 token 系统提示 → -54% input),max_tokens 8192→16384;refresh `_requested_refresh_limit` 按 pool gap 缩放,gap=20 时每策略只请求 15 个候选(原 30) → -50-77% LLM 评估调用 |
 | [v0.3.24](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.24) | 2026-05-02 | 跨源事件格式统一:B 站/小红书/扩展 click/feedback 全走 `event_format.build_event()`,emit 带中文自然语言 `context` 的标准化 dict;profile_builder 的 `_summarize_history` 输出新增 `contexts` 列表;preference / awareness / soul 提示词加 rule 引导 LLM 优先用 context;修 DB context 列双重 JSON 编码(导致 LLM prompt triple-escaped) |
