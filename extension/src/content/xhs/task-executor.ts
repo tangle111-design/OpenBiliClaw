@@ -415,6 +415,33 @@ function findProfileTab(doc: Document, labels: readonly string[]): HTMLElement |
   return null;
 }
 
+/**
+ * Poll for the profile sub-tab with the given labels to appear.
+ *
+ * v0.3.13+: post-2025 Xiaohongshu nests the saved / liked sub-tabs
+ * inside the 笔记 outer tab. The sub-tab DIVs render a beat after the
+ * profile-page initial paint — calling ``findProfileTab`` on first
+ * profile-page load returns ``null`` and the bootstrap_profile task
+ * silently gives up on saved / liked. Waiting up to ~5s lets the Vue
+ * runtime mount the sub-tabs and then activate them properly.
+ */
+async function findProfileTabWithRetry(
+  doc: Document,
+  labels: readonly string[],
+  timeoutMs: number = 5_000,
+): Promise<HTMLElement | null> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  // First try is synchronous so existing fast-path stays fast.
+  const immediate = findProfileTab(doc, labels);
+  if (immediate) return immediate;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, CHECK_INTERVAL_MS));
+    const found = findProfileTab(doc, labels);
+    if (found) return found;
+  }
+  return null;
+}
+
 function collectProfileTabCandidateTexts(doc: Document): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -560,7 +587,7 @@ async function loadProfileTabsForScopes(
       const current = extractBootstrapNotesFromState(state, [scope], { maxItemsPerScope });
       if (current.length > 0) continue;
     }
-    const tab = findProfileTab(doc, labels);
+    const tab = await findProfileTabWithRetry(doc, labels);
     if (!tab) continue;
     const previousKeys = profileDocumentNoteKeys(doc, baseUrl);
     activateProfileTab(tab, win);

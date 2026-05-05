@@ -4,6 +4,41 @@
 
 ---
 
+## extension v0.3.13: profile sub-tab 等待重试 — bootstrap_profile 真正能拉到收藏/点赞 (2026-05-05)
+
+### 背景
+
+v0.3.12 修好了 self_info 抽取后,bootstrap_profile 任务**仍然返回 saved/liked/xhs_history = 0**。诊断证据(用户在 active tab 跑读 DOM 的脚本):
+
+```
+"笔记" DIV reds-tab-item active sub-tab-list
+"收藏" DIV reds-tab-item sub-tab-list
+"点赞" DIV reds-tab-item sub-tab-list
+```
+
+→ DOM 里**有**收藏 / 点赞 sub-tab。`bootstrapProfileTabLabels` 也已包含 `["收藏"]` / `["赞过", "喜欢", "点赞"]`,selector `.reds-tab-item` 也匹配。**所以为什么找不到?**
+
+### 根因
+
+时序竞态:`hasBootstrapProfileContent(doc)` 看到 bridge 已经送来 state(基本立刻)就返回 `true`,task 进入 `loadProfileTabsForScopes`。但**那一帧 sub-tab DIV 还没 mount 出来**——XHS Vue runtime 是先把 `__INITIAL_STATE__` 赋值,再渲染 sub-tab 子组件。
+
+`findProfileTab` 同步调用,第一次必然返回 `null` → `loadProfileTabsForScopes` 内的 `if (!tab) continue` 直接跳过该 scope,sub-tab 永远不会被点击 → state.user.notes[1]/[2]/[3]/[4] 永远是空数组(XHS lazy-load,不点 tab 不拉数据)。
+
+### 修法
+
+新增 `findProfileTabWithRetry(doc, labels, timeoutMs=5000)`:
+- 第一次同步调用,fast-path 不变
+- 找不到 → 每 300ms 轮询一次,直到 deadline
+- 命中即返回
+
+`loadProfileTabsForScopes` 里 `findProfileTab` → `await findProfileTabWithRetry`。每个 scope 最多等 5 秒等 sub-tab 渲染。
+
+### 兼容性
+
+零接口变化。backend 不需要改。老 tab 已经渲染时 0 性能成本。新 tab 第一次最多多等 5s,但这是为了能拉到收藏/点赞列表的必要代价。
+
+---
+
 ## extension v0.3.12: MAIN-world state bridge — 修复 XHS 完全无数据 (2026-05-05)
 
 ### 背景
