@@ -1006,6 +1006,57 @@ def test_pool_cap_reactivates_under_quota_sources_before_trim() -> None:
     assert database.pool_count == 600
 
 
+async def test_run_refresh_plan_enforces_cap_when_discovery_overshoots() -> None:
+    """Regression: the per-strategy ``current_pool_count >= target`` check
+    only prevents *starting* a strategy when already at cap. Within a
+    single ``discover()`` call the pool can overshoot freely (long-tail
+    LLM eval batches add 50-100 rows per strategy in production). Before
+    this fix, ``_run_refresh_plan`` only ran topic / cluster / age trims
+    afterward — none of which cap the absolute total — and the periodic
+    ``_enforce_pool_cap`` tick in ``run_forever`` was blocked by the
+    refresh's own long lock, so the popup routinely saw
+    ``pool_available_count`` drift past ``pool_target_count`` (e.g. 668
+    with target=600 in production). After the fix, every refresh plan
+    ends with an explicit ``_enforce_pool_cap()`` call so the pool sits
+    at ≤ target before the popup re-fetches.
+    """
+
+    class OvershootingDiscovery(_FakeDiscoveryEngine):
+        def __init__(self, database: _FakeDatabase) -> None:
+            super().__init__()
+            self.database = database
+
+        async def discover(
+            self,
+            profile: dict[str, object],
+            strategies: list[str] | None = None,
+            limit: int = 30,
+        ) -> list[dict[str, object]]:
+            self.calls.append((profile, strategies, limit))
+            # Single strategy adds 25 rows — pool jumps from 25 to 50,
+            # overshooting target=30 by 20.
+            self.database.pool_count += 25
+            return [{"bvid": "BV-y", "relevance_score": 0.5}]
+
+    database = _FakeDatabase([], pool_count=25)
+    discovery = OvershootingDiscovery(database)
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=database,
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=discovery,
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=30,
+    )
+
+    await controller.force_refresh()
+
+    # The post-refresh _enforce_pool_cap call must trim back to target.
+    assert database.pool_count <= 30, (
+        f"pool overshoot not enforced: {database.pool_count} > target=30"
+    )
+
+
 async def test_run_refresh_plan_stops_midway_when_cap_hit() -> None:
     class GrowingDiscovery(_FakeDiscoveryEngine):
         def __init__(self, database: _FakeDatabase) -> None:

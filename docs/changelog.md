@@ -4,6 +4,46 @@
 
 ---
 
+## v0.3.66: 修复 pool 上限失守（refresh 结束时漏 enforce 总量 cap）（2026-05-08）
+
+### 背景
+
+线上 popup 看到 `pool_available_count = 668`，配置里 `pool_target_count = 600`，明显超量。日志里看到 `_enforce_pool_cap` 在 04:25:58 把 pool 砍到 556 之后整整 10+ 分钟没再跑，期间 daemon 一直在跑 discovery（一堆 `discovery.evaluate_single` LLM 调用），pool 静默从 556 涨回 668。
+
+### Root Cause
+
+`_run_refresh_plan`（discovery 主流程）跑完一轮后只调了三个 trim：
+- `trim_explore_cluster_overflow`（每个 explore cluster 不超过 N 条）
+- `trim_topic_group_overflow`（每个 topic_group 不超过 pool_target / 10）
+- `evict_stale_pool_items`（按 14 天年龄淘汰）
+
+**这三个都是按"维度"砍，不卡总量**。所以一轮 discovery 完成时，每个维度都在配额内，但加总可以远超 `pool_target_count`。每个 strategy 内部 LLM 评估一批就往 `content_cache` 写一批 `pool_status='fresh'`；strategy 之间的 `if current_pool_count >= self.pool_target_count: break` 只防止**启动新 strategy**，对单个 strategy 内部的溢出无效。
+
+`_enforce_pool_cap`（按总量砍）虽然存在，但只在 `run_forever` 的周期性 tick 里跑。当 discovery 持续 10-30 分钟时（v0.3.47 起，LLM eval batch 可能更慢），周期性 tick 被压住，pool 一路涨。
+
+### 修复
+
+`runtime/refresh.py::_run_refresh_plan` 末尾、状态写入之前，加一次 `self._enforce_pool_cap()`。这条路径已经做齐了：
+1. `trim_topic_group_overflow`（再跑一遍）
+2. `reactivate_under_quota_pool_sources`（按 source family 配额复活 suppressed 中可恢复项）
+3. 第二次 `trim_topic_group_overflow`
+4. 总量 trim 到 `pool_target_count`（`trim_pool_to_target_count`）
+
+也就是说每轮 discovery 完成后 pool 必然 ≤ target，popup 不会再看到超量。
+
+### 测试
+
+- `test_run_refresh_plan_enforces_cap_when_discovery_overshoots` 复现 bug：discovery 单次 push 25 条把 pool 从 25 推到 50（target=30），断言 force_refresh 完成后 `pool_count <= 30`
+- `test_run_refresh_plan_stops_midway_when_cap_hit` 等既有 37 个 refresh runtime 测试全部通过，无回归
+
+### 影响
+
+- 用户看到的"还有 N 条可换"不会再超过 `pool_target_count`
+- 长跑 discovery 期间 pool 也守得住（不再依赖 run_forever 周期性兜底）
+- 没 schema 改动，只是多调一次现成 helper，性能开销可忽略（一次 SQL group-by + 至多一次 UPDATE）
+
+---
+
 ## v0.3.65: 修复 speculator 滞留 bug（confirmed 占满 active 槽位导致探针卡死）（2026-05-08）
 
 ### 背景

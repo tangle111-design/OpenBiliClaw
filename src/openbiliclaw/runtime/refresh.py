@@ -1056,6 +1056,24 @@ class ContinuousRefreshController:
             await self._publish_delight_if_available()
             await self._publish_interest_probe_if_available()
 
+            # v0.3.66+: enforce the absolute pool cap at the end of every
+            # refresh plan. The earlier trim_topic_group_overflow /
+            # trim_explore_cluster_overflow / evict_stale calls only bound
+            # per-axis concentration (topic, cluster, age) — none of them
+            # cap the total count. Long-running discovery cycles (10-30
+            # min for the LLM eval batch) also block the periodic
+            # _enforce_pool_cap tick in run_forever, so the popup
+            # routinely saw pool_available_count drift well past
+            # pool_target_count (e.g. 668 with target=600 in production).
+            # _enforce_pool_cap also runs reactivate_under_quota and
+            # source-share-aware trim, so this is the right place to land
+            # the freshly-discovered items into their final shape before
+            # the popup re-fetches.
+            try:
+                self._enforce_pool_cap()
+            except Exception:
+                logger.exception("post-refresh enforce_pool_cap failed")
+
         now = self._now().isoformat()
         latest_event_id = self.database.get_latest_event_id()
         if "search" in flattened_strategies or "related_chain" in flattened_strategies:
