@@ -14,6 +14,7 @@ from openbiliclaw.discovery.engine import (
     DiscoveryConcurrencyController,
     DiscoveryStrategy,
     SupportsStructuredTask,
+    trim_candidates_for_llm,
 )
 from openbiliclaw.discovery.strategies._utils import (
     SupportsRankingClient,
@@ -43,14 +44,33 @@ class TrendingStrategy(DiscoveryStrategy):
     # 36=科技, 188=资讯, 181=影视, 119=纪录片, 3=音乐, 129=舞蹈, 4=游戏, 160=生活
     default_rids: tuple[int, ...] = (36, 188, 181, 119, 3, 129, 4, 160)
     # Mapping from Bilibili ranking rid to semantic topic category
-    RID_TO_TOPIC: dict[int, str] = field(default_factory=lambda: {
-        0: "综合热门", 1: "动画", 3: "音乐", 4: "游戏",
-        5: "娱乐", 11: "电视剧", 13: "番剧", 17: "单机游戏",
-        23: "电影", 36: "科技", 119: "纪录片", 129: "舞蹈",
-        155: "时尚", 160: "生活", 167: "国创", 177: "纪录片",
-        181: "影视", 188: "资讯", 211: "美食", 217: "动物",
-        218: "运动", 223: "汽车", 234: "运动",
-    })
+    RID_TO_TOPIC: dict[int, str] = field(
+        default_factory=lambda: {
+            0: "综合热门",
+            1: "动画",
+            3: "音乐",
+            4: "游戏",
+            5: "娱乐",
+            11: "电视剧",
+            13: "番剧",
+            17: "单机游戏",
+            23: "电影",
+            36: "科技",
+            119: "纪录片",
+            129: "舞蹈",
+            155: "时尚",
+            160: "生活",
+            167: "国创",
+            177: "纪录片",
+            181: "影视",
+            188: "资讯",
+            211: "美食",
+            217: "动物",
+            218: "运动",
+            223: "汽车",
+            234: "运动",
+        }
+    )
     last_intermediates: dict[str, object] = field(default_factory=dict)
 
     @property
@@ -126,6 +146,11 @@ class TrendingStrategy(DiscoveryStrategy):
             for bucket in per_rid:
                 if depth < len(bucket):
                     candidates.append(bucket[depth])
+        candidates = trim_candidates_for_llm(
+            candidates,
+            limit=limit,
+            source_context=self.name,
+        )
 
         scores = await evaluator.evaluate_content_batch(candidates, profile)
         results: list[DiscoveredContent] = []
@@ -141,9 +166,7 @@ class TrendingStrategy(DiscoveryStrategy):
     async def _select_rids(self, profile: SoulProfile) -> list[int]:
         from openbiliclaw.llm.prompts import build_trending_rids_prompt
 
-        messages = build_trending_rids_prompt(
-            profile_summary=build_profile_summary(profile)
-        )
+        messages = build_trending_rids_prompt(profile_summary=build_profile_summary(profile))
         try:
             response = await self.llm_service.complete_structured_task(
                 system_instruction=messages[0]["content"],
@@ -152,11 +175,7 @@ class TrendingStrategy(DiscoveryStrategy):
             )
             parsed = json.loads(str(getattr(response, "content", "")).strip())
             if isinstance(parsed, dict) and isinstance(parsed.get("rids"), list):
-                selected = [
-                    to_int(item)
-                    for item in parsed["rids"]
-                    if to_int(item) > 0
-                ]
+                selected = [to_int(item) for item in parsed["rids"] if to_int(item) > 0]
                 selected = self._dedupe_ints(selected)[: self.max_related_rids]
                 return [0, *selected]
         except Exception:

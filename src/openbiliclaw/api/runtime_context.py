@@ -35,6 +35,15 @@ if TYPE_CHECKING:
     from openbiliclaw.config import Config
 
 logger = logging.getLogger(__name__)
+_DEFAULT_POOL_SOURCE_SHARES = {"bilibili": 8, "xiaohongshu": 1, "douyin": 1}
+
+
+def _pool_source_shares_from_config(config: Any) -> dict[str, int]:
+    scheduler = getattr(config, "scheduler", None)
+    shares = getattr(scheduler, "pool_source_shares", None)
+    if not isinstance(shares, dict):
+        return dict(_DEFAULT_POOL_SOURCE_SHARES)
+    return dict(shares)
 
 
 @dataclass
@@ -237,6 +246,7 @@ class RuntimeContext:
 
         # 8. Continuous refresh controller
         new_xhs_producer: Any = None
+        new_douyin_producer: Any = None
         if hasattr(self.database, "conn"):
             from openbiliclaw.runtime.xhs_producer import XhsTaskProducer
             from openbiliclaw.sources.xhs_tasks import XhsTaskQueue
@@ -250,6 +260,14 @@ class RuntimeContext:
                 enabled=bool(getattr(sched_cfg, "enabled", True)),
                 daily_budget=int(getattr(xhs_cfg, "daily_search_budget", 30)),
             )
+            from openbiliclaw.runtime.douyin_producer import build_douyin_discovery_producer
+
+            new_douyin_producer = build_douyin_discovery_producer(
+                config=new_config,
+                database=self.database,
+                soul_engine=new_soul_engine,
+                discovery_engine=new_discovery_engine,
+            )
 
         new_runtime_controller = ContinuousRefreshController(
             memory_manager=self.memory_manager,
@@ -258,8 +276,10 @@ class RuntimeContext:
             discovery_engine=new_discovery_engine,
             recommendation_engine=new_recommendation_engine,
             pool_target_count=new_config.scheduler.pool_target_count,
+            pool_source_shares=_pool_source_shares_from_config(new_config),
             event_hub=self.event_hub,
             xhs_producer=new_xhs_producer,
+            douyin_producer=new_douyin_producer,
             task_registry=self.task_registry,
         )
 
@@ -361,9 +381,7 @@ class RuntimeContext:
         # added *after* this code lands; without a startup pass, the
         # first popup "换一批" pays a cold-fetch ~10-60s on day-1 of a
         # deploy. Detached so we don't block API readiness.
-        prewarm_pool = getattr(
-            self.recommendation_engine, "prewarm_pool_mmr_embeddings", None
-        )
+        prewarm_pool = getattr(self.recommendation_engine, "prewarm_pool_mmr_embeddings", None)
         if callable(prewarm_pool):
             self.task_registry.track(
                 "prewarm_pool_mmr_embeddings",
@@ -393,15 +411,13 @@ class RuntimeContext:
                 if isinstance(warmed, int) and warmed > 0:
                     return
                 logger.info(
-                    "Startup prewarm_pool_mmr_embeddings attempt %d "
-                    "warmed=0 — retry in %.1fs",
+                    "Startup prewarm_pool_mmr_embeddings attempt %d warmed=0 — retry in %.1fs",
                     attempt,
                     delay,
                 )
             except Exception:
                 logger.warning(
-                    "Startup prewarm_pool_mmr_embeddings attempt %d failed; "
-                    "retry in %.1fs",
+                    "Startup prewarm_pool_mmr_embeddings attempt %d failed; retry in %.1fs",
                     attempt,
                     delay,
                     exc_info=True,

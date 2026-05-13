@@ -13,16 +13,18 @@ English | [中文](README.md)
 
 </div>
 
-> The name comes from Bilibili (`Bili` = Bilibili, `Claw` = "the claw that grabs content for you") — the project started as a Bilibili-only tool. Since v0.3.0 it has evolved into a general cross-platform Agent: Bilibili / Xiaohongshu / generic Web adapters all live in production, with more platforms on the roadmap.
+> The name comes from Bilibili (`Bili` = Bilibili, `Claw` = "the claw that grabs content for you") — the project started as a Bilibili-only tool. Since v0.3.0 it has evolved into a general cross-platform Agent: Bilibili / Xiaohongshu / Douyin init signals plus search / hot / feed discovery / generic Web sources all live in production, with more platforms on the roadmap.
 
 ---
 
-## 📌 v0.3.0 Highlights (2026-04-28)
+## 📌 v0.3.69 Highlights (2026-05-12)
 
-- **🌐 General multi-source architecture in production** — evolved from a Bilibili-only tool into a general-purpose content Agent; Xiaohongshu and generic-Web adapters shipped
-- **🔌 Local embedding fallback** — optional Ollama + bge-m3, no extra API key needed for similarity computation (CPU-only, works on Mac/Win/Linux)
-- **⚡ "Reshuffle" 5x faster** — popup reshuffle from 2.6s → 0.6s; rapid clicks no longer feel laggy
-- **🎯 Cross-source topic dedup** — any single topic capped at ≤10% of the candidate pool; no more "all AI all day"
+- **🎵 Douyin init-profile signals** — `openbiliclaw init --yes-douyin` can pull post / favorite / like / follow signals through the browser extension and feed them into preference analysis and the first soul profile.
+- **🎬 Douyin content discovery** — `openbiliclaw discover --source douyin` uses the logged-in browser plugin signing bridge for search, `/hot/{sentence_id}` → related for hot, and `/aweme/v1/web/tab/feed/` for the home feed; `openbiliclaw discover-douyin` debugs recall standalone.
+- **⚖️ Configurable pool mix** — `[scheduler.pool_source_shares]` defaults the candidate pool to Bilibili / Xiaohongshu / Douyin = 8 / 1 / 1; when Douyin is below quota, the runtime producer backfills search / hot / feed.
+- **🔎 Douyin plugin search smoke** — `openbiliclaw search-douyin -k cat -w 180` uses the same page signing bridge to validate search recall without writing the recommendation pool.
+- **🔎 Standalone smoke command** — `openbiliclaw fetch-douyin` verifies the Douyin pull path without implicitly rebuilding the profile.
+- **🧪 E2E coverage tightened** — extension MAIN-world API harvester, backend partial merge/dedup, and CLI init integration now have regression tests.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -51,6 +53,7 @@ All data lives in a single SQLite file on your disk. LLM calls use your own API 
 > | | Bilibili Official | Keyword Filter Plugins | OpenBiliClaw |
 > |---|---|---|---|
 > | Recommendation logic | Collaborative filtering | Tag matching | Psychological profiling + 5-layer memory |
+> | Content sources | Single platform | Single platform | Cross-platform: Bilibili · Xiaohongshu · Douyin · more |
 > | Filter bubble | Gets narrower | Doesn't address it | Speculative interests actively break it |
 > | Data ownership | Platform-owned | Usually cloud | 100% local |
 > | Explains why | "Guess you'll like" | None | Friend-like explanations |
@@ -60,7 +63,7 @@ All data lives in a single SQLite file on your disk. LLM calls use your own API 
 
 ### 🧩 Step 1: Install the Chrome Extension
 
-The extension is your main interface — it shows recommendations in a Bilibili side panel, collects behavior, and lets you chat with the agent.
+The extension is your main interface — it shows recommendations in a side panel on supported sites, collects behavior, and lets you chat with the agent.
 
 1. Open [OpenBiliClaw Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) and find the latest `extension-v*` release
 2. Download `openbiliclaw-extension-v*.zip` from that release
@@ -77,6 +80,7 @@ OpenBiliClaw doesn't farm credentials — it reuses **your** current browser ses
 |---|---|---|
 | **Bilibili** | Just log in normally at https://www.bilibili.com (the v0.3.12+ extension auto-syncs the cookie to the backend) | The backend can't fetch your watch history / favorites / following → your soul profile won't reflect your real interests; recommendations degrade to public trending |
 | **Xiaohongshu** | Log in normally at https://www.xiaohongshu.com | The backend never crawls Xiaohongshu directly — **all discovery + detail fetches happen through your extension in hidden tabs**. No login = no Xiaohongshu content at all |
+| **Douyin** | Log in normally at https://www.douyin.com (search / hot / feed discovery need the logged-in extension path) | `init --yes-douyin` and `fetch-douyin` cannot pull post / favorite / like / follow signals; `discover --source douyin` search / hot / feed may return 0 items |
 | Generic web sources | Log in normally on that site | Same as above |
 
 > 💡 **Strongly recommended for Xiaohongshu: use a CDP-mode Chrome to reuse the login session** (avoids anti-scraping). Launch a separate-profile Chrome with `--remote-debugging-port=9222`, manually log in once, then set `[sources.browser] cdp_url = "http://localhost:9222"` in `config.toml`. See [config reference](docs/modules/config.md#sourcesbrowser).
@@ -96,7 +100,7 @@ OpenBiliClaw doesn't farm credentials — it reuses **your** current browser ses
 Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
 ```
 
-The AI clones the repo locally, installs dependencies, starts the backend, runs a health check, then **asks you four questions, each with a sensible default**: which LLM to use, which embedding service to use, how to provide the B站 cookie, and whether Xiaohongshu likes/favorites may be used in the initial profile. Embedding defaults to local Ollama bge-m3 (free + offline + no quota cost), while Xiaohongshu data is opt-in only. Finally it auto-runs `init` (fetch history → build soul profile → first discovery pass). Fully transparent. **This is the recommended path for most users — zero friction.**
+The AI clones the repo locally, installs dependencies, starts the backend, runs a health check, then **asks five questions, each with a sensible default**: which LLM to use, which embedding service to use, how to provide the B站 cookie, whether Xiaohongshu likes/favorites may be used in the initial profile, and whether Douyin post/favorite/like/follow signals may be used. Embedding defaults to local Ollama bge-m3 (free + offline + no quota cost), while Xiaohongshu and Douyin data are opt-in only. Finally it auto-runs `init` (fetch history → build soul profile → first discovery pass) and relays `BOOTSTRAP_STATUS init_progress` milestones in real time. Fully transparent. **This is the recommended path for most users — zero friction.**
 
 **Or: have the AI agent deploy with Docker** (good if you have Docker Desktop; v0.3.11+ ships an Ollama embedding sidecar by default):
 
@@ -120,7 +124,7 @@ Native Windows (PowerShell — no Docker, no WSL2 required):
 
 > The leading `[Net.ServicePointManager]...Tls12` lets PowerShell 5.1 (the default on Windows 10/11) successfully negotiate with GitHub. GitHub no longer accepts TLS 1.0/1.1 and PS 5.1 picks those by default. Users on PowerShell 7 can drop the prefix.
 
-Prerequisites: `git` and `python3` (3.11+; on Windows the `py` launcher works). The scripts auto-clone the repo, install dependencies, start the backend, run a health check, and print the exact follow-up questions for LLM, embedding, Bilibili cookie, and Xiaohongshu opt-in. First-time init runs automatically only after those choices and credentials are explicit.
+Prerequisites: `git` and `python3` (3.11+; on Windows the `py` launcher works). The scripts auto-clone the repo, install dependencies, start the backend, run a health check, and print the exact follow-up questions for LLM, embedding, Bilibili cookie, Xiaohongshu opt-in, and Douyin opt-in. First-time init runs automatically only after those choices and credentials are explicit; during init the script streams stdout and emits `BOOTSTRAP_STATUS init_progress` so AI agents can relay the 1/4, 2/4, 3/4, 4/4, and refill stages.
 
 > 💡 **On Windows?** Since v0.3.4 the PowerShell installer fully supports native Windows — no Docker / WSL2 needed. You can still use the Docker path above if you already have Docker Desktop installed.
 
@@ -170,6 +174,12 @@ openbiliclaw setup-embedding
 
 # Manual content discovery
 openbiliclaw discover
+
+# Optional: Douyin discovery (requires [sources.douyin]; search / hot / feed use the plugin signer)
+openbiliclaw discover --source douyin
+
+# Optional: standalone Douyin search / hot / feed recall debugging
+openbiliclaw discover-douyin --keyword mechanical-keyboard --source search,feed --no-cache --no-evaluate
 
 # Get recommendations
 openbiliclaw recommend
@@ -259,13 +269,13 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 
 - 🧠 **Five-Layer Soul Profile** — Event → Preference → Awareness → Insight → Soul, inferring MBTI, cognitive style, and deep needs — like a psychologist understanding you
 - 🔮 **Speculative Interest System** — Uses psychological bridging logic to guess unexplored domains you might love; promotes correct guesses, retires wrong ones, continuously breaking the filter bubble
-- 🌐 **Cross-Platform Sources** — Started on Bilibili, now extended to Xiaohongshu and generic Web; the architecture is built to keep adding more platforms. Your interests no longer get siloed
-- 🔍 **Multi-Source Discovery Strategies** — Bilibili four strategies (Search · Related Chain · Trending · Cross-domain Explore) + Xiaohongshu safe discovery (passive collection · keyword search · creator subscription · init-profile import), coordinated cross-platform
+- 🌐 **Cross-Platform Sources** — Started on Bilibili, now extended to Xiaohongshu, Douyin init signals / search / hot / feed discovery, and generic Web; the architecture is built to keep adding more platforms. Your interests no longer get siloed
+- 🔍 **Multi-Source Discovery Strategies** — Bilibili four strategies (Search · Related Chain · Trending · Cross-domain Explore) + Xiaohongshu safe discovery + Douyin plugin-signed search / hot / feed, coordinated cross-platform
 - 🎯 **Smart Diversity** — PoolCurator five-dimension scoring + cross-source/round topic quota (any topic ≤10% of pool) + share-aware pool trimming that protects smaller sources; goodbye to "all AI all day"
 - ⚡ **Instant "Reshuffle"** — popup reshuffle ~0.6s (down from 2.6s in v0.3.0); rapid clicks stay snappy
 - 💬 **Warm Recommendations** — Not "because you watched similar videos", but friend-like explanations of why you'd enjoy something
 - 🔄 **Continuous Learning** — Socratic dialogue + behavioral analysis + instant feedback, understands you better over time
-- 🧩 **Chrome Extension** — Side panel for recommendations, cross-site behavior collection (Bilibili + Xiaohongshu), chat, and cognition update cards — install and go
+- 🧩 **Chrome Extension** — Side panel for recommendations, cross-site behavior collection (Bilibili + Xiaohongshu + Douyin), chat, and cognition update cards — install and go
 - 🔬 **Self-Optimizing Eval Loops** — Five modules each have an LLM-as-judge SGD/RL loop that automatically improves prompt quality over rounds — no manual tuning needed
 - 🔒 **Fully Private** — All data in local SQLite; LLM calls use your own key; each instance is built for exactly one person
 - 🔌 **Local Embedding Fallback** — Optional Ollama + bge-m3, no extra embedding API key required for similarity computation (CPU-only, runs on Mac/Win/Linux)
@@ -276,7 +286,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   Chrome Extension                   │
-│ (Behavior · Recs · Chat · Cookie Sync · XHS Init)       │
+│ (Behavior · Recs · Chat · Bili/DY Cookies · XHS/DY Init) │
 └────────────────────────┬────────────────────────────┘
                          │ REST API / WebSocket cookie request
 ┌────────────────────────▼────────────────────────────┐
@@ -293,7 +303,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 
 ### Content Discovery Engine
 
-Four Bilibili strategies work in coordination, each with independent API quota, and the source layer also accepts Xiaohongshu extension-proxy signals:
+Four Bilibili strategies work in coordination, each with independent API quota, and the source layer also accepts Xiaohongshu extension-proxy signals plus Douyin init signals / plugin-signed search / hot / feed discovery:
 
 | Strategy | Description | Quota |
 |----------|-------------|-------|
@@ -302,9 +312,11 @@ Four Bilibili strategies work in coordination, each with independent API quota, 
 | **Related Chain** | Expands from seed videos along recommendation chains | Fair share |
 | **Explore** | LLM-driven cross-domain exploration | Fair share |
 
-Results go through multi-dimensional diversity selection: source-family reservation (the four Bilibili strategies plus one unified `xiaohongshu` family) → topic deduplication → style balancing → ceiling caps, ensuring broad coverage in final recommendations.
+Results go through multi-dimensional diversity selection: platform-family reservation (default Bilibili / Xiaohongshu / Douyin = 8 / 1 / 1, configurable via `[scheduler.pool_source_shares]`) → topic deduplication → style balancing → ceiling caps, ensuring broad coverage in final recommendations. The four Bilibili strategies count as `bilibili`; XHS extension sources count as `xiaohongshu`; Douyin search / hot / feed count as `douyin`.
 
-For first-run profiling, `openbiliclaw init` can also enqueue an XHS `bootstrap_profile` task. The extension opens Xiaohongshu in the user's logged-in browser session; explicit scrolling tasks open `/explore` in the foreground and click the page's own "Me" profile entry instead of directly jumping to the profile URL. It then parses rendered profile state / DOM for saved / liked notes, and only imports Xiaohongshu-page history when the site exposes an explicit history/footprint state. Explicit scrolling tasks return `partial` batches as new notes appear, then finish with a final result. The backend converts those notes into normal `favorite / like / view` events and still does not crawl or log into Xiaohongshu directly.
+For first-run profiling, `openbiliclaw init` can enqueue XHS and Douyin `bootstrap_profile` tasks. XHS opens Xiaohongshu in the user's logged-in browser session, navigates to the profile, parses saved / liked / explicit history state, and returns `partial` batches. Douyin visits post / favorite / like / follow scopes in the user's logged-in Douyin session and combines DOM extraction with a MAIN-world API harvester. The backend converts both sources into normal `view / favorite / like / follow` events and still does not crawl or log in to either site directly.
+
+For steady-state Douyin content discovery, `DouyinDiscoveryService` uses the extension-backed `DouyinPluginSearchClient` for search, hot, and feed candidates. Search signs the normal search API and enters the pool as `dy-plugin-search`; hot reads hot-board `sentence_id`, opens `/hot/{sentence_id}`, resolves the redirected seed aweme, signs the related API, and enters the pool as `dy-plugin-hot-related`; feed signs `/aweme/v1/web/tab/feed/` on the logged-in homepage and enters the pool as `dy-plugin-feed`. Results either write through `ContentDiscoveryEngine` or preview via `discover-douyin --no-cache`. The cookie is resolved from `OPENBILICLAW_DOUYIN_COOKIE` first, then from the extension-synced `data/douyin_cookie.json`.
 
 ### Soul Engine
 
@@ -325,11 +337,11 @@ OpenBiliClaw/
 │   ├── memory/                # Multi-layer memory system
 │   ├── discovery/             # Discovery engine (4 strategies · quota balancing · diversity)
 │   ├── recommendation/        # Recommendation & expression engine
-│   ├── sources/               # Source adapters and XHS task bridge
+│   ├── sources/               # Source adapters and XHS/Douyin task bridges
 │   ├── bilibili/              # Bilibili API layer (WBI signing · rate control)
 │   ├── llm/                   # Multi-model LLM adapters
 │   └── storage/               # Data storage layer
-├── extension/                 # Chrome browser extension
+├── extension/                 # Chrome browser extension (Bilibili + XHS + Douyin)
 ├── skills/                    # Built-in Skill definitions
 ├── docs/                      # Documentation
 └── tests/                     # Tests (650+)
@@ -344,6 +356,7 @@ OpenBiliClaw/
 | LLM | Built-in Gemini / DeepSeek / OpenAI / Claude / OpenRouter / Ollama; any OpenAI-compatible endpoint works via custom base_url |
 | Bilibili API | Custom client (WBI signing · v_voucher auto-recovery · rate control) |
 | Xiaohongshu | Extension DOM/state extraction + task dispatch; scrolling init imports open `/explore` in the foreground, click the page's profile entry, then use bounded scrolling and partial batches; no backend crawling |
+| Douyin | Extension DOM + MAIN-world fetch/API harvester + task dispatch; init imports post / favorite / like / follow signals; search / hot / feed discovery use the logged-in plugin signer; no backend crawling |
 | Storage | SQLite + Embedding vector index |
 | Agent Framework | Lightweight custom framework |
 
@@ -353,7 +366,7 @@ OpenBiliClaw/
 - [Project Spec](docs/spec.md) — Complete design & planning
 - [Architecture](docs/architecture.md) — System architecture deep dive
 - [Memory Design](docs/memory-design.md) — Multi-layer memory architecture
-- [Discovery Engine](docs/modules/discovery.md) — 4-strategy discovery + diversity selection
+- [Discovery Engine](docs/modules/discovery.md) — multi-source discovery + platform mix + diversity selection
 - [Soul Engine](docs/modules/soul.md) — Deep profiling + MBTI + interest speculation
 - [CLI Reference](docs/modules/cli.md) · [Config Reference](docs/modules/config.md)
 - [Contributing Guide](docs/contributing.md)
@@ -362,6 +375,9 @@ OpenBiliClaw/
 
 | Version | Date | Key changes |
 |---|---|---|
+| **v0.3.69** | 2026-05-12 | Douyin discovery adds the home `feed` source; the pool adds `[scheduler.pool_source_shares]`, defaulting Bilibili / Xiaohongshu / Douyin to 8 / 1 / 1, and the runtime Douyin producer backfills search / hot / feed when Douyin is below quota |
+| **v0.3.68** | 2026-05-11 | Douyin plugin search smoke now works and backs formal search discovery: `search-douyin` remains a standalone diagnostic command, while `discover-douyin --source search --keyword 猫 --limit 5 --no-cache --no-evaluate` returned 5 `dy-plugin-search` candidates |
+| **v0.3.67** | 2026-05-09 | Douyin bootstrap E2E hardening: `init --yes-douyin` feeds post / favorite / like / follow signals into preference analysis and the first soul profile; XHS / Douyin collect defaults now wait 180s to reduce foreground-tab focus races during two-source init; Douyin direct discovery Cookie can now come from the extension-synced `data/douyin_cookie.json`; `fetch-douyin` remains a pure pull smoke command; extension API harvester, backend partial merge/dedup, and CLI integration all have regression tests |
 | **v0.3.64** | 2026-05-06 | XHS bootstrap fetch ceiling 50→**300** per scope / scroll rounds 3→15. `openbiliclaw init` now pulls up to 300 saves/likes per scope (was 50). The scroll executor early-exits after 5 stagnant rounds with no new notes, so users with light XHS histories pay no extra cost while heavy users get a one-shot deep backfill that actually reflects their long-term taste. `OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS` / `OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS` env overrides still honored. **No extension repackage required.** |
 | **v0.3.63** | 2026-05-06 | Global LLM priority queue: popup-visible `write_expression` (priority=1) no longer FIFO-blocks behind background `delight_score` sweeps (priority=2) — pool expression backfill now lands as soon as the user opens the popup. `BackgroundTaskRegistry`: when config is hot-reloaded at runtime, every detached task (per-strategy precompute / prewarm / per-event trigger) is cancelled within 1.5s, so the new runtime never races the old one for SQLite writes or LLM tokens. |
 | **v0.3.62** | 2026-05-05 | Three architectural lock splits (`_precompute_lock` split into `_expression_lock` + `_delight_lock` so popup-visible expression no longer waits behind delight scoring); global `_refresh_lock` skip-if-busy gate prevents multiple refresh entry points from stacking; DB write retry budget tightened from 5×0.1s to 8×0.02s (worst-case sync block 500ms → 160ms). |
@@ -400,7 +416,7 @@ Full milestone history: [docs/changelog.md](docs/changelog.md) · All releases: 
 
 OpenBiliClaw aims to be your **personalized entry point to the entire web**. Started on Bilibili, v0.3.0 shipped Xiaohongshu and generic-Web adapters; next:
 
-- **More content sources** — Zhihu, V2EX, Douyin, Weibo, various BBS / forums; each platform is a `SourceAdapter` and the architecture is proven extensible
+- **More content sources** — Zhihu, V2EX, Weibo, various BBS / forums; each platform is a `SourceAdapter` and the architecture is proven extensible
 - **Cross-platform interest fusion** — your mechanical-keyboard interest from Bilibili + your coffee-gear interest from Xiaohongshu = one complete you. Profile fusion stops your interests from being fragmented across silos
 - **Smarter cross-source discovery** — "you started following coffee gear on Xiaohongshu, here's a hand-drip documentary on Bilibili you might love"
 - **Community ecosystem** — user-defined SourceAdapters, shared discovery strategies, contributed platform adapters

@@ -13,7 +13,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { isValidScopeExecuteMessage } from "../src/content/douyin.ts";
+import {
+  isValidFeedExecuteMessage,
+  isValidScopeExecuteMessage,
+} from "../src/content/douyin.ts";
 
 test("isValidScopeExecuteMessage accepts a well-formed scope payload", () => {
   assert.equal(
@@ -80,4 +83,17 @@ test("isValidScopeExecuteMessage accepts all four scopes", () => {
       `expected scope=${scope} to validate`,
     );
   }
+});
+
+test("isValidFeedExecuteMessage accepts feed payload and rejects malformed input", () => {
+  assert.equal(
+    isValidFeedExecuteMessage({
+      task_id: "feed-1",
+      max_items: 10,
+    }),
+    true,
+  );
+  assert.equal(isValidFeedExecuteMessage(null), false);
+  assert.equal(isValidFeedExecuteMessage({ task_id: "", max_items: 10 }), false);
+  assert.equal(isValidFeedExecuteMessage({ task_id: "feed-1", max_items: 0 }), false);
 });

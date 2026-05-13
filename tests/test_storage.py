@@ -65,9 +65,7 @@ class TestDatabase:
                 source="search",
             )
 
-            cursor = db.conn.execute(
-                "SELECT * FROM content_cache WHERE bvid = ?", ("BV1test",)
-            )
+            cursor = db.conn.execute("SELECT * FROM content_cache WHERE bvid = ?", ("BV1test",))
             row = cursor.fetchone()
             assert row is not None
             assert row["title"] == "Test Video"
@@ -354,20 +352,18 @@ class TestDatabase:
             db.close()
 
     def test_trim_pool_share_quotas_protect_under_target_sources(self) -> None:
-        """When trim is given source_share_quotas, items from over-quota
-        sources get suppressed first — even if they have higher scores
-        than items from under-quota sources. This prevents trending /
-        explore from being systematically axed when search /
-        related_chain overflow."""
+        """When trim is given platform quotas, over-quota platforms get
+        suppressed first even if they have higher scores than under-quota
+        platforms."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")
             db.initialize()
 
-            # Search has 5 items at score 0.95 (high), trending has 3 at 0.60 (low).
+            # Bilibili has 5 items at score 0.95 (high), Douyin has 3 at 0.60 (low).
             # Total = 8, target = 6, so 2 must be suppressed.
-            # Without share quotas: all trending items get axed (lowest score).
-            # With quota search=2: 3 of search's 5 are over-quota → those go first,
-            # protecting trending entirely.
+            # Without share quotas: all low-score Douyin items get axed.
+            # With quota bilibili=2: 3 of Bilibili's 5 are over-quota → those go first,
+            # protecting Douyin entirely.
             for i in range(5):
                 db.cache_content(
                     f"BVS{i}",
@@ -380,23 +376,25 @@ class TestDatabase:
                 db.cache_content(
                     f"BVT{i}",
                     title=f"T{i}",
-                    up_name="UP",
-                    source="trending",
+                    up_name="DY",
+                    source="dy-plugin-search",
+                    source_platform="douyin",
+                    content_url=f"https://www.douyin.com/video/{i}",
                     relevance_score=0.60,
                 )
 
             suppressed = db.trim_pool_to_target_count(
                 target=6,
-                source_share_quotas={"search": 2, "trending": 4},
+                source_share_quotas={"bilibili": 2, "douyin": 4},
             )
             assert suppressed == 2
 
             rows = db.get_cached_content(limit=20)
             by_bvid = {row["bvid"]: row for row in rows}
-            # All trending kept (under quota of 4) — this is the protection.
-            # Without share quotas, trending (low score) would get axed first.
+            # All Douyin kept (under quota of 4) — this is the protection.
+            # Without share quotas, Douyin (low score) would get axed first.
             assert all(by_bvid[f"BVT{i}"]["pool_status"] == "fresh" for i in range(3))
-            # Search lost the bottom 2 (suppressed), kept top 3: 2 within quota
+            # Bilibili lost the bottom 2 (suppressed), kept top 3: 2 within quota
             # + 1 backfill from over-quota since target=6 had remaining slot.
             search_fresh = [
                 bvid
@@ -406,6 +404,60 @@ class TestDatabase:
             assert len(search_fresh) == 3
             assert by_bvid["BVS3"]["pool_status"] == "suppressed"
             assert by_bvid["BVS4"]["pool_status"] == "suppressed"
+            db.close()
+
+    def test_trim_pool_source_overflow_enforces_platform_hard_caps(self) -> None:
+        """Platform shares reserve capacity; one platform must not fill another's slot."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            for i in range(5):
+                db.cache_content(
+                    f"BVS{i}",
+                    title=f"S{i}",
+                    up_name="UP",
+                    source="search",
+                    relevance_score=0.80 + i / 100,
+                )
+            for i in range(8):
+                db.cache_content(
+                    f"XHS{i}",
+                    title=f"X{i}",
+                    up_name="XHS",
+                    source="xhs-extension-task",
+                    source_platform="xiaohongshu",
+                    content_url=f"https://www.xiaohongshu.com/explore/XHS{i}?xsec_token=ABC=",
+                    relevance_score=0.90 + i / 100,
+                )
+            db.cache_content(
+                "dy:1",
+                title="D1",
+                up_name="DY",
+                source="dy-plugin-search",
+                source_platform="douyin",
+                content_url="https://www.douyin.com/video/1",
+                relevance_score=0.50,
+            )
+
+            suppressed = db.trim_pool_source_overflow(
+                source_share_quotas={"bilibili": 5, "xiaohongshu": 2, "douyin": 2},
+            )
+
+            assert suppressed == 6
+            assert db.count_pool_candidates_by_source() == {
+                "bilibili": 5,
+                "xiaohongshu": 2,
+                "douyin": 1,
+            }
+            rows = db.get_cached_content(limit=20)
+            by_bvid = {row["bvid"]: row for row in rows}
+            xhs_fresh = [
+                bvid
+                for bvid in (f"XHS{i}" for i in range(8))
+                if by_bvid[bvid]["pool_status"] == "fresh"
+            ]
+            assert len(xhs_fresh) == 2
             db.close()
 
     def test_trim_pool_legacy_score_only_when_no_quotas(self) -> None:
@@ -448,18 +500,18 @@ class TestDatabase:
     ) -> None:
         """The bug this prevents: untracked sources eat pool slots,
         pushing total > target. The trim must suppress untracked items before
-        cutting under-quota tracked sources (trending). Without this guard,
-        sum(in_quota) > target leads to score-based cuts that hit trending
+        cutting under-quota tracked sources (Douyin). Without this guard,
+        sum(in_quota) > target leads to score-based cuts that hit Douyin
         first because trending scores are systematically lower."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")
             db.initialize()
 
-            # search at quota (5/5), trending under quota (2 of 4), manual import
+            # Bilibili at quota (5/5), Douyin under quota (2 of 4), manual import
             # (4 untracked).
             # Total = 11, target = 8, so 3 must go.
-            # Bug-prone behavior: trending scores are 0.5 (low), so naïve
-            # trim would axe both trending items.
+            # Bug-prone behavior: Douyin scores are 0.5 (low), so naïve
+            # trim would axe both Douyin items.
             # Correct behavior: untracked manual-import items get cut first.
             for i in range(5):
                 db.cache_content(
@@ -473,8 +525,10 @@ class TestDatabase:
                 db.cache_content(
                     f"BVT{i}",
                     title=f"T{i}",
-                    up_name="UP",
-                    source="trending",
+                    up_name="DY",
+                    source="dy-plugin-search",
+                    source_platform="douyin",
+                    content_url=f"https://www.douyin.com/video/{i}",
                     relevance_score=0.50,
                 )
             for i in range(4):
@@ -488,15 +542,15 @@ class TestDatabase:
 
             suppressed = db.trim_pool_to_target_count(
                 target=8,
-                source_share_quotas={"search": 5, "trending": 4},
+                source_share_quotas={"bilibili": 5, "douyin": 4},
             )
             assert suppressed == 3
 
             rows = db.get_cached_content(limit=20)
             by_bvid = {row["bvid"]: row for row in rows}
-            # Trending fully protected (under quota, no items lost)
+            # Douyin fully protected (under quota, no items lost)
             assert all(by_bvid[f"BVT{i}"]["pool_status"] == "fresh" for i in range(2))
-            # Search fully protected (at quota, no over-quota items)
+            # Bilibili fully protected (at quota, no over-quota items)
             assert all(by_bvid[f"BVS{i}"]["pool_status"] == "fresh" for i in range(5))
             # 3 of the 4 manual-import items suppressed (lowest score among negotiable)
             manual_fresh = sum(1 for i in range(4) if by_bvid[f"BVM{i}"]["pool_status"] == "fresh")
@@ -541,7 +595,55 @@ class TestDatabase:
 
             counts = db.count_pool_candidates_by_source()
 
-            assert counts == {"search": 1, "xiaohongshu": 3}
+            assert counts == {"bilibili": 1, "xiaohongshu": 3}
+            db.close()
+
+    def test_count_pool_candidates_by_source_collapses_douyin_source_family(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.cache_content("BVSOURCE", title="S", up_name="UP", source="search")
+            db.cache_content(
+                "dy:1",
+                title="D1",
+                up_name="DY",
+                source="dy-direct-search",
+                source_platform="douyin",
+                content_id="1",
+                content_url="https://www.douyin.com/video/1",
+            )
+            db.cache_content(
+                "dy:2",
+                title="D2",
+                up_name="DY",
+                source="dy-direct-hot",
+                source_platform="douyin",
+                content_id="2",
+                content_url="https://www.douyin.com/video/2",
+            )
+
+            counts = db.count_pool_candidates_by_source()
+
+            assert counts == {"bilibili": 1, "douyin": 2}
+            db.close()
+
+    def test_count_pool_candidates_by_source_collapses_bilibili_source_family(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            for source in ("search", "related_chain", "trending", "explore"):
+                db.cache_content(
+                    f"BV-{source}",
+                    title=source,
+                    up_name="UP",
+                    source=source,
+                )
+
+            counts = db.count_pool_candidates_by_source()
+
+            assert counts == {"bilibili": 4}
             db.close()
 
     def test_trim_pool_share_quotas_protect_xhs_source_family(self) -> None:
@@ -588,7 +690,7 @@ class TestDatabase:
 
             suppressed = db.trim_pool_to_target_count(
                 target=6,
-                source_share_quotas={"search": 3, "xiaohongshu": 3},
+                source_share_quotas={"bilibili": 3, "xiaohongshu": 3},
             )
 
             assert suppressed == 3
@@ -641,11 +743,11 @@ class TestDatabase:
 
             reactivated = db.reactivate_under_quota_pool_sources(
                 target=6,
-                source_share_quotas={"search": 3, "xiaohongshu": 3},
+                source_share_quotas={"bilibili": 3, "xiaohongshu": 3},
             )
             suppressed = db.trim_pool_to_target_count(
                 target=6,
-                source_share_quotas={"search": 3, "xiaohongshu": 3},
+                source_share_quotas={"bilibili": 3, "xiaohongshu": 3},
             )
 
             assert reactivated == 3
@@ -1197,8 +1299,7 @@ class TestDatabase:
             db = Database(Path(tmpdir) / "test.db")
             db.initialize()
 
-            db.cache_content("BVPENDING", title="待生成", source="search",
-                             relevance_score=0.7)
+            db.cache_content("BVPENDING", title="待生成", source="search", relevance_score=0.7)
             assert db.count_pool_candidates() == 0
             assert db.get_pool_candidates(limit=10) == []
 
@@ -1345,9 +1446,7 @@ class TestDatabase:
             db.initialize()
 
             note_id = "6548fd56000000001e0223b1"
-            tokenized_url = (
-                f"https://www.xiaohongshu.com/explore/{note_id}?xsec_token=ABC="
-            )
+            tokenized_url = f"https://www.xiaohongshu.com/explore/{note_id}?xsec_token=ABC="
             db.cache_content(
                 bvid=note_id,
                 title="咒术回战复盘",
@@ -1407,10 +1506,7 @@ class TestDatabase:
                 cover_url="",
                 source="xhs-extension-task",
                 content_id=tokenized_id,
-                content_url=(
-                    f"https://www.xiaohongshu.com/explore/{tokenized_id}"
-                    "?xsec_token=XYZ="
-                ),
+                content_url=(f"https://www.xiaohongshu.com/explore/{tokenized_id}?xsec_token=XYZ="),
                 source_platform="xiaohongshu",
                 author_name="b",
             )
@@ -1427,7 +1523,11 @@ class TestDatabase:
             )
             for bv in (bare_id, tokenized_id, bilibili_id):
                 db.insert_recommendation(
-                    bv, confidence=0.5, expression="", topic="", presented=0,
+                    bv,
+                    confidence=0.5,
+                    expression="",
+                    topic="",
+                    presented=0,
                 )
 
             rows = db.get_recommendations(limit=10)
@@ -1469,10 +1569,7 @@ class TestDatabase:
                 cover_url="",
                 source="xhs-extension-task",
                 content_id=tokenized_id,
-                content_url=(
-                    f"https://www.xiaohongshu.com/explore/{tokenized_id}"
-                    "?xsec_token=XYZ="
-                ),
+                content_url=(f"https://www.xiaohongshu.com/explore/{tokenized_id}?xsec_token=XYZ="),
                 source_platform="xiaohongshu",
                 author_name="",
             )

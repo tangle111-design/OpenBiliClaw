@@ -15,6 +15,7 @@ from openbiliclaw.discovery.engine import (
     DiscoveryConcurrencyController,
     DiscoveryStrategy,
     SupportsStructuredTask,
+    trim_candidates_for_llm,
 )
 from openbiliclaw.discovery.strategies._utils import (
     SupportsSearchClient,
@@ -71,6 +72,7 @@ class SearchStrategy(DiscoveryStrategy):
         self.last_intermediates = {"queries": list(queries)}
         anchor_list = interest_anchors(profile)
         candidates: list[DiscoveredContent] = []
+        candidates_by_query: dict[int, list[DiscoveredContent]] = {}
         seen_bvids: set[str] = set()
         # Respect per-strategy search budget to avoid exhausting IP-level quota.
         effective_queries = queries
@@ -97,7 +99,8 @@ class SearchStrategy(DiscoveryStrategy):
         search_client = self._create_search_client()
         try:
             gathered = await self._execute_search_queries(
-                search_client, request_plan,
+                search_client,
+                request_plan,
             )
         finally:
             if search_client is not self.bilibili_client:
@@ -141,10 +144,13 @@ class SearchStrategy(DiscoveryStrategy):
                     continue
                 seen_bvids.add(content.bvid)
                 candidates.append(content)
+                candidates_by_query.setdefault(query_index, []).append(content)
 
         logger.info(
             "Search: %d queries, %d API results, %d unique candidates",
-            len(queries), api_result_count, len(candidates),
+            len(queries),
+            api_result_count,
+            len(candidates),
         )
 
         if not self.llm_evaluation:
@@ -154,9 +160,15 @@ class SearchStrategy(DiscoveryStrategy):
             llm_service=self.llm_service,
             concurrency=self.concurrency,
         )
-        scores = await evaluator.evaluate_content_batch(candidates, profile)
+        eval_candidates = self._interleave_query_candidates(candidates_by_query)
+        eval_candidates = trim_candidates_for_llm(
+            eval_candidates,
+            limit=limit,
+            source_context=self.name,
+        )
+        scores = await evaluator.evaluate_content_batch(eval_candidates, profile)
         results: list[DiscoveredContent] = []
-        for content, score in zip(candidates, scores, strict=True):
+        for content, score in zip(eval_candidates, scores, strict=True):
             if score < self.score_threshold:
                 continue
             results.append(content)
@@ -166,13 +178,30 @@ class SearchStrategy(DiscoveryStrategy):
         if not results and candidates:
             score_vals = sorted(scores, reverse=True)
             logger.warning(
-                "Search: %d candidates all below threshold %.2f. "
-                "Top-5 scores: %s",
+                "Search: %d candidates all below threshold %.2f. Top-5 scores: %s",
                 len(candidates),
                 self.score_threshold,
                 score_vals[:5],
             )
         return results
+
+    @staticmethod
+    def _interleave_query_candidates(
+        candidates_by_query: dict[int, list[DiscoveredContent]],
+    ) -> list[DiscoveredContent]:
+        """Round-robin candidates so small LLM windows still cover each query."""
+        ordered_query_indices = sorted(candidates_by_query)
+        max_depth = max(
+            (len(candidates_by_query[index]) for index in ordered_query_indices),
+            default=0,
+        )
+        interleaved: list[DiscoveredContent] = []
+        for depth in range(max_depth):
+            for index in ordered_query_indices:
+                bucket = candidates_by_query[index]
+                if depth < len(bucket):
+                    interleaved.append(bucket[depth])
+        return interleaved
 
     def create_backfill_strategy(self) -> DiscoveryStrategy | None:
         return replace(
@@ -194,6 +223,7 @@ class SearchStrategy(DiscoveryStrategy):
         bilibili_client is not the real API client (e.g. in tests).
         """
         from openbiliclaw.bilibili.api import BilibiliAPIClient
+
         if not isinstance(self.bilibili_client, BilibiliAPIClient):
             return self.bilibili_client
         try:
@@ -223,7 +253,7 @@ class SearchStrategy(DiscoveryStrategy):
         """
         import random
 
-        STORM_TRIGGER = 3
+        storm_trigger = 3
         gathered: list[object] = []
         consecutive_empty = 0
         storm_aborted = False
@@ -254,7 +284,7 @@ class SearchStrategy(DiscoveryStrategy):
             # remaining queries just deepens the hole.
             if isinstance(result, list) and not result:
                 consecutive_empty += 1
-                if consecutive_empty >= STORM_TRIGGER:
+                if consecutive_empty >= storm_trigger:
                     logger.warning(
                         "v_voucher storm detected (%d consecutive empty queries)"
                         " — aborting remaining %d query(ies) this round; "

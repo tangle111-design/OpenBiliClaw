@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 class RecordingMemoryManager:
     def __init__(self) -> None:
         self.events: list[dict[str, object]] = []
+        self.profile_signals: list[object] = []
         self._discovery_runtime_state: dict[str, object] = {}
 
     async def propagate_event(self, event: dict[str, object]) -> None:
@@ -35,6 +36,25 @@ class RecordingMemoryManager:
 
     def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
         self._discovery_runtime_state = dict(state)
+
+
+class RecordingProfilePipeline:
+    def __init__(self, memory: RecordingMemoryManager) -> None:
+        self._memory = memory
+
+    async def ingest_batch(self, signals: list[object]) -> object:
+        from types import SimpleNamespace
+
+        self._memory.profile_signals.extend(signals)
+        return SimpleNamespace(layers_updated=[])
+
+
+class RecordingSoulEngine:
+    def __init__(self, memory: RecordingMemoryManager) -> None:
+        self.pipeline = RecordingProfilePipeline(memory)
+
+    def is_profile_ready(self) -> bool:
+        return True
 
 
 @pytest.fixture
@@ -107,7 +127,7 @@ def xhs_task_client(
     app = create_app(
         database=db,
         memory_manager=memory,
-        soul_engine=SimpleNamespace(),
+        soul_engine=RecordingSoulEngine(memory),
         # v0.3.57+: _persist_xhs_self_info / _load_xhs_self_info read
         # ``ctx.runtime_controller.memory_manager``. Wire the recording
         # manager in so tests can round-trip persisted self_info.
@@ -165,9 +185,7 @@ class TestXhsObservedUrls:
         body = response.json()
         assert body["accepted"] == 1  # only the valid xhs URL
 
-    def test_stores_observations_in_db(
-        self, app_client: TestClient, tmp_path: Path
-    ) -> None:
+    def test_stores_observations_in_db(self, app_client: TestClient, tmp_path: Path) -> None:
         from openbiliclaw.storage.database import Database
 
         db = Database(tmp_path / "test.db")
@@ -258,9 +276,7 @@ class TestXhsObservedUrls:
             "/api/sources/xhs/observed-urls",
             json={
                 "urls": [bare_url],
-                "notes": [
-                    {"url": bare_url, "title": "t", "author": "a", "cover_url": ""}
-                ],
+                "notes": [{"url": bare_url, "title": "t", "author": "a", "cover_url": ""}],
                 "page_type": "search",
             },
         )
@@ -315,9 +331,7 @@ class TestXhsObservedUrls:
             "/api/sources/xhs/observed-urls",
             json={
                 "urls": [bare_url],
-                "notes": [
-                    {"url": bare_url, "title": "t2", "author": "a2", "cover_url": ""}
-                ],
+                "notes": [{"url": bare_url, "title": "t2", "author": "a2", "cover_url": ""}],
                 "page_type": "search",
             },
         )
@@ -485,9 +499,7 @@ class TestXhsObservedUrls:
                     task_interval_seconds=45,
                 ),
             ),
-            scheduler=SimpleNamespace(
-                pool_target_count=300, account_sync_interval_hours=24
-            ),
+            scheduler=SimpleNamespace(pool_target_count=300, account_sync_interval_hours=24),
         )
         monkeypatch.setattr("openbiliclaw.config.load_config", lambda: fake_config)
 
@@ -502,9 +514,7 @@ class TestXhsObservedUrls:
 
         rows = {
             r["bvid"]: r["pool_status"]
-            for r in db.conn.execute(
-                "SELECT bvid, pool_status FROM content_cache"
-            ).fetchall()
+            for r in db.conn.execute("SELECT bvid, pool_status FROM content_cache").fetchall()
         }
         assert rows["own-existing"] == "suppressed"
         assert rows["stranger-existing"] == "fresh"
@@ -770,6 +780,10 @@ class TestXhsTaskResults:
         assert isinstance(metadata, dict)
         assert metadata["source_platform"] == "xiaohongshu"
         assert metadata["import_source"] == "xhs_bootstrap_saved"
+        assert len(memory.profile_signals) == 1
+        signal = memory.profile_signals[0]
+        assert signal.payload["event_type"] == "favorite"
+        assert signal.payload["metadata"]["source_platform"] == "xiaohongshu"
 
         row = db.conn.execute(
             "SELECT status, result_json FROM xhs_tasks WHERE id=?",
@@ -895,9 +909,7 @@ class TestXhsTokens:
             "/api/sources/xhs/observed-urls",
             json={
                 "urls": [bare_url],
-                "notes": [
-                    {"url": bare_url, "title": "t", "author": "a", "cover_url": ""}
-                ],
+                "notes": [{"url": bare_url, "title": "t", "author": "a", "cover_url": ""}],
                 "page_type": "search",
             },
         )
@@ -922,9 +934,7 @@ class TestXhsTokens:
         assert resp.status_code == 200
         assert resp.json() == {"ok": True, "upgraded": 0}
 
-    def test_skips_malformed_pairs(
-        self, app_client: TestClient, tmp_path: Path
-    ) -> None:
+    def test_skips_malformed_pairs(self, app_client: TestClient, tmp_path: Path) -> None:
         resp = app_client.post(
             "/api/sources/xhs/tokens",
             json={

@@ -40,6 +40,7 @@ OpenBiliClaw 不爬登录态——它复用**你**当前浏览器的登录会话
 
 - **B 站**：浏览器里登录 https://www.bilibili.com 即可。v0.3.12+ 扩展会自动把 Cookie 推到容器里的 `/api/bilibili/cookie`，免 F12
 - **小红书**：必须在浏览器里登录 https://www.xiaohongshu.com。后端不直接抓小红书，所有发现/详情都通过扩展以你的登录态执行——大部分任务(search / creator 抓取)在隐藏 tab 里跑;但 v0.3.22+ 起 `init` 期间的 **bootstrap_profile 滚动任务会临时打开一个前台 tab**(后台 tab 在小红书上无法触发瀑布流懒加载),会抢一次焦点 10-30 秒,完成后自动关闭。**不登录 = 完全没有小红书内容**
+- **抖音**：如果要启用 `init --yes-douyin`、`fetch-douyin` 或 `discover --source douyin`，必须在装了扩展的宿主机浏览器里登录 https://www.douyin.com。后端不直接抓抖音；初始化只接收扩展回传的发布 / 收藏 / 点赞 / 关注信号。search / hot / feed discovery 优先走登录浏览器插件签名桥；Cookie 可用环境变量覆盖或由扩展同步到容器 volume 的 `data/douyin_cookie.json`。不登录或触发风控时会返回 0 条并让 init 继续。
 - **小红书反爬强建议**：开一个独立 profile 的 Chrome 用 `--remote-debugging-port=9222` 启动，里面手动登录小红书一次；后端 `[sources.browser] cdp_url = "http://host.docker.internal:9222"` 即可永久复用
 
 详见 [配置参考 / sources.browser 段](modules/config.md#sourcesbrowser)。
@@ -82,12 +83,24 @@ docker compose ps
 
 最后才进入真正的 init 阶段：拉历史、生成画像、跑首轮发现。整个流程会打印进度，不要以为卡住了——LLM 单次响应可能就要 10–30s。
 
+AI agent 一句话部署时，`agent_bootstrap.py` 会在 auto-init 期间额外输出
+`BOOTSTRAP_STATUS status=progress message=init_progress` 事件。Agent 应把
+这些 `1/4`、`2/4`、`3/4`、`4/4` 和发现补货进度及时转述给用户，而不是等
+最终 `init_complete` 后才汇报。
+
 > 🌸 **小红书数据是否加入(v0.3.27+)**:init 在 Docker 里跑时也会弹一个交互式问题——把小红书的收藏 / 点赞混进画像吗?
 > - 想加就回 Y(默认),会有准备清单提示你装扩展 + 登录小红书。注意 Docker 模式下扩展是装在你**宿主机**的浏览器里的,后端在容器内通过 8420 端口拉数据
 > - 不想加就回 N,只用 B 站数据建画像
 > - 脚本化场景直接传 flag:`docker exec -it openbiliclaw-backend openbiliclaw init --no-xhs` 跳过 / `--yes-xhs` 强制启用
 > - AI agent 的 `agent_bootstrap.py` auto-init 不会默认启用小红书；必须传 `--yes-xhs` 或 `--no-xhs`。没传会返回 `needs_decisions`，让 agent 先问用户
 > - 想永久跳过:在 docker-compose.yml 里加 `OPENBILICLAW_NO_XHS=1` 环境变量
+
+> 🎵 **抖音数据是否加入(v0.3.67+)**:init 也会单独问是否把抖音发布 / 收藏 / 点赞 / 关注混进画像。
+> - 想加就回 Y，会提示你装扩展 + 登录抖音。注意扩展仍在宿主机浏览器里执行，Docker 容器只通过 8420 端口收结果
+> - 不想加就回 N；非交互式终端默认跳过抖音
+> - 脚本化场景直接传 flag:`docker exec -it openbiliclaw-backend openbiliclaw init --no-douyin` 跳过 / `--yes-douyin` 强制启用
+> - AI agent 的 `agent_bootstrap.py` auto-init 同样要求 `--yes-douyin` 或 `--no-douyin` 二选一
+> - 想永久跳过:在 docker-compose.yml 里加 `OPENBILICLAW_NO_DOUYIN=1` 环境变量
 
 > 💡 **AI agent 一句话部署**：把下面这句粘到 Claude Code / Codex CLI / Cursor / OpenClaw：
 > ```

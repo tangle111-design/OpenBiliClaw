@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from openbiliclaw.discovery.engine import (
     ContentDiscoveryEngine,
@@ -15,6 +15,7 @@ from openbiliclaw.discovery.engine import (
     DiscoveryConcurrencyController,
     DiscoveryStrategy,
     SupportsStructuredTask,
+    trim_candidates_for_llm,
 )
 from openbiliclaw.discovery.strategies._utils import (
     SupportsSearchClient,
@@ -28,18 +29,16 @@ from openbiliclaw.llm.prompts import build_explore_domains_prompt
 if TYPE_CHECKING:
     from openbiliclaw.llm.embedding import SupportsEmbeddingService
     from openbiliclaw.soul.profile import SoulProfile
-    from openbiliclaw.storage.database import Database
 
 
 # Minimal contract — explore only needs the topic-group-coverage query
 # and shouldn't depend on the full Database surface (keeps unit tests
 # light, makes injection simple).
-class _SupportsTopicCoverage:
+class _SupportsTopicCoverage(Protocol):
     """Minimal protocol the strategy needs from a Database-like object."""
 
-    def get_active_pool_topic_groups(
-        self, *, limit: int = 30, min_count: int = 2
-    ) -> list[str]: ...
+    def get_active_pool_topic_groups(self, *, limit: int = 30, min_count: int = 2) -> list[str]: ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +208,11 @@ class ExploreStrategy(DiscoveryStrategy):
                 bucket = per_domain[key]
                 if depth < len(bucket):
                     candidates.append(bucket[depth])
+        candidates = trim_candidates_for_llm(
+            candidates,
+            limit=limit,
+            source_context=self.name,
+        )
 
         scores = await evaluator.evaluate_content_batch(
             [content for content, _, _ in candidates],

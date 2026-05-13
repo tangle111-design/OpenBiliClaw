@@ -209,14 +209,14 @@ model    = "deepseek-v4-flash"
 
 ### `[sources.browser]`
 
-多源内容适配器（小红书、知乎、V2EX 等非 B 站源）使用的浏览器配置。与 `bilibili.browser` 独立 —— 后者控制 B 站登录 / 扫码用的 agent-browser CLI。
+多源内容适配器（小红书、抖音、知乎、V2EX 等非 B 站源）使用的浏览器配置。与 `bilibili.browser` 独立 —— 后者控制 B 站登录 / 扫码用的 agent-browser CLI。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `cdp_url` | string | `""` | 预启动 Chrome 的 CDP 端点，例如 `"http://localhost:9222"`。设置后优先走 Playwright `connect_over_cdp` 复用你手动登录的会话；留空则回退到 agent-browser（无登录态） |
 | `headed` | bool | `false` | agent-browser 回退路径是否显示窗口 |
 
-> **推荐用 CDP 模式。** 小红书等站点对匿名请求限流严格，只有复用真实登录态才稳定工作。
+> **推荐用 CDP 模式。** 小红书、抖音等站点对匿名请求限流严格，只有复用真实登录态才稳定工作。
 >
 > 启动步骤：
 > 1. 安装 Playwright：`pip install 'openbiliclaw[browser]'`
@@ -226,7 +226,7 @@ model    = "deepseek-v4-flash"
 >      --remote-debugging-port=9222 \
 >      --user-data-dir="$HOME/.openbiliclaw-chrome"
 >    ```
-> 3. 在这个 Chrome 里手动登录目标站点（小红书等），profile 会记住，后续复用
+> 3. 在这个 Chrome 里手动登录目标站点（小红书、抖音等），profile 会记住，后续复用
 > 4. 在 `config.toml` 里填 `cdp_url = "http://localhost:9222"`
 >
 > `127.0.0.1` 与 `localhost` 并非总是等价：macOS 上 Chrome 常只绑定 IPv6 `::1:9222`，而 Python urllib 默认走 IPv4。用 `localhost` 最稳妥（`getaddrinfo` 会同时尝试两边）。
@@ -243,6 +243,22 @@ model    = "deepseek-v4-flash"
 | `task_interval_seconds` | int | `45` | 扩展分发器两次任务之间的最小间隔（秒） |
 
 > **安全设计要点：** 后端从不直接调用小红书搜索 / Feed API。所有"主动发现"（关键词搜索、创作者主页浏览）都在用户自己的浏览器中以后台标签页形式执行，由扩展代理完成。被动发现则利用用户正常浏览时已经加载的卡片 URL，零额外请求。
+
+### `[sources.douyin]`
+
+抖音专用 discovery 配置。初始化画像仍由浏览器扩展执行；本段控制 `openbiliclaw discover --source douyin` / `discover-douyin` 的内容发现。Cookie 不写进 `config.toml`：`cookie_env` 指向的环境变量优先；未设置时，后端读取浏览器扩展通过 `/api/sources/dy/cookie` 同步到 `data/douyin_cookie.json` 的值。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `enabled` | bool | `false` | 是否启用抖音 discovery。默认关闭，必须显式 opt-in |
+| `mode` | string | `"direct"` | 当前仅支持 `direct`，保留字段用于后续 extension/direct 切换 |
+| `cookie_env` | string | `"OPENBILICLAW_DOUYIN_COOKIE"` | douyin.com Cookie header 的环境变量覆盖名；为空时使用扩展同步文件 |
+| `daily_search_budget` | int | `30` | 每日搜索插件任务预算，限制 `dy_tasks(type="search")` 入队次数 |
+| `daily_hot_budget` | int | `5` | 每日热点插件任务预算，限制 `dy_tasks(type="hot")` 入队次数；runtime 抖音缺口较大时会把有效预算临时抬高到 `max(配置值, min(缺口, 60))`，手动 CLI 仍使用配置值 |
+| `daily_feed_budget` | int | `30` | 每日首页推荐流插件任务预算，限制 `dy_tasks(type="feed")` 入队次数 |
+| `request_interval_seconds` | int | `2` | direct 请求的建议最小间隔；当前插件签名链路主要由任务预算和 runtime producer 节流保护 |
+
+当前 `search` 子来源优先使用浏览器插件的 logged-in page + acrawler 签名桥，并以 `dy-plugin-search` 进入 discovery；`hot` 子来源优先使用插件 hot-related 链路，并以 `dy-plugin-hot-related` 进入 discovery；`feed` 子来源使用同一插件签名桥请求 `/aweme/v1/web/tab/feed/`，并以 `dy-plugin-feed` 进入 discovery。插件任务空 / 失败时 search / hot 会分别回退 direct-cookie search / hot，feed 也保留 direct-cookie 诊断 fallback；因 daemon 重启或插件未及时消费而被清理的 `failed/stale_pending` 任务不消耗每日预算。runtime 大缺口补池会优先 search / hot，feed 只用于小缺口补零散名额。`msToken` 如果存在会随 Cookie 一起使用，但扩展同步不再硬依赖它。若 Cookie 过期、签名被拒绝或插件未在线，命令可能返回 0 条并提示检查登录态。
 
 ### `[scheduler]`
 
@@ -262,6 +278,18 @@ model    = "deepseek-v4-flash"
 
 > 运行时护栏：
 > 即使 `pool_target_count` 设得较高，单次 refresh 里的单轮 discover 补货请求也会封顶在 `60`，避免一次性把全部缺口都打满。
+
+### `[scheduler.pool_source_shares]`
+
+候选池按平台族做保底配比，默认 `bilibili:xiaohongshu:douyin = 8:1:1`。当 `pool_target_count = 600` 时，对应目标是 B 站 `480`、小红书 `60`、抖音 `60`。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `bilibili` | int | `8` | B 站平台族占比；`search` / `related_chain` / `trending` / `explore` 四个策略统一计入该族 |
+| `xiaohongshu` | int | `1` | 小红书平台族占比；`xhs-extension-*` 原始来源统一计入该族 |
+| `douyin` | int | `1` | 抖音平台族占比；`dy-plugin-search` / `dy-plugin-hot-related` / `dy-plugin-feed` 等统一计入该族 |
+
+运行时会把同一份目标传给 `reactivate_under_quota_pool_sources()`、`trim_pool_source_overflow()` 和 `trim_pool_to_target_count()`：小平台低于目标时，会优先保护 / 复活它们的候选；任一平台族高于目标时，会先压回配额内，避免它占用其他平台的保留容量；B 站低于目标时，仍由四个 B 站 discovery 策略并行补货；抖音低于目标且 `[sources.douyin].enabled=true` 时，后台 `DouyinDiscoveryProducer` 会通过 `DouyinDiscoveryService(cache=True)` 触发 search / hot / feed 补池。
 
 ### `[storage]`
 
@@ -292,6 +320,9 @@ model    = "deepseek-v4-flash"
 | `OPENBILICLAW_PROXY_HOST` | Docker 运行时可选宿主机代理地址，默认 `host.docker.internal` |
 | `OPENBILICLAW_PROXY_PORT` | Docker 运行时可选宿主机代理端口，默认 `7897` |
 | `OPENBILICLAW_PROXY_TIMEOUT` | Docker 运行时代理探测超时（秒），默认 `1.0` |
+| `OPENBILICLAW_DOUYIN_COOKIE` | 抖音 direct-cookie discovery 的显式 Cookie 覆盖；未设置时读取扩展同步的 `data/douyin_cookie.json` |
+| `OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS` | `init --yes-xhs` 收集小红书扩展任务结果的最大等待秒数，默认 `180`；`fetch-xhs --wait-seconds` 可覆盖单次 smoke 命令 |
+| `OPENBILICLAW_DY_BOOTSTRAP_WAIT_SECONDS` | `init --yes-douyin` 收集抖音扩展任务结果的最大等待秒数，默认 `180`；`fetch-douyin --wait-seconds` 可覆盖单次 smoke 命令 |
 
 ## Docker 部署说明
 

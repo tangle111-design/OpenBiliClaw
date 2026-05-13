@@ -65,6 +65,34 @@ class FakeErrorStructuredService:
         raise self.error
 
 
+class RejectingChunkStructuredService:
+    """Reject prompts containing BAD, return a minimal preference otherwise."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+    ) -> LLMResponse:
+        self.calls.append(user_input)
+        if "BAD" in user_input:
+            return LLMResponse(
+                content="The request was rejected because it was considered high risk",
+                provider="openai",
+            )
+        return LLMResponse(
+            content='{"interests": [{"name": "科技", "category": "知识", "weight": 0.7}]}',
+            provider="openai",
+        )
+
+
 @pytest.mark.asyncio
 async def test_analyze_events_parses_structured_preference_output() -> None:
     from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
@@ -264,3 +292,32 @@ async def test_analyze_events_populates_source_platform_mix() -> None:
         existing_preference={},
     )
     assert preference["source_platform_mix"] == {"bilibili": 0.5, "xiaohongshu": 0.5}
+
+
+@pytest.mark.asyncio
+async def test_chunked_analysis_splits_and_skips_rejected_single_event() -> None:
+    from openbiliclaw.soul.preference_analyzer import PreferenceAnalyzer
+
+    service = RejectingChunkStructuredService()
+    preference = await PreferenceAnalyzer(service).analyze_events(
+        events=[
+            {"event_type": "view", "title": "GOOD 1", "metadata": {"source_platform": "bilibili"}},
+            {"event_type": "view", "title": "BAD", "metadata": {"source_platform": "douyin"}},
+            {
+                "event_type": "favorite",
+                "title": "GOOD 2",
+                "metadata": {"source_platform": "xiaohongshu"},
+            },
+            {"event_type": "like", "title": "GOOD 3", "metadata": {"source_platform": "bilibili"}},
+        ],
+        existing_preference={},
+        event_chunk_size=2,
+    )
+
+    assert preference["interests"][0]["name"] == "科技"
+    assert preference["source_platform_mix"] == {
+        "bilibili": 0.5,
+        "douyin": 0.25,
+        "xiaohongshu": 0.25,
+    }
+    assert len(service.calls) > 1

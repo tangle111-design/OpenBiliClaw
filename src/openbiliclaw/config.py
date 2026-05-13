@@ -19,6 +19,11 @@ _PROJECT_ROOT_ENV = "OPENBILICLAW_PROJECT_ROOT"
 _SUPPORTED_AUTH_METHODS = {"cookie", "qrcode", "none"}
 _MIN_POOL_TARGET_COUNT = 1
 _MAX_POOL_TARGET_COUNT = 600
+_DEFAULT_POOL_SOURCE_SHARES = {
+    "bilibili": 8,
+    "xiaohongshu": 1,
+    "douyin": 1,
+}
 _REMOTE_PROVIDER_FIELDS = {
     "openai": "llm.openai.api_key",
     "claude": "llm.claude.api_key",
@@ -147,6 +152,9 @@ class SchedulerConfig:
     enabled: bool = True
     discovery_cron: str = "0 */4 * * *"
     pool_target_count: int = 600
+    pool_source_shares: dict[str, int] = field(
+        default_factory=lambda: dict(_DEFAULT_POOL_SOURCE_SHARES)
+    )
     account_sync_interval_hours: int = 6
     speculation_interval_minutes: int = 10
     speculation_ttl_days: int = 3
@@ -183,6 +191,24 @@ class XiaohongshuSourceConfig:
 
 
 @dataclass
+class DouyinSourceConfig:
+    """Douyin direct-cookie discovery configuration.
+
+    Initialization bootstrap still uses the browser extension. These
+    settings only control optional backend discovery jobs that read a
+    user-supplied Douyin cookie from the environment.
+    """
+
+    enabled: bool = False
+    mode: str = "direct"
+    cookie_env: str = "OPENBILICLAW_DOUYIN_COOKIE"
+    daily_search_budget: int = 30
+    daily_hot_budget: int = 5
+    daily_feed_budget: int = 30
+    request_interval_seconds: int = 2
+
+
+@dataclass
 class SourcesConfig:
     """Multi-source content adapters configuration.
 
@@ -200,6 +226,7 @@ class SourcesConfig:
     # Whether to launch a headed agent-browser (fallback path only).
     browser_headed: bool = False
     xiaohongshu: XiaohongshuSourceConfig = field(default_factory=XiaohongshuSourceConfig)
+    douyin: DouyinSourceConfig = field(default_factory=DouyinSourceConfig)
 
 
 @dataclass
@@ -362,7 +389,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
     llm_raw = raw.get("llm", {})
     bili_raw = raw.get("bilibili", {})
     sources_raw = raw.get("sources", {})
-    sched_raw = raw.get("scheduler", {})
+    sched_raw = dict(raw.get("scheduler", {}))
     store_raw = raw.get("storage", {})
     logging_raw = raw.get("logging", {})
 
@@ -411,6 +438,7 @@ def _build_config(raw: dict[str, Any]) -> Config:
 
     sources_browser_raw = sources_raw.get("browser", {})
     xhs_raw = sources_raw.get("xiaohongshu", {})
+    douyin_raw = sources_raw.get("douyin", {})
     sources = SourcesConfig(
         browser_cdp_url=sources_browser_raw.get("cdp_url", ""),
         browser_headed=sources_browser_raw.get("headed", False),
@@ -418,6 +446,15 @@ def _build_config(raw: dict[str, Any]) -> Config:
             daily_search_budget=int(xhs_raw.get("daily_search_budget", 30)),
             daily_creator_budget=int(xhs_raw.get("daily_creator_budget", 10)),
             task_interval_seconds=int(xhs_raw.get("task_interval_seconds", 45)),
+        ),
+        douyin=DouyinSourceConfig(
+            enabled=bool(douyin_raw.get("enabled", False)),
+            mode=str(douyin_raw.get("mode", "direct")),
+            cookie_env=str(douyin_raw.get("cookie_env", "OPENBILICLAW_DOUYIN_COOKIE")),
+            daily_search_budget=int(douyin_raw.get("daily_search_budget", 30)),
+            daily_hot_budget=int(douyin_raw.get("daily_hot_budget", 5)),
+            daily_feed_budget=int(douyin_raw.get("daily_feed_budget", 30)),
+            request_interval_seconds=int(douyin_raw.get("request_interval_seconds", 2)),
         ),
     )
 
@@ -427,10 +464,37 @@ def _build_config(raw: dict[str, Any]) -> Config:
         llm=llm,
         bilibili=bilibili,
         sources=sources,
-        scheduler=SchedulerConfig(**sched_raw),
+        scheduler=SchedulerConfig(
+            **{
+                **sched_raw,
+                "pool_source_shares": _normalize_pool_source_shares(
+                    sched_raw.get("pool_source_shares")
+                ),
+            }
+        ),
         storage=StorageConfig(**store_raw),
         logging=LoggingConfig(**logging_raw),
     )
+
+
+def _normalize_pool_source_shares(value: object) -> dict[str, int]:
+    """Normalize scheduler pool source shares from TOML into positive ints."""
+    if not isinstance(value, dict):
+        return dict(_DEFAULT_POOL_SOURCE_SHARES)
+
+    shares: dict[str, int] = {}
+    for key, raw_share in value.items():
+        source = str(key).strip().lower()
+        if not source:
+            continue
+        try:
+            share = int(raw_share)
+        except (TypeError, ValueError):
+            continue
+        if share <= 0:
+            continue
+        shares[source] = share
+    return shares or dict(_DEFAULT_POOL_SOURCE_SHARES)
 
 
 def _collect_config_issues(config: Config) -> list[ConfigIssue]:
@@ -483,10 +547,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     # would just be ``openai`` with extra steps. Surface this so the user
     # knows to fill ``[llm.openai_compatible].base_url`` (Groq:
     # https://api.groq.com/openai/v1, vLLM: http://your-vllm:8000/v1, ...).
-    if (
-        provider_name == "openai_compatible"
-        and not config.llm.openai_compatible.base_url.strip()
-    ):
+    if provider_name == "openai_compatible" and not config.llm.openai_compatible.base_url.strip():
         issues.append(
             ConfigIssue(
                 field="llm.openai_compatible.base_url",
@@ -590,9 +651,7 @@ def _render_config_toml(config: Config) -> str:
     lines.extend(_render_provider_section("deepseek", config.llm.deepseek))
     lines.extend(_render_provider_section("ollama", config.llm.ollama))
     lines.extend(_render_provider_section("openrouter", config.llm.openrouter))
-    lines.extend(
-        _render_provider_section("openai_compatible", config.llm.openai_compatible)
-    )
+    lines.extend(_render_provider_section("openai_compatible", config.llm.openai_compatible))
     lines.extend(
         [
             "[llm.embedding]",
@@ -640,11 +699,25 @@ def _render_config_toml(config: Config) -> str:
             f"daily_creator_budget = {config.sources.xiaohongshu.daily_creator_budget}",
             f"task_interval_seconds = {config.sources.xiaohongshu.task_interval_seconds}",
             "",
+            "[sources.douyin]",
+            f"enabled = {_toml_bool(config.sources.douyin.enabled)}",
+            f"mode = {_toml_string(config.sources.douyin.mode)}",
+            f"cookie_env = {_toml_string(config.sources.douyin.cookie_env)}",
+            f"daily_search_budget = {config.sources.douyin.daily_search_budget}",
+            f"daily_hot_budget = {config.sources.douyin.daily_hot_budget}",
+            f"daily_feed_budget = {config.sources.douyin.daily_feed_budget}",
+            f"request_interval_seconds = {config.sources.douyin.request_interval_seconds}",
+            "",
             "[scheduler]",
             f"enabled = {_toml_bool(config.scheduler.enabled)}",
             f"discovery_cron = {_toml_string(config.scheduler.discovery_cron)}",
             f"pool_target_count = {config.scheduler.pool_target_count}",
             f"account_sync_interval_hours = {config.scheduler.account_sync_interval_hours}",
+            "",
+            "[scheduler.pool_source_shares]",
+            f"bilibili = {int(config.scheduler.pool_source_shares.get('bilibili', 8))}",
+            f"xiaohongshu = {int(config.scheduler.pool_source_shares.get('xiaohongshu', 1))}",
+            f"douyin = {int(config.scheduler.pool_source_shares.get('douyin', 1))}",
             "",
             "[storage]",
             f"db_path = {_toml_string(config.storage.db_path)}",

@@ -21,8 +21,14 @@ import {
   handleDyTaskAlarm,
   handleDyTaskResult,
   handleDyScopeResult,
+  handleDySearchTaskResult,
+  handleDyHotTaskResult,
+  handleDyFeedTaskResult,
   pollDyTaskNow,
+  type DyFeedResult,
+  type DyHotResult,
   type DyScopeResult,
+  type DySearchResult,
   type DyTaskResult,
 } from "./dy-task-dispatcher.js";
 import {
@@ -379,6 +385,36 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message.action === "DY_SCOPE_RESULT") {
     void handleDyScopeResult(message.data as DyScopeResult)
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error: unknown) => {
+        sendResponse({ ok: false, error: String(error) });
+      });
+    return true;
+  }
+  if (message.action === "DY_SEARCH_RESULT") {
+    void handleDySearchTaskResult(message.data as DySearchResult)
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error: unknown) => {
+        sendResponse({ ok: false, error: String(error) });
+      });
+    return true;
+  }
+  if (message.action === "DY_HOT_RESULT") {
+    void handleDyHotTaskResult(message.data as DyHotResult)
+      .then(() => {
+        sendResponse({ ok: true });
+      })
+      .catch((error: unknown) => {
+        sendResponse({ ok: false, error: String(error) });
+      });
+    return true;
+  }
+  if (message.action === "DY_FEED_RESULT") {
+    void handleDyFeedTaskResult(message.data as DyFeedResult)
       .then(() => {
         sendResponse({ ok: true });
       })

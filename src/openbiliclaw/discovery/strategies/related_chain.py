@@ -14,6 +14,7 @@ from openbiliclaw.discovery.engine import (
     DiscoveryConcurrencyController,
     DiscoveryStrategy,
     SupportsStructuredTask,
+    llm_eval_candidate_limit,
 )
 from openbiliclaw.discovery.strategies._utils import (
     SupportsMemoryManager,
@@ -132,6 +133,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
             # because the same UP shows up via multiple seeds when the
             # user genuinely follows them.
             from openbiliclaw.discovery.engine import _RELATED_CHAIN_PER_UP_CAP
+
             up_counts: dict[str, int] = {}
             up_skipped: dict[str, int] = {}
             for (seed_bvid, depth, seed_index, seed_topic_key), outcome in zip(
@@ -172,8 +174,7 @@ class RelatedChainStrategy(DiscoveryStrategy):
                     batch_candidates.append((content, depth, seed_index, seed_topic_key))
             if up_skipped:
                 logger.info(
-                    "related_chain per-UP cap: skipped %d item(s) "
-                    "(cap=%d/UP per round; %s)",
+                    "related_chain per-UP cap: skipped %d item(s) (cap=%d/UP per round; %s)",
                     sum(up_skipped.values()),
                     _RELATED_CHAIN_PER_UP_CAP,
                     ", ".join(f"{k}×{v}" for k, v in up_skipped.items()),
@@ -184,24 +185,25 @@ class RelatedChainStrategy(DiscoveryStrategy):
             # prioritise retaining one slot per distinct seed_index so
             # each seed lineage still contributes before the cap kicks
             # in.
-            if (
-                self.max_eval_candidates_per_round > 0
-                and len(batch_candidates) > self.max_eval_candidates_per_round
-            ):
+            eval_candidate_limit = min(
+                self.max_eval_candidates_per_round,
+                llm_eval_candidate_limit(limit),
+            )
+            if eval_candidate_limit > 0 and len(batch_candidates) > eval_candidate_limit:
                 original_count = len(batch_candidates)
                 by_seed: dict[int, list[tuple[DiscoveredContent, int, int, str]]] = {}
                 for entry in batch_candidates:
                     by_seed.setdefault(entry[2], []).append(entry)
                 trimmed: list[tuple[DiscoveredContent, int, int, str]] = []
                 index = 0
-                while len(trimmed) < self.max_eval_candidates_per_round:
+                while len(trimmed) < eval_candidate_limit:
                     appended = False
                     for seed_index in sorted(by_seed):
                         bucket = by_seed[seed_index]
                         if index < len(bucket):
                             trimmed.append(bucket[index])
                             appended = True
-                            if len(trimmed) >= self.max_eval_candidates_per_round:
+                            if len(trimmed) >= eval_candidate_limit:
                                 break
                     if not appended:
                         break

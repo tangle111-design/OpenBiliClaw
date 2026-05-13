@@ -15,6 +15,8 @@ import type { DouyinBootstrapItem } from "../src/main/dy-fetch-tap.ts";
 import {
   BootstrapItemSink,
   buildBootstrapPartialPayload,
+  buildHotResultPayload,
+  buildSearchResultPayload,
   buildScopeUrl,
   dyShouldContinueScroll,
   ingestMainWorldFetchMessage,
@@ -286,6 +288,65 @@ test("buildBootstrapPartialPayload omits videos when newItems is empty (heartbea
   });
   assert.equal(payload.videos.length, 0);
   assert.equal(payload.scope_counts.dy_collect, 5);
+});
+
+test("buildSearchResultPayload shapes the final search task result", () => {
+  const payload = buildSearchResultPayload({
+    taskId: "search-task",
+    keyword: "猫",
+    items: [
+      {
+        scope: "dy_search",
+        aweme_id: "7788",
+        url: "https://www.douyin.com/video/7788",
+        title: "搜索结果",
+        author: "作者",
+        author_sec_uid: "MS4wAuthor",
+        cover_url: "",
+      },
+    ],
+    apiPages: 1,
+    domItems: 0,
+  });
+  assert.equal(payload.task_id, "search-task");
+  assert.equal(payload.status, "ok");
+  assert.equal(payload.videos.length, 1);
+  assert.equal(payload.videos[0]!.scope, "dy_search");
+  assert.equal(payload.scope_counts.dy_search, 1);
+  assert.equal(payload.debug?.keyword, "猫");
+  assert.equal(payload.debug?.api_pages_fetched, 1);
+});
+
+test("buildHotResultPayload shapes the final hot task result", () => {
+  const payload = buildHotResultPayload({
+    taskId: "hot-task",
+    sentenceId: "2495363",
+    word: "热点词",
+    items: [
+      {
+        scope: "dy_hot",
+        aweme_id: "8899",
+        url: "https://www.douyin.com/video/8899",
+        title: "热点相关结果",
+        author: "作者",
+        author_sec_uid: "MS4wAuthor",
+        cover_url: "",
+        hot_word: "热点词",
+        sentence_id: "2495363",
+        seed_aweme_id: "seed-1",
+      },
+    ],
+    apiPages: 1,
+    seedAwemeId: "seed-1",
+  });
+
+  assert.equal(payload.task_id, "hot-task");
+  assert.equal(payload.status, "ok");
+  assert.equal(payload.videos.length, 1);
+  assert.equal(payload.videos[0]!.scope, "dy_hot");
+  assert.equal(payload.scope_counts.dy_hot, 1);
+  assert.equal(payload.debug?.sentence_id, "2495363");
+  assert.equal(payload.debug?.seed_aweme_id, "seed-1");
 });
 
 // ---------------------------------------------------------------------------

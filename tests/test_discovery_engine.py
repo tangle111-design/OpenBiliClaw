@@ -13,6 +13,7 @@ from openbiliclaw.discovery.engine import (
     ContentDiscoveryEngine,
     DiscoveredContent,
     DiscoveryConcurrencyController,
+    llm_eval_candidate_limit,
 )
 from openbiliclaw.soul.profile import SoulProfile
 from openbiliclaw.storage.database import Database
@@ -115,11 +116,7 @@ async def test_discovery_engine_runs_registered_search_strategy() -> None:
     strategy = SearchStrategy(
         llm_service=FakeLLMService('{"queries": ["纪录片 原理"]}'),
         bilibili_client=FakeBilibiliClient(
-            {
-                "纪录片 原理": [
-                    {"bvid": "BV1A", "title": "纪录片", "author": "UP1", "mid": 1}
-                ]
-            }
+            {"纪录片 原理": [{"bvid": "BV1A", "title": "纪录片", "author": "UP1", "mid": 1}]}
         ),
         llm_evaluation=False,
     )
@@ -216,9 +213,7 @@ async def test_discovery_engine_runs_related_chain_strategy() -> None:
     from openbiliclaw.discovery.strategies.strategies import RelatedChainStrategy
 
     engine = ContentDiscoveryEngine(
-        llm_service=FakeRelatedLLMService(
-            ['{"score": 0.84, "reason": "延续了近期观看兴趣。"}']
-        )
+        llm_service=FakeRelatedLLMService(['{"score": 0.84, "reason": "延续了近期观看兴趣。"}'])
     )
     engine.register_strategy(
         RelatedChainStrategy(
@@ -305,15 +300,15 @@ class _RecordingStrategy:
         self._delay = delay
         self._should_fail = should_fail
         self._started = started if started is not None else []
+        self.limits: list[int] = []
 
     @property
     def name(self) -> str:
         return self._name
 
-    async def discover(
-        self, profile: SoulProfile, limit: int = 20
-    ) -> list[DiscoveredContent]:
+    async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
         self._started.append(self._name)
+        self.limits.append(limit)
         if self._delay:
             await asyncio.sleep(self._delay)
         if self._should_fail:
@@ -341,6 +336,116 @@ class _BackfillAwareStrategy(_RecordingStrategy):
             self._backfill_result,
             started=self._backfill_started,
         )
+
+
+@pytest.mark.asyncio
+async def test_register_strategy_replaces_existing_strategy_with_same_name() -> None:
+    started: list[str] = []
+    engine = ContentDiscoveryEngine()
+    engine.register_strategy(
+        _RecordingStrategy(
+            "douyin_direct",
+            [DiscoveredContent(bvid="dy:old", source_strategy="old")],
+            started=started,
+        )
+    )
+    engine.register_strategy(
+        _RecordingStrategy(
+            "douyin_direct",
+            [DiscoveredContent(bvid="dy:new", source_strategy="new")],
+            started=started,
+        )
+    )
+
+    results = await engine.discover(
+        _build_profile(),
+        strategies=["douyin_direct"],
+        limit=20,
+    )
+
+    assert started == ["douyin_direct"]
+    assert [item.bvid for item in results] == ["dy:new"]
+
+
+def test_llm_eval_candidate_limit_uses_tighter_small_gap_window() -> None:
+    assert llm_eval_candidate_limit(1) == 6
+    assert llm_eval_candidate_limit(3) == 6
+    assert llm_eval_candidate_limit(30) == 60
+
+
+@pytest.mark.asyncio
+async def test_discovery_engine_applies_strategy_specific_limits() -> None:
+    started: list[str] = []
+    search = _RecordingStrategy(
+        "search",
+        [
+            DiscoveredContent(
+                bvid=f"BVSEARCH{index}",
+                relevance_score=0.9 - index * 0.01,
+                source_strategy="search",
+            )
+            for index in range(5)
+        ],
+        started=started,
+    )
+    related = _RecordingStrategy(
+        "related_chain",
+        [
+            DiscoveredContent(
+                bvid=f"BVRELATED{index}",
+                relevance_score=0.8 - index * 0.01,
+                source_strategy="related_chain",
+            )
+            for index in range(5)
+        ],
+        started=started,
+    )
+    trending = _RecordingStrategy(
+        "trending",
+        [
+            DiscoveredContent(
+                bvid=f"BVTREND{index}",
+                relevance_score=0.7 - index * 0.01,
+                source_strategy="trending",
+            )
+            for index in range(5)
+        ],
+        started=started,
+    )
+    explore = _RecordingStrategy(
+        "explore",
+        [
+            DiscoveredContent(
+                bvid=f"BVEXPLORE{index}",
+                relevance_score=0.6 - index * 0.01,
+                source_strategy="explore",
+            )
+            for index in range(5)
+        ],
+        started=started,
+    )
+    engine = ContentDiscoveryEngine()
+    for strategy in (search, related, trending, explore):
+        engine.register_strategy(strategy)
+
+    results = await engine.discover(
+        _build_profile(),
+        strategies=["search", "related_chain", "trending", "explore"],
+        limit=5,
+        strategy_limits={
+            "search": 2,
+            "related_chain": 1,
+            "trending": 1,
+            "explore": 1,
+        },
+    )
+
+    assert started == ["search", "related_chain", "trending", "explore"]
+    assert search.limits == [2]
+    assert related.limits == [1]
+    assert trending.limits == [1]
+    assert explore.limits == [1]
+    assert len(results) == 5
 
 
 @pytest.mark.asyncio
@@ -419,9 +524,7 @@ async def test_discovery_engine_keeps_highest_scored_duplicate() -> None:
 @pytest.mark.asyncio
 async def test_discovery_engine_compresses_repeated_topic_keys_in_pool() -> None:
     class _UnlimitedStrategy(_RecordingStrategy):
-        async def discover(
-            self, profile: SoulProfile, limit: int = 20
-        ) -> list[DiscoveredContent]:
+        async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
             self._started.append(self._name)
             return list(self._result)
 
@@ -471,9 +574,7 @@ async def test_discovery_engine_compresses_repeated_topic_keys_in_pool() -> None
 @pytest.mark.asyncio
 async def test_discovery_engine_limits_explore_dominance_in_pool() -> None:
     class _UnlimitedStrategy(_RecordingStrategy):
-        async def discover(
-            self, profile: SoulProfile, limit: int = 20
-        ) -> list[DiscoveredContent]:
+        async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
             self._started.append(self._name)
             return list(self._result)
 
@@ -538,9 +639,7 @@ async def test_discovery_engine_limits_explore_dominance_in_pool() -> None:
 @pytest.mark.asyncio
 async def test_discovery_engine_limits_source_and_style_dominance_for_larger_pool() -> None:
     class _UnlimitedStrategy(_RecordingStrategy):
-        async def discover(
-            self, profile: SoulProfile, limit: int = 20
-        ) -> list[DiscoveredContent]:
+        async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
             self._started.append(self._name)
             return list(self._result)
 
@@ -700,9 +799,7 @@ def test_infer_style_key_classifies_hard_courses_and_documentaries() -> None:
 @pytest.mark.asyncio
 async def test_discovery_engine_keeps_non_explore_sources_when_style_repeats() -> None:
     class _UnlimitedStrategy(_RecordingStrategy):
-        async def discover(
-            self, profile: SoulProfile, limit: int = 20
-        ) -> list[DiscoveredContent]:
+        async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
             self._started.append(self._name)
             return list(self._result)
 
@@ -990,6 +1087,138 @@ async def test_discovery_engine_limits_llm_evaluation_concurrency() -> None:
     await asyncio.gather(*(engine.evaluate_content(item, _build_profile()) for item in items))
 
     assert llm_service.max_active_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_accepts_fenced_json_without_single_eval_fallback() -> None:
+    """Batch responses wrapped in ```json fences should not explode into N calls."""
+
+    class _FencedBatchLLMService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> object:
+            self.calls += 1
+            return _SlowResponse(
+                """```json
+[
+  {"score": 0.82, "reason": "ok", "style_key": "deep_dive"},
+  {"score": 0.76, "reason": "ok", "style_key": "story_doc"}
+]
+```"""
+            )
+
+    llm_service = _FencedBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    batch = [
+        DiscoveredContent(bvid="BVF1", title="t1", up_name="u1", source_strategy="trending"),
+        DiscoveredContent(bvid="BVF2", title="t2", up_name="u2", source_strategy="trending"),
+    ]
+
+    scores = await engine._evaluate_batch(batch, _build_profile())
+
+    assert scores == [0.82, 0.76]
+    assert llm_service.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_ignores_echoed_prompt_before_result_array() -> None:
+    """Some JSON-mode providers echo input JSON before the actual scored array."""
+
+    class _EchoThenResultLLMService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> object:
+            self.calls += 1
+            return _SlowResponse(
+                """{
+  "source_context": "trending",
+  "content_batch": [
+    {"title": "echoed input without score"}
+  ]
+}
+```json
+[
+  {"score": 0.81, "reason": "ok", "style_key": "deep_dive"},
+  {"score": 0.74, "reason": "ok", "style_key": "story_doc"}
+]
+```"""
+            )
+
+    llm_service = _EchoThenResultLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    batch = [
+        DiscoveredContent(bvid="BVE1", title="t1", up_name="u1", source_strategy="trending"),
+        DiscoveredContent(bvid="BVE2", title="t2", up_name="u2", source_strategy="trending"),
+    ]
+
+    scores = await engine._evaluate_batch(batch, _build_profile())
+
+    assert scores == [0.81, 0.74]
+    assert llm_service.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_evaluate_batch_accepts_newline_delimited_json_objects() -> None:
+    """Some providers return one scored JSON object per line instead of an array."""
+
+    class _NdjsonBatchLLMService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> object:
+            self.calls += 1
+            return _SlowResponse(
+                "\n".join(
+                    [
+                        '{"score": 0.71, "reason": "ok", "style_key": "practical_guide"}',
+                        '{"score": 0.68, "reason": "ok", "style_key": "story_doc"}',
+                    ]
+                )
+            )
+
+    llm_service = _NdjsonBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    batch = [
+        DiscoveredContent(bvid="BVN1", title="t1", up_name="u1", source_strategy="trending"),
+        DiscoveredContent(bvid="BVN2", title="t2", up_name="u2", source_strategy="trending"),
+    ]
+
+    scores = await engine._evaluate_batch(batch, _build_profile())
+
+    assert scores == [0.71, 0.68]
+    assert llm_service.calls == 1
 
 
 @pytest.mark.asyncio

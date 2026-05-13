@@ -73,6 +73,29 @@ _DISCOVER_STRATEGIES_OPTION = typer.Option(
         "仅在 --source=bilibili 时生效。"
     ),
 )
+_DOUYIN_DISCOVERY_KEYWORDS_OPTION = typer.Option(
+    None,
+    "--keyword",
+    "-k",
+    help="指定搜索关键词；可多次传或逗号分隔。不传时从 Soul 画像兴趣生成。",
+)
+_DOUYIN_DISCOVERY_CREATOR_SEC_UIDS_OPTION = typer.Option(
+    None,
+    "--creator-sec-uid",
+    help=("兼容旧参数；当前公开 discovery 来源不再包含 creator。"),
+)
+_DOUYIN_DISCOVERY_SOURCES_OPTION = typer.Option(
+    None,
+    "--source",
+    "-s",
+    help="抖音 discovery 子来源：search、hot、feed，可多次传或逗号分隔。",
+)
+_DOUYIN_SEARCH_KEYWORDS_OPTION = typer.Option(
+    ...,
+    "--keyword",
+    "-k",
+    help="抖音搜索关键词，可重复传或用逗号分隔。",
+)
 
 
 def _bootstrap_container_runtime() -> None:
@@ -109,6 +132,8 @@ _INIT_DISCOVERY_PLAN = [
 # ``scheduler.pool_target_count`` (600) over the following hour, so a
 # tiny init pool only delays diversity, never reduces it.
 _INIT_POOL_TARGET_COUNT = 15
+_DEFAULT_XHS_BOOTSTRAP_WAIT_SECONDS = 180.0
+_DEFAULT_DY_BOOTSTRAP_WAIT_SECONDS = 180.0
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -238,6 +263,7 @@ def _initialize_logging(log_level_override: str | None = None) -> None:
     inside the callback would defeat the dry-run contract.
     """
     import sys
+
     from openbiliclaw.config import load_config
     from openbiliclaw.logging_setup import configure_logging
 
@@ -786,7 +812,10 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
                 "国产长上下文老牌 (256K ctx),长文档理解 / 网页爬阅 / "
                 "学术阅读这些场景表现好,日常对话也稳。直接从 Moonshot 官方拿 Key"
             ),
-            "signup_url": "https://platform.moonshot.cn/console/api-keys （国内）/ https://platform.moonshot.ai （国际）",
+            "signup_url": (
+                "https://platform.moonshot.cn/console/api-keys （国内）/ "
+                "https://platform.moonshot.ai （国际）"
+            ),
             "supports_embedding": "false",
             "base_url": "https://api.moonshot.ai/v1",
             "default_model": "kimi-k2.6",
@@ -807,7 +836,10 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
                 "国产代码 / agent 场景的当前 SOTA 之一 (M2.7 在 SWE-Bench 上 80%+),"
                 "便宜 ($0.30 / $1.20 per M),适合做推荐这种结构化输出任务"
             ),
-            "signup_url": "https://platform.minimaxi.com/user-center/basic-information/interface-key （国内）/ https://platform.minimax.io （国际）",
+            "signup_url": (
+                "https://platform.minimaxi.com/user-center/basic-information/interface-key "
+                "（国内）/ https://platform.minimax.io （国际）"
+            ),
             "supports_embedding": "false",
             "base_url": "https://api.minimax.io/v1",
             "default_model": "MiniMax-M2.7",
@@ -2045,7 +2077,12 @@ def _collect_xhs_bootstrap_events(
         return [], {}, "skipped"
 
     if max_wait_seconds is None:
-        max_wait_seconds = float(os.environ.get("OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS", "30"))
+        max_wait_seconds = float(
+            os.environ.get(
+                "OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS",
+                str(_DEFAULT_XHS_BOOTSTRAP_WAIT_SECONDS),
+            )
+        )
 
     try:
         database = _get_runtime_database()
@@ -2193,7 +2230,12 @@ def _collect_dy_bootstrap_events(
         return [], {}, "skipped"
 
     if max_wait_seconds is None:
-        max_wait_seconds = float(os.environ.get("OPENBILICLAW_DY_BOOTSTRAP_WAIT_SECONDS", "30"))
+        max_wait_seconds = float(
+            os.environ.get(
+                "OPENBILICLAW_DY_BOOTSTRAP_WAIT_SECONDS",
+                str(_DEFAULT_DY_BOOTSTRAP_WAIT_SECONDS),
+            )
+        )
 
     try:
         database = _get_runtime_database()
@@ -2249,6 +2291,109 @@ def _collect_dy_bootstrap_events(
                     scope_counts[key] += 1
     status_label = "ok" if events else "empty"
     return events, scope_counts, status_label
+
+
+def _enqueue_dy_search_task(
+    keywords: tuple[str, ...],
+    *,
+    max_items_per_keyword: int = 20,
+) -> str | None:
+    """Enqueue a Douyin plugin search task for the browser extension."""
+    from openbiliclaw.sources.dy_tasks import DyTaskQueue
+
+    normalized_keywords = []
+    seen: set[str] = set()
+    for keyword in keywords:
+        value = str(keyword).strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized_keywords.append(value)
+    if not normalized_keywords:
+        console.print("  [yellow]抖音搜索任务未入队: 关键词为空。[/yellow]")
+        return None
+
+    try:
+        database = _get_runtime_database()
+    except Exception as exc:
+        console.print(f"  [yellow]抖音搜索任务未入队: 数据库不可用: {exc}[/yellow]")
+        return None
+    if not hasattr(database, "conn"):
+        return None
+
+    try:
+        queue = DyTaskQueue(database)
+        task_id = queue.enqueue_with_id(
+            "search",
+            {
+                "keywords": normalized_keywords,
+                "max_items_per_keyword": max(1, int(max_items_per_keyword)),
+            },
+            daily_budget=20,
+        )
+    except Exception as exc:
+        console.print(f"  [yellow]抖音搜索任务未入队: {exc}[/yellow]")
+        return None
+    if not task_id:
+        console.print("  [yellow]抖音搜索任务未入队: 今日任务预算已用完。[/yellow]")
+        return None
+    _kick_task_dispatcher("dy")
+    return task_id
+
+
+def _collect_dy_search_results(
+    task_id: str | None,
+    *,
+    max_wait_seconds: float,
+) -> tuple[list[dict[str, Any]], dict[str, int], str]:
+    """Wait for a plugin search task and return raw Douyin video candidates."""
+    import json
+    import time
+
+    from openbiliclaw.sources.dy_tasks import DyTaskQueue
+
+    if not task_id:
+        return [], {}, "skipped"
+
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return [], {}, "skipped"
+    if not hasattr(database, "conn"):
+        return [], {}, "skipped"
+
+    queue = DyTaskQueue(database)
+    deadline = time.monotonic() + max(0.0, max_wait_seconds)
+    task: dict[str, Any] | None = None
+    while True:
+        task = queue.get(task_id)
+        status = str((task or {}).get("status", "")).strip()
+        if status in {"completed", "failed"}:
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+
+    if not task:
+        return [], {}, "timeout"
+    if task.get("status") == "failed":
+        return [], {}, "failed"
+    if task.get("status") != "completed":
+        return [], {}, "timeout"
+
+    try:
+        result = json.loads(str(task.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        return [], {}, "failed"
+
+    videos = [v for v in result.get("videos", []) if isinstance(v, dict)]
+    raw_counts = result.get("scope_counts", {})
+    count = len(videos)
+    if isinstance(raw_counts, dict):
+        with suppress(Exception):
+            count = int(raw_counts.get("dy_search", count) or count)
+    status_label = "ok" if videos else "empty"
+    return videos, {"dy_search": count}, status_label
 
 
 def _dy_events_to_history_items(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2507,6 +2652,7 @@ def logs_prune(
     更激进或更保守的阈值。
     """
     import time as _time
+
     from openbiliclaw.config import load_config
     from openbiliclaw.logging_setup import _is_managed_log
 
@@ -2637,9 +2783,8 @@ def logs_prune(
                 actually_freed += size
             except OSError as exc:
                 console.print(f"[red]✗ unlink {path}: {exc}[/red]")
-    console.print(
-        f"\n[bold green]✓ Applied — actually freed {actually_freed / (1024 * 1024):.1f} MB[/bold green]"
-    )
+    freed_mb = actually_freed / (1024 * 1024)
+    console.print(f"\n[bold green]✓ Applied — actually freed {freed_mb:.1f} MB[/bold green]")
 
 
 @app.command()
@@ -3041,7 +3186,7 @@ def init(
     elif xhs_status == "timeout":
         console.print(
             "  [dim]小红书初始化信号未导入：扩展未连接或任务仍在后台跑。"
-            "可设 OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS=60 延长等待。[/dim]"
+            "可设 OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS=180 延长等待。[/dim]"
         )
     elif xhs_status == "failed":
         console.print("  [yellow]小红书任务失败 —— 检查扩展日志,或重试 init。[/yellow]")
@@ -3053,7 +3198,8 @@ def init(
     dy_task_id = _enqueue_dy_bootstrap_task() if include_dy else None
     if dy_task_id:
         console.print(
-            "  [dim]已请求扩展拉抖音发布 / 收藏 / 点赞 / 关注(开始抢一次浏览器焦点,~60-90 秒)。[/dim]"
+            "  [dim]已请求扩展拉抖音发布 / 收藏 / 点赞 / 关注"
+            "(开始抢一次浏览器焦点,~60-90 秒)。[/dim]"
         )
     dy_events, dy_scope_counts, dy_status = _collect_dy_bootstrap_events(dy_task_id)
     if dy_status == "ok":
@@ -3072,7 +3218,7 @@ def init(
     elif dy_status == "timeout":
         console.print(
             "  [dim]抖音初始化信号未导入:扩展未连接或任务仍在后台跑。"
-            "可设 OPENBILICLAW_DY_BOOTSTRAP_WAIT_SECONDS=60 延长等待。[/dim]"
+            "可设 OPENBILICLAW_DY_BOOTSTRAP_WAIT_SECONDS=180 延长等待。[/dim]"
         )
     elif dy_status == "failed":
         console.print("  [yellow]抖音任务失败 —— 检查扩展日志,或重试 init。[/yellow]")
@@ -3286,11 +3432,17 @@ def init(
             "https://www.xiaohongshu.com / 任务仍在后台跑。装好扩展后重新跑 "
             "[cyan]openbiliclaw init --yes-xhs[/cyan] 可补齐。[/dim]"
         )
-    elif (xhs_saved + xhs_liked + xhs_history) > 0:
+
+    source_parts = [f"[green]{bilibili_events}[/green] 条 B 站信号"]
+    if len(xhs_events) > 0:
+        source_parts.append(f"[green]{len(xhs_events)}[/green] 条小红书信号")
+    if len(dy_events) > 0:
+        source_parts.append(f"[green]{len(dy_events)}[/green] 条抖音信号")
+    if len(source_parts) > 1:
         console.print(
-            f"[dim]ℹ️  本次画像综合了 [green]{bilibili_events}[/green] 条 B 站 + "
-            f"[green]{len(xhs_events)}[/green] 条小红书信号。"
-            "后续 daemon 会持续从两个平台增量补充。[/dim]"
+            "[dim]ℹ️  本次画像综合了 "
+            + " + ".join(source_parts)
+            + "。后续 daemon 会持续从这些来源增量补充。[/dim]"
         )
 
     # Phase E (v0.3.28+): print cost breakdown for THIS init only,
@@ -3429,10 +3581,10 @@ def _run_single_source_bootstrap(
 @app.command("fetch-douyin")
 def fetch_douyin(
     wait_seconds: float = typer.Option(
-        120.0,
+        _DEFAULT_DY_BOOTSTRAP_WAIT_SECONDS,
         "--wait-seconds",
         "-w",
-        help="等扩展回结果的最大秒数(默认 120s,4 个 scope 串行 + 滚动 + 兜底)。",
+        help="等扩展回结果的最大秒数(默认 180s,4 个 scope 串行 + 滚动 + 兜底)。",
     ),
 ) -> None:
     """单独触发抖音 bootstrap 拉取(纯执行,不跑 init 的画像 / 发现层).
@@ -3461,9 +3613,7 @@ def fetch_douyin(
                 f" / 点赞 [green]{scope_counts.get('dy_like', 0)}[/green] 个"
                 f" / 关注 [green]{scope_counts.get('dy_follow', 0)}[/green] 人"
             )
-            console.print(
-                f"  共 [green]{event_count}[/green] 条事件已由 daemon 写入 memory。"
-            )
+            console.print(f"  共 [green]{event_count}[/green] 条事件已由 daemon 写入 memory。")
         elif status_label == "empty":
             console.print(
                 "  [yellow]抖音任务跑通但 0 条 videos —— 未登录抖音(常见,"
@@ -3472,7 +3622,7 @@ def fetch_douyin(
         elif status_label == "timeout":
             console.print(
                 "  [dim]抖音任务超时:扩展未连接 / 任务还在跑。"
-                "可加 --wait-seconds 180 重试,或确认 daemon + 扩展都在跑。[/dim]"
+                "可加 --wait-seconds 240 重试,或确认 daemon + 扩展都在跑。[/dim]"
             )
         elif status_label == "failed":
             console.print("  [yellow]抖音任务失败 —— 检查扩展日志。[/yellow]")
@@ -3486,13 +3636,72 @@ def fetch_douyin(
     )
 
 
+@app.command("search-douyin")
+def search_douyin(
+    keywords: list[str] = _DOUYIN_SEARCH_KEYWORDS_OPTION,
+    wait_seconds: float = typer.Option(
+        180.0,
+        "--wait-seconds",
+        "-w",
+        help="等扩展回搜索结果的最大秒数(默认 180s)。",
+    ),
+    max_items_per_keyword: int = typer.Option(
+        20,
+        "--max-items-per-keyword",
+        min=1,
+        help="每个关键词最多抓取多少条视频候选。",
+    ),
+) -> None:
+    """通过浏览器插件执行抖音搜索 discovery smoke."""
+    from openbiliclaw.discovery.douyin import split_csv_values
+
+    selected_keywords = split_csv_values(keywords)
+    _print_page_title("抖音搜索发现", "浏览器插件任务 → dy_tasks 结果")
+    console.print(f"[dim]入队抖音搜索任务,等扩展执行(最多 {wait_seconds:.0f}s)...[/dim]")
+    task_id = _enqueue_dy_search_task(
+        selected_keywords,
+        max_items_per_keyword=max_items_per_keyword,
+    )
+    if not task_id:
+        raise typer.Exit(code=1)
+
+    videos, counts, status_label = _collect_dy_search_results(
+        task_id,
+        max_wait_seconds=wait_seconds,
+    )
+    if status_label == "ok":
+        console.print(f"  抖音搜索 [green]{counts.get('dy_search', len(videos))}[/green] 条候选")
+        for index, video in enumerate(videos[:5], start=1):
+            title = str(video.get("title", "") or "（无标题）")
+            author = str(video.get("author", "") or "")
+            url = str(video.get("url", "") or "")
+            suffix = f" [dim]{author}[/dim]" if author else ""
+            console.print(f"  {index}. {title}{suffix}")
+            if url:
+                console.print(f"     [dim]{url}[/dim]")
+        return
+    if status_label == "empty":
+        console.print(
+            "  [yellow]抖音搜索任务跑通但 0 条候选 —— 搜索页可能仍被风控软空，"
+            "或页面 DOM / 接口字段漂移。[/yellow]"
+        )
+        return
+    if status_label == "timeout":
+        console.print(
+            "  [dim]抖音搜索任务超时:扩展未连接 / 任务还在跑。可加 --wait-seconds 240 重试。[/dim]"
+        )
+        return
+    if status_label == "failed":
+        console.print("  [yellow]抖音搜索任务失败 —— 检查扩展日志。[/yellow]")
+
+
 @app.command("fetch-xhs")
 def fetch_xhs(
     wait_seconds: float = typer.Option(
-        90.0,
+        _DEFAULT_XHS_BOOTSTRAP_WAIT_SECONDS,
         "--wait-seconds",
         "-w",
-        help="等扩展回结果的最大秒数(默认 90s)。",
+        help="等扩展回结果的最大秒数(默认 180s)。",
     ),
 ) -> None:
     """单独测试小红书 bootstrap(独立于 ``init``).
@@ -3518,7 +3727,7 @@ def fetch_xhs(
         elif status_label == "timeout":
             console.print(
                 "  [dim]小红书任务超时:扩展未连接 / 任务还在跑。"
-                "可加 --wait-seconds 120 重试。[/dim]"
+                "可加 --wait-seconds 240 重试。[/dim]"
             )
         elif status_label == "failed":
             console.print("  [yellow]小红书任务失败 —— 检查扩展日志。[/yellow]")
@@ -3851,17 +4060,238 @@ def _run_xhs_discovery(*, force: bool) -> None:
     _print_status_panel(kind, title, body)
 
 
+def _comma_separated_env_values(name: str) -> tuple[str, ...]:
+    from openbiliclaw.discovery.douyin import split_csv_values
+
+    return split_csv_values([os.environ.get(name, "")])
+
+
+def _normalize_douyin_discovery_sources(sources: tuple[str, ...]) -> tuple[str, ...]:
+    allowed = {"search", "hot", "feed"}
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        for part in str(source).split(","):
+            value = part.strip().lower()
+            if not value or value in seen:
+                continue
+            if value not in allowed:
+                raise typer.BadParameter(
+                    f"未知的抖音 discovery 来源 `{value}`，当前支持：search、hot、feed。"
+                )
+            seen.add(value)
+            normalized.append(value)
+    return tuple(normalized) or ("search", "hot", "feed")
+
+
+def _recent_douyin_creator_sec_uids(*, limit: int = 20) -> tuple[str, ...]:
+    try:
+        database = _get_runtime_database()
+    except Exception:
+        return ()
+    if not hasattr(database, "conn"):
+        return ()
+    try:
+        from openbiliclaw.sources.dy_tasks import recent_dy_creator_sec_uids
+
+        return recent_dy_creator_sec_uids(database, limit=limit)
+    except Exception:
+        return ()
+
+
+def _run_douyin_discovery(
+    *,
+    limit: int,
+    keywords: tuple[str, ...] = (),
+    creator_sec_uids: tuple[str, ...] = (),
+    sources: tuple[str, ...] = ("search", "hot", "feed"),
+    cache: bool = True,
+    evaluate: bool = True,
+) -> None:
+    """Run one direct-cookie Douyin discovery cycle."""
+    import openbiliclaw.config as config_module
+    from openbiliclaw.discovery.douyin import (
+        DouyinDiscoveryOptions,
+        DouyinDiscoveryResult,
+        DouyinDiscoveryService,
+    )
+    from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+    from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
+    from openbiliclaw.sources.douyin_direct import DouyinDirectAuthError, DouyinDirectClient
+    from openbiliclaw.sources.douyin_plugin_search import DouyinPluginSearchClient
+
+    _require_runtime_config()
+    config = config_module.load_config()
+    dy_cfg = getattr(config.sources, "douyin", None)
+    if dy_cfg is None or not bool(getattr(dy_cfg, "enabled", False)):
+        _print_status_panel(
+            "warning",
+            "抖音 direct discovery 未启用",
+            (
+                "请在 config.toml 中设置 [sources.douyin].enabled = true；Cookie 可由"
+                " OPENBILICLAW_DOUYIN_COOKIE 覆盖，或由浏览器扩展同步到本机。"
+            ),
+        )
+        raise typer.Exit(code=1)
+
+    mode = str(getattr(dy_cfg, "mode", "direct")).strip().lower()
+    if mode != "direct":
+        _print_status_panel(
+            "warning",
+            "抖音 discovery 模式暂不支持",
+            f"当前 mode={mode!r}；本版本仅支持 direct。",
+        )
+        raise typer.Exit(code=1)
+
+    cookie_env = str(getattr(dy_cfg, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE"))
+    cookie = resolve_douyin_cookie(data_dir=config.data_path, cookie_env=cookie_env)
+    if not cookie:
+        _print_status_panel(
+            "warning",
+            "缺少抖音 Cookie",
+            (
+                f"请设置环境变量 {cookie_env}，或保持浏览器扩展在线，"
+                "让它同步 douyin.com Cookie 到本机。"
+            ),
+        )
+        raise typer.Exit(code=1)
+
+    soul_engine = _build_soul_engine()
+    try:
+        profile_data = asyncio.run(soul_engine.get_profile())
+    except SoulProfileNotInitializedError as exc:
+        _print_status_panel(
+            "warning",
+            "尚未初始化用户画像",
+            "请先执行 `openbiliclaw init` 拉取历史并生成初始画像。",
+        )
+        raise typer.Exit(code=1) from exc
+
+    normalized_sources = _normalize_douyin_discovery_sources(sources)
+    resolved_creator_sec_uids = creator_sec_uids or _comma_separated_env_values(
+        "OPENBILICLAW_DOUYIN_CREATOR_SEC_UIDS"
+    )
+    if not resolved_creator_sec_uids and "creator" in normalized_sources:
+        resolved_creator_sec_uids = _recent_douyin_creator_sec_uids(
+            limit=max(1, min(limit * 2, 20))
+        )
+
+    async def _discover() -> DouyinDiscoveryResult:
+        async with DouyinDirectClient(cookie=cookie) as direct_client:
+            client: Any = direct_client
+            if any(source in normalized_sources for source in ("search", "hot", "feed")):
+                try:
+                    database = _get_runtime_database()
+                except Exception:
+                    database = None
+                if database is not None and hasattr(database, "conn"):
+                    search_wait_seconds = float(
+                        os.environ.get("OPENBILICLAW_DY_DISCOVERY_SEARCH_WAIT_SECONDS", "180")
+                    )
+                    client = DouyinPluginSearchClient(
+                        database=database,
+                        direct_client=direct_client,
+                        wait_seconds=search_wait_seconds,
+                        daily_search_budget=int(getattr(dy_cfg, "daily_search_budget", 30)),
+                        daily_hot_budget=int(getattr(dy_cfg, "daily_hot_budget", 5)),
+                        daily_feed_budget=int(getattr(dy_cfg, "daily_feed_budget", 30)),
+                    )
+            discovery_engine = _build_discovery_engine() if cache else None
+            service = DouyinDiscoveryService(
+                client=client,
+                discovery_engine=discovery_engine,
+            )
+            return await service.discover(
+                profile_data,
+                DouyinDiscoveryOptions(
+                    limit=limit,
+                    sources=normalized_sources,
+                    keywords=keywords,
+                    creator_sec_uids=resolved_creator_sec_uids,
+                    cache=cache,
+                    evaluate=evaluate,
+                    per_source_limit=max(1, min(limit, 30)),
+                ),
+            )
+
+    try:
+        result = asyncio.run(_discover())
+    except DouyinDirectAuthError as exc:
+        _print_status_panel("warning", "抖音 Cookie 无效", str(exc))
+        raise typer.Exit(code=1) from exc
+
+    discovered = result.items
+    source_counts = ", ".join(
+        f"{source}:{count}" for source, count in sorted(result.source_counts.items())
+    )
+    _print_page_title("抖音内容发现", f"plugin/direct {' / '.join(normalized_sources)}")
+    if not discovered:
+        _print_status_panel(
+            "info",
+            "没有发现到新抖音内容",
+            "可能是 Cookie 失效、签名被拒绝，或本轮关键词没有结果。",
+        )
+        return
+
+    strategies = sorted({str(getattr(item, "source_strategy", "") or "") for item in discovered})
+    _print_key_value_table(
+        "发现摘要",
+        [
+            ("发现条数", str(len(discovered))),
+            ("缓存状态", "已写入 content_cache" if result.cached else "未写入 content_cache"),
+            ("来源", "douyin"),
+            ("来源分布", source_counts or "（无）"),
+            ("策略", ", ".join(s for s in strategies if s) or "douyin_direct"),
+        ],
+    )
+    for index, item in enumerate(discovered[:5], start=1):
+        _print_discovered_content_preview(item, index)
+
+
+@app.command("discover-douyin")
+def discover_douyin(
+    keywords: list[str] | None = _DOUYIN_DISCOVERY_KEYWORDS_OPTION,
+    creator_sec_uids: list[str] | None = _DOUYIN_DISCOVERY_CREATOR_SEC_UIDS_OPTION,
+    sources: list[str] | None = _DOUYIN_DISCOVERY_SOURCES_OPTION,
+    limit: int = typer.Option(30, "--limit", "-n", min=1, help="发现结果条数上限。"),
+    no_cache: bool = typer.Option(
+        False,
+        "--no-cache",
+        help="只跑策略并预览结果，不写入 content_cache。",
+    ),
+    no_evaluate: bool = typer.Option(
+        False,
+        "--no-evaluate",
+        help="跳过 LLM 相关性评估，便于调试源接口原始召回。",
+    ),
+) -> None:
+    """单独调试抖音 direct-cookie 内容 discovery."""
+    from openbiliclaw.discovery.douyin import split_csv_values
+
+    selected_sources = _normalize_douyin_discovery_sources(
+        split_csv_values(sources) or ("search", "hot", "feed")
+    )
+    _run_douyin_discovery(
+        limit=limit,
+        keywords=split_csv_values(keywords),
+        creator_sec_uids=split_csv_values(creator_sec_uids),
+        sources=selected_sources,
+        cache=not no_cache,
+        evaluate=not no_evaluate,
+    )
+
+
 @app.command()
 def discover(
     source: str = typer.Option(
         "bilibili",
         "--source",
         "-s",
-        help="触发发现的内容源：bilibili 或 xiaohongshu。",
+        help="触发发现的内容源：bilibili、xiaohongshu 或 douyin。",
         case_sensitive=False,
     ),
     strategies: list[str] | None = _DISCOVER_STRATEGIES_OPTION,
-    limit: int = typer.Option(30, "--limit", "-n", min=1, help="Bilibili 发现结果条数上限。"),
+    limit: int = typer.Option(30, "--limit", "-n", min=1, help="发现结果条数上限。"),
     force: bool = typer.Option(
         False,
         "--force",
@@ -3882,8 +4312,20 @@ def discover(
         _run_xhs_discovery(force=force)
         return
 
+    if source_normalized == "douyin":
+        if strategies:
+            _print_status_panel(
+                "info",
+                "--strategy 仅对 Bilibili 生效",
+                "douyin 渠道走 direct-cookie discovery，已忽略策略过滤。",
+            )
+        _run_douyin_discovery(limit=limit)
+        return
+
     if source_normalized != "bilibili":
-        raise typer.BadParameter(f"未知的内容源 `{source}`，当前支持：bilibili、xiaohongshu。")
+        raise typer.BadParameter(
+            f"未知的内容源 `{source}`，当前支持：bilibili、xiaohongshu、douyin。"
+        )
 
     active_strategies = _normalize_strategy_names(strategies)
 

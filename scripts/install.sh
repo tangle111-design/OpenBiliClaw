@@ -272,22 +272,28 @@ missing = details.get("missing") or []
 init_decisions = details.get("init_decisions") or {}
 decision_missing = init_decisions.get("missing") or []
 xhs_flag = ((init_decisions.get("xhs") or {}).get("flag") or "")
+douyin_flag = ((init_decisions.get("douyin") or {}).get("flag") or "")
 print(f"STATUS={final.get('status', 'unknown')}")
 print(f"HEALTH_URL={details.get('health_url', '')}")
 print(f"MISSING={','.join(missing)}")
 print(f"DECISIONS={','.join(decision_missing)}")
 print(f"XHS_FLAG={xhs_flag}")
+print(f"DOUYIN_FLAG={douyin_flag}")
 PY
 )
     # Parse the KEY=VALUE lines back into shell variables.
-    local status health_url missing decisions xhs_flag
+    local status health_url missing decisions xhs_flag douyin_flag
     status=$(echo "$summary" | awk -F= '/^STATUS=/{sub(/^STATUS=/, ""); print; exit}')
     health_url=$(echo "$summary" | awk -F= '/^HEALTH_URL=/{sub(/^HEALTH_URL=/, ""); print; exit}')
     missing=$(echo "$summary" | awk -F= '/^MISSING=/{sub(/^MISSING=/, ""); print; exit}')
     decisions=$(echo "$summary" | awk -F= '/^DECISIONS=/{sub(/^DECISIONS=/, ""); print; exit}')
     xhs_flag=$(echo "$summary" | awk -F= '/^XHS_FLAG=/{sub(/^XHS_FLAG=/, ""); print; exit}')
+    douyin_flag=$(echo "$summary" | awk -F= '/^DOUYIN_FLAG=/{sub(/^DOUYIN_FLAG=/, ""); print; exit}')
     if [ -z "$xhs_flag" ]; then
         xhs_flag="--no-xhs"
+    fi
+    if [ -z "$douyin_flag" ]; then
+        douyin_flag="--no-douyin"
     fi
 
     if [ -z "$health_url" ]; then
@@ -355,9 +361,10 @@ PY
         echo "       If they choose Gemini/OpenAI/custom instead, replace the"
         echo "       --embedding-* flags below with their chosen provider/model."
         echo ""
-        echo "  2. Xiaohongshu data (privacy choice):"
-        echo "       Ask whether to include Xiaohongshu likes/favorites in the"
-        echo "       initial profile. Default is NO unless they explicitly opt in."
+        echo "  2. Source bootstrap data (privacy choice):"
+        echo "       Ask whether to include Xiaohongshu likes/favorites and"
+        echo "       Douyin post/favorite/like/follow in the initial profile."
+        echo "       Default is NO unless they explicitly opt in per source."
         echo ""
         echo "  3. Re-run bootstrap with explicit choices (DO NOT add --skip-init):"
         echo ""
@@ -370,9 +377,11 @@ PY
                 ;;
         esac
         echo "         $xhs_flag \\"
+        echo "         $douyin_flag \\"
         echo "         --port $PORT --host $HOST"
         echo ""
-        echo "     Use --yes-xhs only after the user says yes; otherwise keep --no-xhs."
+        echo "     Use --yes-xhs / --yes-douyin only after the user says yes;"
+        echo "     otherwise keep --no-xhs / --no-douyin."
         echo "     This then runs init: B站 history, soul profile, first discovery."
     elif [ "$missing_only_cookie" = "1" ]; then
         echo "Next step — get your B站 Cookie to the backend (pick ONE):"
@@ -387,6 +396,7 @@ PY
         echo "      Required before init:"
         echo "        - Embedding model/service (default: Ollama bge-m3)"
         echo "        - Xiaohongshu likes/favorites? (default: no; yes only on opt-in)"
+        echo "        - Douyin post/favorite/like/follow? (default: no; yes only on opt-in)"
         echo ""
         echo "  (B) [manual fallback]"
         echo "      F12 → Network → copy the 'Cookie' header from any"
@@ -401,8 +411,10 @@ PY
                 ;;
         esac
         echo "            $xhs_flag \\"
+        echo "            $douyin_flag \\"
         echo "            --port $PORT --host $HOST"
-        echo "      Use --yes-xhs only after the user opts in; otherwise keep --no-xhs."
+        echo "      Use --yes-xhs / --yes-douyin only after the user opts in;"
+        echo "      otherwise keep --no-xhs / --no-douyin."
         echo ""
         echo "  Verify the backend is healthy any time:"
         echo "      curl -sS $health_url"
@@ -417,8 +429,9 @@ PY
         echo "     Alternatives: Gemini embedding, OpenAI text-embedding-3-small,"
         echo "     or a custom OpenAI-compatible embedding endpoint."
         echo ""
-        echo "  3. Ask whether to include Xiaohongshu likes/favorites:"
-        echo "     Default: no. Use --yes-xhs only after explicit opt-in."
+        echo "  3. Ask whether to include source bootstrap data:"
+        echo "     Xiaohongshu likes/favorites and Douyin post/favorite/like/follow."
+        echo "     Default: no. Use --yes-xhs / --yes-douyin only after explicit opt-in."
         echo ""
         echo "  4. Prepare the missing values:"
         case "$missing" in
@@ -469,12 +482,13 @@ PY
                 ;;
         esac
         echo "         $xhs_flag \\"
+        echo "         $douyin_flag \\"
         case "$missing" in
             *bilibili.cookie*) echo "         --bilibili-cookie '<YOUR_COOKIE>' \\" ;;
         esac
         echo "         --port $PORT --host $HOST"
         echo ""
-        echo "     Replace the embedding flags and --no-xhs according to the"
+        echo "     Replace the embedding/source flags according to the"
         echo "     user's answers before running the command."
         echo ""
         echo "     This auto-runs 'openbiliclaw init' once credentials check out:"
@@ -482,6 +496,7 @@ PY
         echo "       - generates the soul profile"
         echo "       - runs the first content discovery pass"
         echo "     Takes 2-5 minutes. Without this step the extension shows nothing."
+        echo "     During init, relay BOOTSTRAP_STATUS init_progress events to the user."
         echo ""
         echo "  6. Verify the backend is healthy:"
         echo "      curl -sS $health_url"

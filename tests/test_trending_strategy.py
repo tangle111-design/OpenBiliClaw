@@ -293,7 +293,7 @@ async def test_trending_strategy_interleaves_rids_for_eval_fairness() -> None:
     # ranking entries would heuristically default to ``news_brief``
     # and trigger the cap, which is correct production behaviour but
     # would mask the interleave-fairness invariant this test checks.
-    _STYLES = [
+    styles = [
         "deep_dive",
         "fun_variety",
         "story_doc",
@@ -301,7 +301,7 @@ async def test_trending_strategy_interleaves_rids_for_eval_fairness() -> None:
         "review_roundup",
     ]
     score_payloads = [
-        f'{{"score": 0.80, "reason": "r{i}", "style_key": "{_STYLES[i % len(_STYLES)]}"}}'
+        f'{{"score": 0.80, "reason": "r{i}", "style_key": "{styles[i % len(styles)]}"}}'
         for i in range(50)
     ]
     llm_service = FakeLLMService(['{"rids": [36, 181, 119]}', *score_payloads])
@@ -338,3 +338,48 @@ async def test_trending_strategy_interleaves_rids_for_eval_fairness() -> None:
     assert bvids[:4] == ["BV0_00", "BV36_00", "BV181_00", "BV0_01"]
     # The smaller rids' top items must appear before rid0 exhausts its bucket.
     assert bvids.index("BV181_00") < bvids.index("BV0_05")
+
+
+@pytest.mark.asyncio
+async def test_trending_strategy_caps_llm_eval_candidates_for_small_limit() -> None:
+    from openbiliclaw.discovery.strategies.strategies import TrendingStrategy
+
+    llm_service = FakeLLMService(
+        [
+            '{"rids": [36, 181, 119]}',
+            *('{"score": 0.80, "reason": "ok", "style_key": "deep_dive"}' for _ in range(40)),
+        ]
+    )
+    bilibili_client = FakeRankingClient(
+        {
+            rid: [
+                {
+                    "bvid": f"BV{rid}_{index}",
+                    "title": f"rid{rid}-{index}",
+                    "author": "UP",
+                    "mid": index,
+                }
+                for index in range(25)
+            ]
+            for rid in (0, 36, 181, 119)
+        }
+    )
+    strategy = TrendingStrategy(
+        bilibili_client=bilibili_client,
+        llm_service=llm_service,
+        score_threshold=0.65,
+        max_related_rids=3,
+    )
+
+    await strategy.discover(_build_profile(), limit=3)
+
+    batch_sizes: list[int] = []
+    for call in llm_service.calls:
+        user_input = str(call["user_input"])
+        if "<content_batch>" not in user_input:
+            continue
+        import json as _json
+
+        batch = _json.loads(user_input.split("<content_batch>")[1].split("</content_batch>")[0])
+        batch_sizes.append(len(batch))
+    assert batch_sizes == [6]

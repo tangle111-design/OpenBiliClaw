@@ -3,39 +3,51 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
-from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 from openbiliclaw.soul.speculator import build_probe_axis, choose_next_probe_candidate
+
+if TYPE_CHECKING:
+    from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
 
 logger = logging.getLogger(__name__)
 
 _MAX_DISCOVERY_BACKFILL_PER_REFRESH = 60
-_SOURCE_TARGET_SHARES: tuple[tuple[str, int], ...] = (
-    ("search", 4),
-    ("related_chain", 4),
-    # trending was 3 (target=120 at pool_target=600). Empirically trending
-    # never reaches that floor: items have higher consumption rate than
-    # other sources (relevance is high, popup serves them quickly) and
-    # the topic_group cap suppresses repeat 鬼畜/同人/短片 surfaces. The
-    # observed steady-state is ~30-45, so the deficit logic kept firing
-    # solo trending rounds every 60s that net only ~1 fresh item — pure
-    # LLM-evaluation waste. Drop share to 1 (target ~46) to align with
-    # reality.
-    ("trending", 1),
-    ("explore", 4),
-    # Xiaohongshu has multiple internal extension/task channels, but the
-    # runtime pool should treat them as one first-class source family.
-    # The xhs_producer owns replenishment; Bilibili discover() plans below
-    # only fill deficits for the four Bilibili strategies.
-    ("xiaohongshu", 4),
-)
+_DEFAULT_PLATFORM_SOURCE_SHARES: dict[str, int] = {
+    "bilibili": 8,
+    "xiaohongshu": 1,
+    "douyin": 1,
+}
+_PLATFORM_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin")
 _BILIBILI_DISCOVERY_SOURCES = ("search", "related_chain", "trending", "explore")
+
+
+def _call_accepts_limit(fn: Any) -> bool:
+    """Return whether a producer callable accepts a ``limit=`` keyword."""
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True
+    return "limit" in signature.parameters or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+    )
+
+
+def _call_accepts_strategy_limits(fn: Any) -> bool:
+    """Return whether a discovery callable accepts ``strategy_limits=``."""
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True
+    return "strategy_limits" in signature.parameters or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+    )
 
 
 class SupportsRuntimeState(Protocol):
@@ -64,6 +76,7 @@ class SupportsEventDatabase(Protocol):
         target: int,
         source_share_quotas: dict[str, int] | None = None,
     ) -> int: ...
+    def trim_pool_source_overflow(self, *, source_share_quotas: dict[str, int]) -> int: ...
     def reactivate_under_quota_pool_sources(
         self,
         *,
@@ -112,6 +125,8 @@ class SupportsDiscoveryEngine(Protocol):
         profile: Any,
         strategies: list[str] | None = None,
         limit: int = 30,
+        *,
+        strategy_limits: dict[str, int] | None = None,
     ) -> list[Any]: ...
 
 
@@ -146,6 +161,7 @@ class ContinuousRefreshController:
     recommendation_engine: SupportsRecommendationEngine
     event_hub: Any | None = None
     xhs_producer: Any | None = None
+    douyin_producer: Any | None = None
     signal_event_threshold: int = 6
     event_refresh_minutes: int = 0
     trending_refresh_hours: int = 3
@@ -174,6 +190,9 @@ class ContinuousRefreshController:
     # we can tune in tests.
     discovery_limit: int = 30
     pool_target_count: int = 600
+    pool_source_shares: dict[str, int] = field(
+        default_factory=lambda: dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
+    )
     # v0.3.63+: optional registry so detached tasks (manual-refresh
     # background work, per-strategy precompute fire-and-forget) can be
     # cancelled by ``RuntimeContext.rebuild_from_config`` before the
@@ -355,10 +374,9 @@ class ContinuousRefreshController:
             return {"refreshed": False, "strategies": [], "reason": "pool_at_cap"}
 
         profile = await self.soul_engine.get_profile()
-        plan = [
-            (["search", "trending"], self.discovery_limit),
-            (["related_chain", "explore"], self.discovery_limit),
-        ]
+        plan = self._build_source_replenishment_plan()
+        if not plan:
+            return {"refreshed": False, "strategies": [], "reason": "below_threshold"}
         return await self._run_refresh_plan(
             state=state,
             profile=profile,
@@ -416,6 +434,23 @@ class ContinuousRefreshController:
                     )
             except Exception:
                 logger.exception("reactivate_under_quota_pool_sources failed")
+
+        trim_source_overflow_fn = getattr(self.database, "trim_pool_source_overflow", None)
+        if callable(trim_source_overflow_fn):
+            try:
+                source_overflow_suppressed = trim_source_overflow_fn(
+                    source_share_quotas=source_targets,
+                )
+                if source_overflow_suppressed > 0:
+                    logger.info(
+                        "enforce_pool_cap: suppressed=%s over-quota source items",
+                        source_overflow_suppressed,
+                    )
+                    self.database.trim_topic_group_overflow(
+                        max_per_group=max(3, self.pool_target_count // 10),
+                    )
+            except Exception:
+                logger.exception("trim_pool_source_overflow failed")
 
         pool_available = self.database.count_pool_candidates()
         if pool_available > self.pool_target_count:
@@ -621,7 +656,8 @@ class ContinuousRefreshController:
             ┌─ _loop_refresh()           60s   LLM-heavy, may take minutes
             ├─ _loop_pool_precompute()   60s   v0.3.60+ — drain pool_expression
             ├─ _loop_soul_pipeline()     60s   profile updates, speculator
-            ├─ _loop_xhs_producer()      60s   keyword generation
+            ├─ _loop_xhs_producer()      60s   xhs keyword generation
+            ├─ _loop_douyin_producer()   60s   Douyin discovery when under quota
             └─ _loop_proactive_push()    60s   delight + interest probe
         """
         with suppress(Exception):
@@ -631,6 +667,7 @@ class ContinuousRefreshController:
             asyncio.create_task(self._loop_pool_precompute()),
             asyncio.create_task(self._loop_soul_pipeline()),
             asyncio.create_task(self._loop_xhs_producer()),
+            asyncio.create_task(self._loop_douyin_producer()),
             asyncio.create_task(self._loop_proactive_push()),
         ]
         try:
@@ -741,8 +778,7 @@ class ContinuousRefreshController:
             self._profile_ready_observed = False
             return
         logger.info(
-            "Soul profile became ready — kicking classify_pool_backlog "
-            "to drain init-window backlog"
+            "Soul profile became ready — kicking classify_pool_backlog to drain init-window backlog"
         )
         try:
             await classify_fn(profile=profile, limit=100)
@@ -761,6 +797,13 @@ class ContinuousRefreshController:
         while True:
             with suppress(Exception):
                 await self._tick_xhs_producer()
+            await asyncio.sleep(self.check_interval_seconds)
+
+    async def _loop_douyin_producer(self) -> None:
+        """Douyin production — plugin/direct discovery when Douyin is below quota."""
+        while True:
+            with suppress(Exception):
+                await self._tick_douyin_producer()
             await asyncio.sleep(self.check_interval_seconds)
 
     async def _loop_proactive_push(self) -> None:
@@ -814,10 +857,36 @@ class ContinuousRefreshController:
         producer = self.xhs_producer
         if producer is None:
             return
+        deficit = self._source_deficit("xiaohongshu")
+        if deficit <= 0:
+            return
+        limit = max(1, min(deficit, self.discovery_limit))
         produce_fn = getattr(producer, "produce_if_due", None)
         if not callable(produce_fn):
             return
-        await produce_fn()
+        if _call_accepts_limit(produce_fn):
+            await produce_fn(limit=limit)
+        else:
+            await produce_fn()
+
+    async def _tick_douyin_producer(self) -> None:
+        """Invoke the Douyin discovery producer if Douyin is under quota."""
+        producer = self.douyin_producer
+        if producer is None:
+            return
+        if not self._is_initialized():
+            return
+        deficit = self._source_deficit("douyin")
+        if deficit <= 0:
+            return
+        produce_fn = getattr(producer, "produce_if_due", None)
+        if not callable(produce_fn):
+            return
+        limit = max(1, min(deficit, self.discovery_limit))
+        if _call_accepts_limit(produce_fn):
+            await produce_fn(limit=limit)
+        else:
+            await produce_fn()
 
     async def _tick_soul_pipeline(self) -> None:
         """Invoke ProfileUpdatePipeline.tick() if the soul engine exposes one.
@@ -853,10 +922,11 @@ class ContinuousRefreshController:
             source_plan = self._build_source_replenishment_plan()
             if source_plan:
                 return source_plan
-            return [
-                (["search", "trending"], self.discovery_limit),
-                (["related_chain", "explore"], self.discovery_limit),
-            ]
+            # When Bilibili is already at its platform quota, the missing
+            # capacity belongs to smaller platform producers (xhs/douyin).
+            # Running the Bilibili fallback here would immediately violate
+            # the configured pool-source ratio.
+            return []
 
         plan: list[tuple[list[str], int]] = []
         if pending_events >= self.signal_event_threshold:
@@ -887,7 +957,7 @@ class ContinuousRefreshController:
 
     async def _complete_manual_refresh(self) -> None:
         try:
-            await self.force_refresh()
+            refresh_result = await self.force_refresh()
         except Exception as exc:
             self._manual_refresh_state = "failed"
             self._manual_refresh_message = f"这次补货没跑通：{exc}"
@@ -902,9 +972,13 @@ class ContinuousRefreshController:
             )
             return
         self._manual_refresh_state = "success"
-        runtime_state = self.memory_manager.load_discovery_runtime_state()
-        last_discovered = self._int_state_value(runtime_state, "last_discovered_count")
-        last_replenished = self._int_state_value(runtime_state, "last_replenished_count")
+        if bool(refresh_result.get("refreshed")):
+            runtime_state = self.memory_manager.load_discovery_runtime_state()
+            last_discovered = self._int_state_value(runtime_state, "last_discovered_count")
+            last_replenished = self._int_state_value(runtime_state, "last_replenished_count")
+        else:
+            last_discovered = 0
+            last_replenished = 0
         self._manual_refresh_message = (
             "刚给你补了一批新的。"
             if last_replenished > 0
@@ -971,15 +1045,32 @@ class ContinuousRefreshController:
                 }
             )
 
-            discovered = await self.discovery_engine.discover(
-                profile,
-                strategies=strategies,
-                limit=self._requested_refresh_limit(
-                    requested_limit=requested_limit,
-                    current_pool_count=current_pool_count,
-                    pool_below_target=initial_pool_below_target,
-                ),
+            effective_limit = self._requested_refresh_limit(
+                requested_limit=requested_limit,
+                current_pool_count=current_pool_count,
+                pool_below_target=initial_pool_below_target,
             )
+            strategy_limits = self._requested_strategy_limits(
+                strategies=strategies,
+                requested_limit=requested_limit,
+                effective_limit=effective_limit,
+                current_pool_count=current_pool_count,
+                pool_below_target=initial_pool_below_target,
+            )
+            discover_fn = self.discovery_engine.discover
+            if strategy_limits and _call_accepts_strategy_limits(discover_fn):
+                discovered = await discover_fn(
+                    profile,
+                    strategies=strategies,
+                    limit=effective_limit,
+                    strategy_limits=strategy_limits,
+                )
+            else:
+                discovered = await discover_fn(
+                    profile,
+                    strategies=strategies,
+                    limit=effective_limit,
+                )
             all_discovered.extend(discovered)
             flattened_strategies.extend(strategies)
 
@@ -1280,35 +1371,27 @@ class ContinuousRefreshController:
 
     def _build_source_replenishment_plan(self) -> list[tuple[list[str], int]]:
         source_counts = self.database.count_pool_candidates_by_source()
-        if not source_counts:
-            return []
-
         target_counts = self._source_target_counts()
-        deficits: list[tuple[str, int]] = []
-        for source in _BILIBILI_DISCOVERY_SOURCES:
-            deficit = max(0, target_counts[source] - int(source_counts.get(source, 0)))
-            if deficit > 0:
-                deficits.append((source, deficit))
-
-        if not deficits:
+        bilibili_deficit = max(
+            0,
+            int(target_counts.get("bilibili", 0))
+            - self._platform_source_count(source_counts, "bilibili"),
+        )
+        if bilibili_deficit <= 0:
             return []
 
-        # Merge all deficient sources into a single discover() call so they
-        # fan out in one asyncio.gather and get mixed by _compress_topic_repeats
-        # with the per-source floor. Without this, each tick runs only one
-        # source's plan entry, the pool overflows the cap, gets trimmed, and
-        # the next tick runs the next source — turning each refresh round
-        # into a single-source delivery for the user.
-        merged_strategies = [source for source, _ in deficits]
-        merged_limit = max(deficit for _, deficit in deficits)
-        return [(merged_strategies, merged_limit)]
+        # Bilibili is a platform quota now, but its implementation still
+        # fans out through four established strategy names.
+        return [(list(_BILIBILI_DISCOVERY_SOURCES), bilibili_deficit)]
 
     def _source_target_counts(self) -> dict[str, int]:
-        total_share = sum(share for _, share in _SOURCE_TARGET_SHARES)
+        shares = self._normalized_pool_source_shares()
+        total_share = sum(shares.values())
         remaining = self.pool_target_count
         targets: dict[str, int] = {}
-        for index, (source, share) in enumerate(_SOURCE_TARGET_SHARES):
-            if index == len(_SOURCE_TARGET_SHARES) - 1:
+        items = list(shares.items())
+        for index, (source, share) in enumerate(items):
+            if index == len(items) - 1:
                 targets[source] = remaining
                 break
             count = round(self.pool_target_count * share / total_share)
@@ -1317,6 +1400,42 @@ class ContinuousRefreshController:
             remaining -= count
         return targets
 
+    def _source_deficit(self, source_family: str) -> int:
+        source_counts = self.database.count_pool_candidates_by_source()
+        target_counts = self._source_target_counts()
+        target = int(target_counts.get(source_family, 0))
+        current = self._platform_source_count(source_counts, source_family)
+        return max(0, target - current)
+
+    def _platform_source_count(self, source_counts: dict[str, int], source_family: str) -> int:
+        if source_family == "bilibili":
+            if "bilibili" in source_counts:
+                return int(source_counts.get("bilibili", 0))
+            return sum(int(source_counts.get(source, 0)) for source in _BILIBILI_DISCOVERY_SOURCES)
+        return int(source_counts.get(source_family, 0))
+
+    def _normalized_pool_source_shares(self) -> dict[str, int]:
+        raw = self.pool_source_shares or _DEFAULT_PLATFORM_SOURCE_SHARES
+        normalized: dict[str, int] = {}
+        for source in _PLATFORM_SOURCE_ORDER:
+            try:
+                share = int(raw.get(source, 0))
+            except (TypeError, ValueError):
+                share = 0
+            if share > 0:
+                normalized[source] = share
+        for source, raw_share in raw.items():
+            source_key = str(source).strip().lower()
+            if not source_key or source_key in normalized:
+                continue
+            try:
+                share = int(raw_share)
+            except (TypeError, ValueError):
+                continue
+            if share > 0:
+                normalized[source_key] = share
+        return normalized or dict(_DEFAULT_PLATFORM_SOURCE_SHARES)
+
     def _requested_refresh_limit(
         self,
         *,
@@ -1324,22 +1443,25 @@ class ContinuousRefreshController:
         current_pool_count: int,
         pool_below_target: bool,
     ) -> int:
-        """Decide how many candidates each strategy should be asked for.
+        """Decide how many candidates a grouped discovery call should target.
 
         v0.3.24+ pool-aware sizing. Pre-fix this enforced an absolute
-        floor of ``discovery_limit`` (30) per strategy, even when the
+        floor of ``discovery_limit`` (30) per grouped call, even when the
         pool was 595/600 and only needed 5 more items. With 4 strategies
         × 30 = 120 candidates LLM-evaluated per refresh — and the
         suppress-pass keeping only ~20 — that meant ~80% of LLM
         evaluation cost went to candidates that were immediately
-        suppressed. The fix sizes each strategy's limit to the actual
-        pool gap (with 2x oversample for items below score threshold and
-        a floor of 5 to keep strategies productive on tiny gaps),
-        capped by ``discovery_limit`` so a sudden post-init replenish
-        doesn't turn into a single huge wave.
+        suppressed. The fix sizes each strategy's limit to the smaller
+        of total pool gap and requested source gap (with 1.5x oversample
+        for items below score threshold and a floor of 5 to keep
+        grouped call productive on tiny gaps), capped by ``discovery_limit``
+        so a sudden post-init replenish doesn't turn into a single huge
+        wave.
         """
         if pool_below_target:
-            gap = max(0, self.pool_target_count - current_pool_count)
+            total_gap = max(0, self.pool_target_count - current_pool_count)
+            requested_gap = max(1, int(requested_limit))
+            gap = min(total_gap, requested_gap)
             # The 2-phase plan dispatches strategies in groups; per-
             # strategy target is roughly gap // (typical strategy count
             # per phase = 2), with a 1.5x oversample for threshold
@@ -1352,6 +1474,42 @@ class ContinuousRefreshController:
         else:
             effective_limit = max(self.discovery_limit, requested_limit)
         return min(_MAX_DISCOVERY_BACKFILL_PER_REFRESH, max(1, effective_limit))
+
+    def _requested_strategy_limits(
+        self,
+        *,
+        strategies: list[str],
+        requested_limit: int,
+        effective_limit: int,
+        current_pool_count: int,
+        pool_below_target: bool,
+    ) -> dict[str, int] | None:
+        """Split a grouped Bilibili refresh budget across its strategies."""
+        if not pool_below_target or len(strategies) <= 1:
+            return None
+        if not all(strategy in _BILIBILI_DISCOVERY_SOURCES for strategy in strategies):
+            return None
+        total_gap = max(1, self.pool_target_count - current_pool_count)
+        shared_budget = min(
+            max(1, int(requested_limit)),
+            max(1, int(effective_limit)),
+            total_gap,
+        )
+        return self._split_budget_across_strategies(strategies, shared_budget)
+
+    @staticmethod
+    def _split_budget_across_strategies(
+        strategies: list[str],
+        budget: int,
+    ) -> dict[str, int]:
+        if not strategies:
+            return {}
+        safe_budget = max(0, int(budget))
+        base, extra = divmod(safe_budget, len(strategies))
+        return {
+            strategy: base + (1 if index < extra else 0)
+            for index, strategy in enumerate(strategies)
+        }
 
     def _is_initialized(self) -> bool:
         try:

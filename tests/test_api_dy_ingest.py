@@ -27,6 +27,7 @@ class RecordingMemoryManager:
 
     def __init__(self) -> None:
         self.events: list[dict[str, object]] = []
+        self.profile_signals: list[object] = []
         self._discovery_runtime_state: dict[str, object] = {}
 
     async def propagate_event(self, event: dict[str, object]) -> None:
@@ -37,6 +38,25 @@ class RecordingMemoryManager:
 
     def save_discovery_runtime_state(self, state: dict[str, object]) -> None:
         self._discovery_runtime_state = dict(state)
+
+
+class RecordingProfilePipeline:
+    def __init__(self, memory: RecordingMemoryManager) -> None:
+        self._memory = memory
+
+    async def ingest_batch(self, signals: list[object]) -> object:
+        from types import SimpleNamespace
+
+        self._memory.profile_signals.extend(signals)
+        return SimpleNamespace(layers_updated=[])
+
+
+class RecordingSoulEngine:
+    def __init__(self, memory: RecordingMemoryManager) -> None:
+        self.pipeline = RecordingProfilePipeline(memory)
+
+    def is_profile_ready(self) -> bool:
+        return True
 
 
 @pytest.fixture
@@ -74,7 +94,7 @@ def dy_task_client(
     app = create_app(
         database=db,
         memory_manager=memory,
-        soul_engine=SimpleNamespace(),
+        soul_engine=RecordingSoulEngine(memory),
         runtime_controller=SimpleNamespace(memory_manager=memory),
         recommendation_engine=None,
     )
@@ -172,6 +192,16 @@ class TestDyTaskResult:
         event_types = [e["event_type"] for e in memory.events]
         assert event_types == ["favorite", "like", "follow"]
         assert all(e["metadata"]["source_platform"] == "douyin" for e in memory.events)
+        assert len(memory.profile_signals) == 3
+        assert [signal.payload["event_type"] for signal in memory.profile_signals] == [
+            "favorite",
+            "like",
+            "follow",
+        ]
+        assert all(
+            signal.payload["metadata"]["source_platform"] == "douyin"
+            for signal in memory.profile_signals
+        )
 
         # Task is marked completed.
         from openbiliclaw.sources.dy_tasks import DyTaskQueue
@@ -235,6 +265,127 @@ class TestDyTaskResult:
         task = queue.get(task_id)
         assert task is not None
         assert task["status"] == "pending"  # NOT completed yet
+
+    def test_dy_scope_partials_then_empty_final_preserve_videos_and_dedup_events(
+        self,
+        dy_task_client: tuple[TestClient, Database, RecordingMemoryManager],
+    ) -> None:
+        """Mirror the live dispatcher flow: per-scope partials carry videos,
+        then the final ok payload carries only accumulated counts."""
+        import json
+
+        client, db, memory = dy_task_client
+        task_id = _enqueue_dy_bootstrap_task(db)
+
+        first = client.post(
+            "/api/sources/dy/task-result",
+            json={
+                "task_id": task_id,
+                "status": "partial",
+                "videos": [
+                    {
+                        "scope": "dy_collect",
+                        "title": "收藏视频",
+                        "url": "https://www.douyin.com/video/fav-1",
+                        "aweme_id": "fav-1",
+                    },
+                ],
+                "scope_counts": {"dy_collect": 1, "dy_like": 0, "dy_post": 0, "dy_follow": 0},
+            },
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            "/api/sources/dy/task-result",
+            json={
+                "task_id": task_id,
+                "status": "partial",
+                "videos": [
+                    {
+                        "scope": "dy_collect",
+                        "title": "收藏视频",
+                        "url": "https://www.douyin.com/video/fav-1",
+                        "aweme_id": "fav-1",
+                    },
+                    {
+                        "scope": "dy_like",
+                        "title": "点赞视频",
+                        "url": "https://www.douyin.com/video/like-1",
+                        "aweme_id": "like-1",
+                    },
+                ],
+                "scope_counts": {"dy_collect": 1, "dy_like": 1, "dy_post": 0, "dy_follow": 0},
+            },
+        )
+        assert second.status_code == 200
+
+        final = client.post(
+            "/api/sources/dy/task-result",
+            json={
+                "task_id": task_id,
+                "status": "ok",
+                "videos": [],
+                "scope_counts": {"dy_collect": 1, "dy_like": 1, "dy_post": 0, "dy_follow": 0},
+            },
+        )
+        assert final.status_code == 200
+
+        assert [event["event_type"] for event in memory.events] == ["favorite", "like"]
+
+        from openbiliclaw.sources.dy_tasks import DyTaskQueue
+
+        queue = DyTaskQueue(db)
+        task = queue.get(task_id)
+        assert task is not None
+        assert task["status"] == "completed"
+        result = json.loads(str(task["result_json"]))
+        assert [video["aweme_id"] for video in result["videos"]] == ["fav-1", "like-1"]
+        assert result["scope_counts"]["dy_collect"] == 1
+        assert result["scope_counts"]["dy_like"] == 1
+
+    def test_dy_search_task_result_does_not_propagate_memory_events(
+        self,
+        dy_task_client: tuple[TestClient, Database, RecordingMemoryManager],
+    ) -> None:
+        """Search task results are discovery candidates, not bootstrap profile signals."""
+        import json
+
+        client, db, memory = dy_task_client
+        from openbiliclaw.sources.dy_tasks import DyTaskQueue
+
+        queue = DyTaskQueue(db)
+        task_id = queue.enqueue_with_id(
+            "search",
+            {"keywords": ["猫"], "max_items_per_keyword": 5},
+            daily_budget=10,
+        )
+        assert task_id is not None
+
+        response = client.post(
+            "/api/sources/dy/task-result",
+            json={
+                "task_id": task_id,
+                "status": "ok",
+                "videos": [
+                    {
+                        "scope": "dy_search",
+                        "title": "搜索结果",
+                        "url": "https://www.douyin.com/video/search-1",
+                        "aweme_id": "search-1",
+                    },
+                ],
+                "scope_counts": {"dy_search": 1},
+            },
+        )
+        assert response.status_code == 200
+        assert memory.events == []
+
+        task = queue.get(task_id)
+        assert task is not None
+        assert task["status"] == "completed"
+        result = json.loads(str(task["result_json"]))
+        assert result["scope_counts"]["dy_search"] == 1
+        assert result["videos"][0]["aweme_id"] == "search-1"
 
 
 class TestDyTaskKick:
@@ -366,3 +517,36 @@ class TestDyTaskKick:
         response = client.post("/api/sources/xhs/kick")
         assert response.status_code == 200
         assert response.json() == {"ok": True}
+
+
+class TestDyTaskDiscoverySeeds:
+    def test_recent_dy_creator_sec_uids_prefers_interacted_creators(
+        self,
+        dy_task_client: tuple[TestClient, Database, RecordingMemoryManager],
+    ) -> None:
+        from openbiliclaw.sources.dy_tasks import DyTaskQueue, recent_dy_creator_sec_uids
+
+        _client, db, _memory = dy_task_client
+        task_id = _enqueue_dy_bootstrap_task(db)
+        queue = DyTaskQueue(db)
+        queue.merge_result(
+            task_id,
+            videos=[
+                {"scope": "dy_post", "creator_sec_uid": "sec-own", "aweme_id": "post-1"},
+                {"scope": "dy_like", "author_sec_uid": "sec-liked", "aweme_id": "like-1"},
+                {
+                    "scope": "dy_collect",
+                    "creator_sec_uid": "sec-collected",
+                    "aweme_id": "collect-1",
+                },
+                {"scope": "dy_follow", "creator_sec_uid": "sec-followed", "title": "关注作者"},
+                {"scope": "dy_collect", "creator_sec_uid": "sec-liked", "aweme_id": "collect-2"},
+            ],
+            complete=True,
+        )
+
+        assert recent_dy_creator_sec_uids(db, limit=3) == (
+            "sec-followed",
+            "sec-collected",
+            "sec-liked",
+        )

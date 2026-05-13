@@ -378,28 +378,28 @@
 
   <rect x="20" y="210" width="300" height="220" rx="10" fill="#2a0d0d" stroke="#da3633" stroke-width="2"/>
   <text x="170" y="235" text-anchor="middle" fill="#da3633" font-size="14" font-weight="700">补货模式</text>
-  <text x="170" y="255" text-anchor="middle" fill="#8b949e" font-size="10">全策略按配额缺口补货</text>
+  <text x="170" y="255" text-anchor="middle" fill="#8b949e" font-size="10">按平台配额缺口补货</text>
 
   <line x1="170" y1="155" x2="170" y2="208" stroke="#da3633" stroke-width="1.5" marker-end="url(#arr-s-red)"/>
 
-  <!-- Source shares -->
-  <text x="40" y="280" fill="#c9d1d9" font-size="11" font-weight="600">_SOURCE_TARGET_SHARES:</text>
+  <!-- Platform source shares -->
+  <text x="40" y="280" fill="#c9d1d9" font-size="11" font-weight="600">[scheduler.pool_source_shares]:</text>
 
   <rect x="40" y="290" width="130" height="28" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="1"/>
-  <text x="105" y="308" text-anchor="middle" fill="#3fb950" font-size="10">search: 4/15</text>
+  <text x="105" y="308" text-anchor="middle" fill="#3fb950" font-size="10">bilibili: 8/10</text>
 
   <rect x="180" y="290" width="130" height="28" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="1"/>
-  <text x="245" y="308" text-anchor="middle" fill="#3fb950" font-size="10">related: 4/15</text>
+  <text x="245" y="308" text-anchor="middle" fill="#3fb950" font-size="10">xiaohongshu: 1/10</text>
 
   <rect x="40" y="325" width="130" height="28" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="1"/>
-  <text x="105" y="343" text-anchor="middle" fill="#3fb950" font-size="10">trending: 3/15</text>
+  <text x="105" y="343" text-anchor="middle" fill="#3fb950" font-size="10">douyin: 1/10</text>
 
   <rect x="180" y="325" width="130" height="28" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="1"/>
-  <text x="245" y="343" text-anchor="middle" fill="#3fb950" font-size="10">explore: 4/15</text>
+  <text x="245" y="343" text-anchor="middle" fill="#3fb950" font-size="10">B策略: 4路fan-out</text>
 
-  <text x="40" y="375" fill="#8b949e" font-size="9">例: pool=300 → 缺300</text>
-  <text x="40" y="390" fill="#8b949e" font-size="9">search+related 补 ~80, trending 补 ~40, explore 补 ~30</text>
-  <text x="40" y="410" fill="#da3633" font-size="9" font-weight="600">每策略上限: min(缺口, 60)</text>
+  <text x="40" y="375" fill="#8b949e" font-size="9">例: pool=600 → B/XHS/DY = 480/60/60</text>
+  <text x="40" y="390" fill="#8b949e" font-size="9">B缺口走 search/related/trending/explore 并行</text>
+  <text x="40" y="410" fill="#da3633" font-size="9" font-weight="600">XHS/DY 缺口交给各自 producer</text>
 
   <!-- ══════════════════════════════════════════ -->
   <!-- NO: Three independent triggers             -->

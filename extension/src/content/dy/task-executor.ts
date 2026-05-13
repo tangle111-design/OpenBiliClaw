@@ -10,7 +10,11 @@
  * scrape), so we don't need MutationObservers or anchor pickers.
  */
 
-import type { DouyinBootstrapItem, DouyinScope } from "../../main/dy-fetch-tap.ts";
+import type {
+  DouyinBootstrapItem,
+  DouyinScope,
+  DouyinSearchItem,
+} from "../../main/dy-fetch-tap.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -227,6 +231,52 @@ export interface BootstrapPartialPayload {
   debug?: { round: number; scope: DouyinScope };
 }
 
+interface SearchPayloadInput {
+  taskId: string;
+  keyword: string;
+  items: DouyinSearchItem[];
+  apiPages: number;
+  domItems: number;
+  error?: string;
+}
+
+interface HotPayloadInput {
+  taskId: string;
+  sentenceId: string;
+  word: string;
+  items: DouyinSearchItem[];
+  apiPages: number;
+  seedAwemeId: string;
+  error?: string;
+}
+
+export interface SearchResultPayload {
+  task_id: string;
+  status: "ok" | "empty" | "failed";
+  videos: DouyinSearchItem[];
+  scope_counts: { dy_search: number };
+  error?: string;
+  debug?: {
+    keyword: string;
+    api_pages_fetched: number;
+    dom_items_harvested: number;
+  };
+}
+
+export interface HotResultPayload {
+  task_id: string;
+  status: "ok" | "empty" | "failed";
+  videos: DouyinSearchItem[];
+  scope_counts: { dy_hot: number };
+  error?: string;
+  debug?: {
+    sentence_id: string;
+    word: string;
+    seed_aweme_id: string;
+    api_pages_fetched: number;
+  };
+}
+
 /**
  * Shape the body for a `POST /api/sources/dy/task-result` partial
  * update. The backend's `merge_result` handler is idempotent on
@@ -245,6 +295,39 @@ export function buildBootstrapPartialPayload(
     videos: input.newItems,
     scope_counts: input.scopeCounts,
     debug: { round: input.round, scope: input.scope },
+  };
+}
+
+export function buildSearchResultPayload(input: SearchPayloadInput): SearchResultPayload {
+  const status = input.error ? "failed" : input.items.length > 0 ? "ok" : "empty";
+  return {
+    task_id: input.taskId,
+    status,
+    videos: input.items,
+    scope_counts: { dy_search: input.items.length },
+    error: input.error,
+    debug: {
+      keyword: input.keyword,
+      api_pages_fetched: input.apiPages,
+      dom_items_harvested: input.domItems,
+    },
+  };
+}
+
+export function buildHotResultPayload(input: HotPayloadInput): HotResultPayload {
+  const status = input.error ? "failed" : input.items.length > 0 ? "ok" : "empty";
+  return {
+    task_id: input.taskId,
+    status,
+    videos: input.items,
+    scope_counts: { dy_hot: input.items.length },
+    error: input.error,
+    debug: {
+      sentence_id: input.sentenceId,
+      word: input.word,
+      seed_aweme_id: input.seedAwemeId,
+      api_pages_fetched: input.apiPages,
+    },
   };
 }
 

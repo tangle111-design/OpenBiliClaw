@@ -116,7 +116,7 @@ updated = await analyzer.analyze_events(
 - SoulProfile 对象（遗留模型），转换为 OnionProfile
 
 **输出字段：**
-- `personality_portrait`：>=200字的自然语言人格描述
+- `personality_portrait`：目标 150-260 字、后端校验容忍 120-500 字的自然语言人格描述
 - `core_traits`：3-6条核心特质
 - `cognitive_style`：认知风格列表
 - `motivational_drivers`：内在驱动力
@@ -145,9 +145,9 @@ profile = await builder.build(
 - ProfileUpdatePipeline（Portrait层更新）
 
 **验证规则：**
-- `personality_portrait` 长度 >= 200 字符
-- `current_phase` 非空
-- `core_traits`, `cognitive_style`, `motivational_drivers`, `values`, `deep_needs` 必须是列表
+- `personality_portrait` 长度在 120-500 字符之间
+- `current_phase` 缺失时会补保守占位，后续画像更新可再细化
+- `core_traits`, `cognitive_style`, `motivational_drivers`, `values`, `deep_needs` 缺失或轻微格式不符时会归一化为空列表或单元素列表
 
 **可优化点：**
 - 目前仅在Core/Values层变化时触发重生成，可考虑定期更新（月度重述）

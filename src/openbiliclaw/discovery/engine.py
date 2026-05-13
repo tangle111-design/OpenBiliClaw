@@ -7,15 +7,16 @@ that matches the user's soul profile.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import time
 from abc import ABC, abstractmethod
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from openbiliclaw.discovery.strategies._utils import build_profile_summary
+from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Sequence
@@ -26,6 +27,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
+_EVALUATE_BATCH_HARD_CAP_DEFAULT: int = 90
+_LLM_EVAL_OVERSAMPLE_FACTOR: int = 2
+_LLM_EVAL_MIN_WINDOW: int = 6
 
 
 @dataclass
@@ -119,7 +123,126 @@ class SupportsStructuredTask(Protocol):
         history: list[dict[str, str]] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
     ) -> object: ...
+
+
+def llm_eval_candidate_limit(limit: int) -> int:
+    """Return the pre-LLM candidate window for a requested result limit."""
+    safe_limit = max(1, int(limit))
+    return min(
+        _EVALUATE_BATCH_HARD_CAP_DEFAULT,
+        max(_LLM_EVAL_MIN_WINDOW, safe_limit * _LLM_EVAL_OVERSAMPLE_FACTOR),
+    )
+
+
+def trim_candidates_for_llm(
+    candidates: Sequence[_T],
+    *,
+    limit: int,
+    source_context: str,
+) -> list[_T]:
+    """Keep a bounded pre-LLM candidate window while preserving upstream order."""
+    eval_limit = llm_eval_candidate_limit(limit)
+    if len(candidates) <= eval_limit:
+        return list(candidates)
+    logger.info(
+        "%s: trimming LLM eval candidates from %d to %d (result_limit=%d)",
+        source_context,
+        len(candidates),
+        eval_limit,
+        limit,
+    )
+    return list(candidates[:eval_limit])
+
+
+def _parse_batch_evaluation_payload(raw: str) -> list[dict[str, Any]] | None:
+    """Extract the scored result array from a provider response."""
+    parsed = parse_llm_json_tolerant(raw)
+    direct_list = _coerce_scored_result_list(parsed)
+    if direct_list is not None:
+        return direct_list
+    if isinstance(parsed, dict):
+        for key in ("results", "items", "evaluations", "scores", "data"):
+            nested = _coerce_scored_result_list(parsed.get(key))
+            if nested is not None:
+                return nested
+        if "score" in parsed:
+            return [parsed]
+
+    # Some JSON-mode gateways echo the input JSON before the real output
+    # array. Pick the last array-shaped JSON snippet that actually contains
+    # score objects, not profile/interests/content_batch arrays from the echo.
+    for snippet in reversed(_extract_json_array_snippets(raw)):
+        candidate = _coerce_scored_result_list(parse_llm_json_tolerant(snippet))
+        if candidate is not None:
+            return candidate
+    object_results: list[dict[str, Any]] = []
+    for snippet in _extract_json_object_snippets(raw):
+        parsed_object = parse_llm_json_tolerant(snippet)
+        if isinstance(parsed_object, dict) and "score" in parsed_object:
+            object_results.append(parsed_object)
+    if object_results:
+        return object_results
+    return None
+
+
+def _coerce_scored_result_list(value: object) -> list[dict[str, Any]] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    results: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            return None
+        results.append(item)
+    if not any("score" in item for item in results):
+        return None
+    return results
+
+
+def _extract_json_array_snippets(text: str) -> list[str]:
+    return _extract_balanced_json_snippets(text, open_char="[", close_char="]")
+
+
+def _extract_json_object_snippets(text: str) -> list[str]:
+    return _extract_balanced_json_snippets(text, open_char="{", close_char="}")
+
+
+def _extract_balanced_json_snippets(
+    text: str,
+    *,
+    open_char: str,
+    close_char: str,
+) -> list[str]:
+    snippets: list[str] = []
+    start: int | None = None
+    depth = 0
+    in_string = False
+    escape = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char == open_char:
+            if depth == 0:
+                start = index
+            depth += 1
+            continue
+        if char == close_char and depth > 0:
+            depth -= 1
+            if depth == 0 and start is not None:
+                snippets.append(text[start : index + 1])
+                start = None
+    return snippets
 
 
 @dataclass
@@ -312,10 +435,11 @@ class ContentDiscoveryEngine:
         self._embedding_service = embedding_service
         self._target_primary_count = max(1, target_primary_count)
         self._backfill_target_count = max(self._target_primary_count, backfill_target_count)
-        self._eval_cache: dict[str, tuple[float, str, str, str]] = {}
+        self._eval_cache: dict[str, tuple[float, str, str, str, str]] = {}
 
     def register_strategy(self, strategy: DiscoveryStrategy) -> None:
         """Register a discovery strategy."""
+        self._strategies = [item for item in self._strategies if item.name != strategy.name]
         self._strategies.append(strategy)
         logger.info("Registered discovery strategy: %s", strategy.name)
 
@@ -348,6 +472,7 @@ class ContentDiscoveryEngine:
         limit: int = 30,
         *,
         fully_parallel: bool = False,
+        strategy_limits: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         """Run discovery with selected (or all) strategies.
 
@@ -362,6 +487,10 @@ class ContentDiscoveryEngine:
                 requests and ``search_budget_total`` caps total search
                 calls — so this only sacrifices the 2s cool-down between
                 phases. Use for latency-critical flows (init bootstrap).
+            strategy_limits: Optional per-strategy run limits. The final
+                ``limit`` still caps returned/cached results; this only
+                prevents a grouped refresh from giving every strategy the
+                full platform deficit.
 
         Returns:
             Combined, deduplicated, and scored list of discovered content.
@@ -379,6 +508,7 @@ class ContentDiscoveryEngine:
             profile=profile,
             limit=effective_limit,
             fully_parallel=fully_parallel,
+            strategy_limits=strategy_limits,
         )
         # Normalize topic_group using embeddings before dedup
         merged_primary = self._merge_and_rank(primary_results)
@@ -612,13 +742,15 @@ class ContentDiscoveryEngine:
         cache_key = f"{content.bvid}:{id(profile)}"
         cached = self._eval_cache.get(cache_key)
         if cached is not None:
-            score, reason, topic_group, style_key = cached
+            score, reason, topic_group, style_key, franchise_key = cached
             content.relevance_score = score
             content.relevance_reason = reason
             if topic_group:
                 content.topic_group = topic_group
             if style_key:
                 content.style_key = style_key
+            if franchise_key:
+                content.franchise_key = franchise_key
             return score
 
         # Embedding pre-filter: skip LLM call for content with very low
@@ -644,6 +776,7 @@ class ContentDiscoveryEngine:
                     self._eval_cache[cache_key] = (
                         content.relevance_score,
                         content.relevance_reason,
+                        "",
                         "",
                         "",
                     )
@@ -674,7 +807,9 @@ class ContentDiscoveryEngine:
                 response = await self._concurrency.run_llm(llm_call)
             else:
                 response = await llm_call
-            payload = json.loads(str(getattr(response, "content", "")).strip())
+            payload = parse_llm_json_tolerant(str(getattr(response, "content", "")).strip())
+            if not isinstance(payload, dict):
+                raise ValueError("Expected JSON object from content evaluation")
             if not isinstance(payload, dict):
                 return 0.0
             score = self._clamp_score(payload.get("score", 0.0))
@@ -726,7 +861,7 @@ class ContentDiscoveryEngine:
     # rate limits. Combined with v0.3.51's reasoning-disabled batches
     # (~30s each), three parallel batches finish in roughly the same
     # wall time as one used to take.
-    _EVALUATE_BATCH_HARD_CAP = 90
+    _EVALUATE_BATCH_HARD_CAP = _EVALUATE_BATCH_HARD_CAP_DEFAULT
 
     async def evaluate_content_batch(
         self,
@@ -827,22 +962,15 @@ class ContentDiscoveryEngine:
             # v0.3.31+: diversity snapshot of the kept items so we can
             # see whether discovery is feeding the pool with variety or
             # 30 candidates that all collapse to the same topic_group.
-            from collections import Counter as _C
-
-            kept_items = [
-                batch_contents[i] for i, s in enumerate(batch_scores) if s > 0
-            ]
-            topics: _C[str] = _C(
-                (getattr(c, "topic_group", "") or "untagged").strip().lower()
-                for c in kept_items
+            kept_items = [batch_contents[i] for i, s in enumerate(batch_scores) if s > 0]
+            topics: Counter[str] = Counter(
+                (getattr(c, "topic_group", "") or "untagged").strip().lower() for c in kept_items
             )
-            styles: _C[str] = _C(
-                (getattr(c, "style_key", "") or "untagged").strip().lower()
-                for c in kept_items
+            styles: Counter[str] = Counter(
+                (getattr(c, "style_key", "") or "untagged").strip().lower() for c in kept_items
             )
-            franchises: _C[str] = _C(
-                (getattr(c, "franchise_key", "") or "").strip().lower()
-                for c in kept_items
+            franchises: Counter[str] = Counter(
+                (getattr(c, "franchise_key", "") or "").strip().lower() for c in kept_items
             )
             del franchises[""]  # don't count non-franchise items
             top_topic = topics.most_common(1)[0] if topics else ("", 0)
@@ -952,12 +1080,9 @@ class ContentDiscoveryEngine:
             else:
                 response = await llm_call
             raw = str(getattr(response, "content", "")).strip()
-            payload = json.loads(raw)
-            # LLM may return a single dict instead of array for 1-item batches
-            if isinstance(payload, dict):
-                payload = [payload]
-            if not isinstance(payload, list):
-                raise ValueError(f"Expected JSON array, got {type(payload).__name__}")
+            payload = _parse_batch_evaluation_payload(raw)
+            if payload is None:
+                raise ValueError("Expected scored JSON array from batch evaluation")
         except Exception:
             logger.warning(
                 "Batch evaluation failed for %d items, falling back to single eval",
@@ -971,10 +1096,14 @@ class ContentDiscoveryEngine:
 
         results: list[float] = []
         for i, content in enumerate(batch):
-            if i >= len(payload) or not isinstance(payload[i], dict):
+            if i >= len(payload):
                 results.append(0.0)
                 continue
-            item_result = payload[i]
+            raw_item = payload[i]
+            if not isinstance(raw_item, dict):
+                results.append(0.0)
+                continue
+            item_result: dict[str, Any] = raw_item
             score = self._clamp_score(item_result.get("score", 0.0))
             reason = str(item_result.get("reason", "")).strip()
             topic_group = str(item_result.get("topic_group", "")).strip()
@@ -1019,7 +1148,7 @@ class ContentDiscoveryEngine:
                     continue
                 buckets.setdefault(key, []).append(i)
             dropped = 0
-            for key, indices in buckets.items():
+            for _key, indices in buckets.items():
                 if len(indices) <= cap:
                     continue
                 # Keep top ``cap`` by score, drop the rest.
@@ -1030,15 +1159,10 @@ class ContentDiscoveryEngine:
                     dropped += 1
             if dropped:
                 logger.info(
-                    "eval_batch franchise cap: dropped %d item(s) "
-                    "(cap=%d/franchise; offenders=%s)",
+                    "eval_batch franchise cap: dropped %d item(s) (cap=%d/franchise; offenders=%s)",
                     dropped,
                     cap,
-                    ", ".join(
-                        f"{k}×{len(v)}"
-                        for k, v in buckets.items()
-                        if len(v) > cap
-                    ),
+                    ", ".join(f"{k}×{len(v)}" for k, v in buckets.items() if len(v) > cap),
                 )
 
         # v0.3.51+: same-style cap (mirrors v0.3.50 franchise cap).
@@ -1060,7 +1184,7 @@ class ContentDiscoveryEngine:
                     continue
                 style_buckets.setdefault(style_key, []).append(i)
             style_dropped = 0
-            for style_key, indices in style_buckets.items():
+            for _style_key, indices in style_buckets.items():
                 if len(indices) <= style_cap:
                     continue
                 indices.sort(key=lambda idx: results[idx], reverse=True)
@@ -1070,14 +1194,11 @@ class ContentDiscoveryEngine:
                     style_dropped += 1
             if style_dropped:
                 logger.info(
-                    "eval_batch style cap: dropped %d item(s) "
-                    "(cap=%d/style; offenders=%s)",
+                    "eval_batch style cap: dropped %d item(s) (cap=%d/style; offenders=%s)",
                     style_dropped,
                     style_cap,
                     ", ".join(
-                        f"{k}×{len(v)}"
-                        for k, v in style_buckets.items()
-                        if len(v) > style_cap
+                        f"{k}×{len(v)}" for k, v in style_buckets.items() if len(v) > style_cap
                     ),
                 )
 
@@ -1112,23 +1233,36 @@ class ContentDiscoveryEngine:
         profile: SoulProfile,
         limit: int,
         fully_parallel: bool = False,
+        strategy_limits: dict[str, int] | None = None,
     ) -> list[DiscoveredContent]:
         results: list[DiscoveredContent] = []
+        run_entries = [
+            (strategy, self._strategy_run_limit(strategy, limit, strategy_limits))
+            for strategy in strategies
+        ]
+        run_entries = [
+            (strategy, run_limit) for strategy, run_limit in run_entries if run_limit > 0
+        ]
+        if not run_entries:
+            return []
 
         if fully_parallel:
             # One shot: every strategy runs in a single gather. We rely
             # on ``bilibili_request_concurrency`` + ``search_budget_total``
             # to bound IP-level pressure; the default phase split is
             # safer but adds ~search_wall_time before others start.
-            names = [s.name for s in strategies]
+            names = [s.name for s, _ in run_entries]
             logger.info("discover start (fully_parallel): strategies=%s limit=%d", names, limit)
             t0 = time.monotonic()
 
-            async def _timed(strategy: DiscoveryStrategy) -> list[DiscoveredContent]:
+            async def _timed(
+                strategy: DiscoveryStrategy,
+                run_limit: int,
+            ) -> list[DiscoveredContent]:
                 s_t0 = time.monotonic()
-                logger.info("strategy %s: dispatch", strategy.name)
+                logger.info("strategy %s: dispatch limit=%d", strategy.name, run_limit)
                 try:
-                    result = await strategy.discover(profile, limit=limit)
+                    result = await strategy.discover(profile, limit=run_limit)
                 finally:
                     logger.info(
                         "strategy %s: done in %.1fs",
@@ -1138,9 +1272,10 @@ class ContentDiscoveryEngine:
                 return result
 
             gathered = await asyncio.gather(
-                *(_timed(s) for s in strategies), return_exceptions=True
+                *(_timed(s, run_limit) for s, run_limit in run_entries),
+                return_exceptions=True,
             )
-            results.extend(self._collect_strategy_results(strategies, gathered))
+            results.extend(self._collect_strategy_results([s for s, _ in run_entries], gathered))
             logger.info(
                 "discover done (fully_parallel): strategies=%s total_elapsed=%.1fs results=%d",
                 names,
@@ -1155,32 +1290,51 @@ class ContentDiscoveryEngine:
             # search API, so each strategy's calls are capped by the
             # per-strategy search budget in
             # ``DiscoveryConcurrencyController``.
-            search_strategies = [s for s in strategies if s.name == "search"]
-            other_strategies = [s for s in strategies if s.name != "search"]
+            search_entries = [(s, run_limit) for s, run_limit in run_entries if s.name == "search"]
+            other_entries = [(s, run_limit) for s, run_limit in run_entries if s.name != "search"]
 
             # Phase 1: run search strategy first to get clean IP quota
-            if search_strategies:
-                tasks = [s.discover(profile, limit=limit) for s in search_strategies]
+            if search_entries:
+                tasks = [s.discover(profile, limit=run_limit) for s, run_limit in search_entries]
                 gathered = await asyncio.gather(*tasks, return_exceptions=True)
-                results.extend(self._collect_strategy_results(search_strategies, gathered))
+                results.extend(
+                    self._collect_strategy_results([s for s, _ in search_entries], gathered)
+                )
 
             # Brief cooldown between phases to let IP-level rate limit recover
-            if search_strategies and other_strategies:
+            if search_entries and other_entries:
                 await asyncio.sleep(2.0)
 
             # Phase 2: run remaining strategies concurrently
-            if other_strategies:
-                tasks = [s.discover(profile, limit=limit) for s in other_strategies]
+            if other_entries:
+                tasks = [s.discover(profile, limit=run_limit) for s, run_limit in other_entries]
                 gathered = await asyncio.gather(*tasks, return_exceptions=True)
-                results.extend(self._collect_strategy_results(other_strategies, gathered))
+                results.extend(
+                    self._collect_strategy_results([s for s, _ in other_entries], gathered)
+                )
 
         logger.info(
             "Discovery gather returned %d results for %d strategies: %s",
             len(results),
-            len(strategies),
-            [s.name for s in strategies],
+            len(run_entries),
+            [s.name for s, _ in run_entries],
         )
         return results
+
+    @staticmethod
+    def _strategy_run_limit(
+        strategy: DiscoveryStrategy,
+        default_limit: int,
+        strategy_limits: dict[str, int] | None,
+    ) -> int:
+        if not strategy_limits:
+            return max(1, int(default_limit))
+        raw_limit = strategy_limits.get(strategy.name, default_limit)
+        try:
+            run_limit = int(raw_limit)
+        except (TypeError, ValueError):
+            run_limit = default_limit
+        return max(0, min(max(1, int(default_limit)), run_limit))
 
     @staticmethod
     def _collect_strategy_results(
@@ -1213,12 +1367,10 @@ class ContentDiscoveryEngine:
             # uniqueness, up_name spread, and platform mix. Catches
             # "search returned 13 items but they're all from the same UP
             # / all same title prefix" pathologies.
-            from collections import Counter as _C
-
-            ups: _C[str] = _C((c.up_name or "").strip().lower() for c in items)
+            ups: Counter[str] = Counter((c.up_name or "").strip().lower() for c in items)
             del ups[""]
             unique_titles = len({c.title.strip() for c in items if c.title})
-            platforms: _C[str] = _C((c.source_platform or "bilibili") for c in items)
+            platforms: Counter[str] = Counter((c.source_platform or "bilibili") for c in items)
             top_up = ups.most_common(1)[0] if ups else ("", 0)
             logger.info(
                 "Strategy '%s' found %d items.%s "
@@ -1684,9 +1836,7 @@ class ContentDiscoveryEngine:
                 pool_existing = existing_franchise_counts.get(franchise_key, 0)
                 round_existing = round_franchise_counts.get(franchise_key, 0)
                 if pool_existing + round_existing >= _POOL_FRANCHISE_QUOTA:
-                    skipped_franchise[franchise_key] = (
-                        skipped_franchise.get(franchise_key, 0) + 1
-                    )
+                    skipped_franchise[franchise_key] = skipped_franchise.get(franchise_key, 0) + 1
                     continue
             try:
                 self._database.cache_content(item.bvid, **item.to_cache_kwargs())
@@ -1732,15 +1882,14 @@ class ContentDiscoveryEngine:
         """
         if self._embedding_service is None or not items:
             return
+        embedding_service = self._embedding_service
 
         async def _warm(item: DiscoveredContent) -> None:
-            text = (
-                f"{item.title or ''} {(item.description or '')[:160]}"
-            ).strip()[:200]
+            text = (f"{item.title or ''} {(item.description or '')[:160]}").strip()[:200]
             if not text:
                 return
             try:
-                await self._embedding_service.embed(text)
+                await embedding_service.embed(text)
             except Exception:
                 logger.debug(
                     "discovery._warm_mmr_embeddings: embed failed for %s",

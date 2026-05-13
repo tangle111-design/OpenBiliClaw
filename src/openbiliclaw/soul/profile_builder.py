@@ -33,6 +33,7 @@ class SupportsCoreMemoryTask(Protocol):
         history: list[dict[str, str]] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        caller: str = "",
     ) -> LLMResponse: ...
 
 
@@ -58,10 +59,43 @@ class ProfileBuilder:
         awareness_notes: list[dict[str, Any]],
         active_insights: list[dict[str, Any]],
     ) -> SoulProfile:
+        history_summary = self._summarize_history(history)
+        try:
+            return await self._build_from_summary(
+                history_summary=history_summary,
+                preference=preference,
+                awareness_notes=awareness_notes,
+                active_insights=active_insights,
+            )
+        except SoulProfileBuildError:
+            if not preference and len(history) < 100:
+                raise
+            logger.warning(
+                "soul profile build failed; retrying with compact history summary",
+                exc_info=True,
+            )
+            return await self._build_from_summary(
+                history_summary=self._compact_history_summary(
+                    history_summary,
+                    original_count=len(history),
+                ),
+                preference=preference,
+                awareness_notes=awareness_notes,
+                active_insights=active_insights,
+            )
+
+    async def _build_from_summary(
+        self,
+        *,
+        history_summary: dict[str, object],
+        preference: dict[str, Any],
+        awareness_notes: list[dict[str, Any]],
+        active_insights: list[dict[str, Any]],
+    ) -> SoulProfile:
         raw_mix = preference.get("source_platform_mix") if isinstance(preference, dict) else None
         source_mix = raw_mix if isinstance(raw_mix, dict) and raw_mix else None
         messages = build_soul_profile_prompt(
-            history_summary=self._summarize_history(history),
+            history_summary=history_summary,
             preference_summary=preference,
             recent_awareness=awareness_notes,
             active_insights=active_insights,
@@ -97,6 +131,34 @@ class ProfileBuilder:
         profile._raw_mbti = payload.get("mbti")  # type: ignore[attr-defined]
         return profile
 
+    @staticmethod
+    def _compact_history_summary(
+        history_summary: dict[str, object],
+        *,
+        original_count: int,
+    ) -> dict[str, object]:
+        """Build a low-risk retry summary that avoids raw titles/contexts."""
+        raw_count = history_summary.get("count")
+        count = (
+            raw_count
+            if isinstance(raw_count, int) and not isinstance(raw_count, bool)
+            else original_count
+        )
+        compact: dict[str, object] = {
+            "count": count,
+            "fallback": "history omitted after profile-build retry",
+            "fallback_hint": (
+                "原始 history_summary 在画像生成时触发了模型安全/格式失败。"
+                "本次重试只使用结构化 preference_summary、来源分布、"
+                "awareness 和 insight 来生成人格画像。"
+            ),
+        }
+        for key in ("favorites_summary", "following_summary"):
+            value = history_summary.get(key)
+            if isinstance(value, str) and value.strip():
+                compact[f"{key}_present"] = True
+        return compact
+
     def _parse_response(self, content: str) -> dict[str, object]:
         if not content.strip():
             raise SoulProfileBuildError("LLM returned an empty soul profile.")
@@ -113,37 +175,61 @@ class ProfileBuilder:
         if not isinstance(parsed, dict):
             raise SoulProfileBuildError("LLM soul profile response must be a JSON object.")
         payload: dict[str, object] = {key: value for key, value in parsed.items()}
+        payload = self._normalize_payload(payload)
         self._validate_payload(payload)
         return payload
 
-    def _validate_payload(self, payload: Mapping[str, object]) -> None:
-        required_fields = (
-            "personality_portrait",
+    def _normalize_payload(self, payload: dict[str, object]) -> dict[str, object]:
+        optional_list_fields = (
             "core_traits",
             "cognitive_style",
             "motivational_drivers",
-            "current_phase",
             "values",
-            "life_stage",
             "deep_needs",
         )
-        missing = [field for field in required_fields if field not in payload]
-        if missing:
-            missing_text = ", ".join(missing)
+        defaulted: list[str] = []
+        for field in optional_list_fields:
+            if field not in payload:
+                payload[field] = []
+                defaulted.append(field)
+                continue
+            value = payload[field]
+            if isinstance(value, list):
+                continue
+            if isinstance(value, str) and value.strip():
+                payload[field] = [value.strip()]
+            else:
+                payload[field] = []
+            defaulted.append(field)
+
+        if "life_stage" not in payload:
+            payload["life_stage"] = ""
+            defaulted.append("life_stage")
+        if not str(payload.get("current_phase", "")).strip():
+            payload["current_phase"] = "还在根据最近的行为信号整理当前阶段。"
+            defaulted.append("current_phase")
+
+        if defaulted:
+            logger.warning(
+                "LLM soul profile response missing/invalid optional fields; "
+                "defaulted fields: %s",
+                ", ".join(defaulted),
+            )
+        return payload
+
+    def _validate_payload(self, payload: Mapping[str, object]) -> None:
+        if "personality_portrait" not in payload:
             raise SoulProfileBuildError(
-                f"LLM soul profile response is missing fields: {missing_text}"
+                "LLM soul profile response is missing fields: personality_portrait"
             )
 
         portrait = str(payload.get("personality_portrait", "")).strip()
         portrait_len = len(portrait)
-        if portrait_len < 120 or portrait_len > 320:
+        if portrait_len < 120 or portrait_len > 500:
             raise SoulProfileBuildError(
                 f"LLM soul profile portrait length out of range "
-                f"(got {portrait_len}, expected 120-320 chars)."
+                f"(got {portrait_len}, expected 120-500 chars)."
             )
-
-        if not str(payload.get("current_phase", "")).strip():
-            raise SoulProfileBuildError("LLM soul profile field 'current_phase' must be non-empty.")
 
         list_fields = (
             "core_traits",
@@ -206,7 +292,8 @@ class ProfileBuilder:
             existing = str(item.get("context", "")).strip()
             if existing:
                 return existing
-            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            raw_metadata = item.get("metadata")
+            metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
             source_platform = (
                 str(item.get("source_platform", "")).strip()
                 or str(metadata.get("source_platform", "")).strip()

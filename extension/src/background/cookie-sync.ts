@@ -1,22 +1,23 @@
 /**
- * OpenBiliClaw — Bilibili cookie auto-sync.
+ * OpenBiliClaw — browser cookie auto-sync.
  *
- * Reads the user's live bilibili.com cookies via chrome.cookies.getAll()
- * and POSTs them to the local backend so the user never has to do the
- * F12 → Network → copy → paste dance. Triggers:
+ * Reads the user's live bilibili.com / douyin.com cookies via
+ * chrome.cookies.getAll() and POSTs them to the local backend so the user
+ * does not have to do the F12 → Network → copy → paste dance. Triggers:
  *
  *   - on extension install / update
  *   - on browser startup
- *   - whenever chrome.cookies.onChanged fires for a bilibili.com cookie
- *     (debounced, so a login that touches 8 cookies = 1 sync, not 8)
+ *   - whenever chrome.cookies.onChanged fires for a relevant site cookie
+ *     (debounced, so a login that touches many cookies = 1 sync round)
  *   - hourly fallback alarm, in case onChanged misses something
  *
- * Backend endpoint (added in v0.3.12): POST /api/bilibili/cookie. The
- * backend validates the cookie against api.bilibili.com/x/web-interface/nav
- * before persisting, so we never overwrite a working cookie with garbage.
+ * Backend endpoints: POST /api/bilibili/cookie validates against Bilibili
+ * nav before persisting; POST /api/sources/dy/cookie stores the browser
+ * Douyin cookie for direct discovery smoke / recall.
  */
 
 const COOKIE_SYNC_URL = "http://127.0.0.1:8420/api/bilibili/cookie";
+const DOUYIN_COOKIE_SYNC_URL = "http://127.0.0.1:8420/api/sources/dy/cookie";
 const COOKIE_SYNC_ALARM = "openbiliclaw-cookie-sync";
 const COOKIE_SYNC_DEBOUNCE_MS = 2_000;
 const COOKIE_SYNC_REFRESH_MINUTES = 60;
@@ -33,6 +34,34 @@ const COOKIE_SYNC_COOKIE_INVALID_RETRY_MINUTES = 60;
 
 /** Critical cookie names — without these, the backend can't call B 站 API. */
 const REQUIRED_COOKIE_NAMES = ["SESSDATA", "bili_jct", "DedeUserID"];
+// Douyin's Web APIs are soft-failure heavy: bad / incomplete cookies
+// often still get HTTP 200 with empty data. Modern logged-in jars do not
+// always expose msToken, so we accept any session / passport signal and
+// still send the full header because ttwid / odin / device cookies help.
+const DOUYIN_AUTH_SIGNAL_COOKIE_NAMES = [
+  "msToken",
+  "sessionid",
+  "sessionid_ss",
+  "sid_guard",
+  "sid_tt",
+  "uid_tt",
+  "uid_tt_ss",
+  "passport_assist_user",
+  "passport_mfa_token",
+  "passport_csrf_token",
+  "odin_tt",
+];
+const IMPORTANT_DOUYIN_COOKIE_NAMES = [
+  "msToken",
+  "ttwid",
+  "sessionid",
+  "sid_guard",
+  "sid_tt",
+  "uid_tt",
+  "passport_csrf_token",
+  "passport_auth_status",
+  "odin_tt",
+];
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let cookieSyncStarted = false;
@@ -89,6 +118,29 @@ export async function readBilibiliCookieHeader(): Promise<string | null> {
   return cookies
     .map((c) => `${c.name}=${c.value}`)
     .join("; ");
+}
+
+/**
+ * Read all douyin.com cookies and return them as a Cookie header.
+ *
+ * We do not attempt to prove login here. Douyin frequently returns
+ * HTTP 200 + empty data for soft anti-bot / logged-out states, so the
+ * backend persists the browser cookie and discovery smoke is the source
+ * of truth for whether the current jar can actually fetch candidates.
+ */
+export async function readDouyinCookieHeader(): Promise<string | null> {
+  const chromeApi = getChromeApi();
+  if (!chromeApi?.cookies?.getAll) {
+    return null;
+  }
+  const cookies = (await chromeApi.cookies.getAll({ domain: "douyin.com" })).filter(
+    (cookie) => cookie.name && cookie.value,
+  );
+  const have = new Set(cookies.map((c) => c.name));
+  if (!DOUYIN_AUTH_SIGNAL_COOKIE_NAMES.some((name) => have.has(name))) {
+    return null;
+  }
+  return cookies.map((c) => `${c.name}=${c.value}`).join("; ");
 }
 
 /**
@@ -170,16 +222,64 @@ export async function syncBilibiliCookieToBackend(
   }
 }
 
-/**
- * Handle backend runtime-stream events that explicitly ask the extension
- * to push the current Bilibili cookie now.
- */
-export function handleCookieSyncRuntimeEvent(event: Record<string, unknown>): boolean {
-  if (String(event.type ?? "") !== "bilibili_cookie_sync_requested") {
+export async function syncDouyinCookieToBackend(
+  source: string = "extension",
+): Promise<boolean> {
+  const cookieHeader = await readDouyinCookieHeader();
+  if (!cookieHeader) {
     return false;
   }
-  void syncBilibiliCookieToBackend("runtime-stream-request");
-  return true;
+  try {
+    const response = await fetch(DOUYIN_COOKIE_SYNC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        cookie: cookieHeader,
+        source,
+      }),
+    });
+    if (!response.ok) {
+      console.warn(`[openbiliclaw] douyin cookie sync HTTP ${response.status}`);
+      scheduleCookieSyncAlarm(COOKIE_SYNC_RETRY_MINUTES);
+      return false;
+    }
+    const result = (await response.json()) as {
+      ok: boolean;
+      has_cookie: boolean;
+      error_code?: string;
+      message?: string;
+    };
+    if (result.ok && result.has_cookie) {
+      console.log(`[openbiliclaw] douyin cookie synced via ${source}`);
+      scheduleHourlyCookieSync();
+      return true;
+    }
+    const message = String(result.message || "");
+    console.warn(`[openbiliclaw] douyin cookie sync rejected (${source}): ${message}`);
+    scheduleCookieSyncAlarm(COOKIE_SYNC_VALIDATION_NETWORK_RETRY_MINUTES);
+    return false;
+  } catch (err) {
+    console.warn("[openbiliclaw] douyin cookie sync failed:", err);
+    scheduleCookieSyncAlarm(COOKIE_SYNC_RETRY_MINUTES);
+    return false;
+  }
+}
+
+/**
+ * Handle backend runtime-stream events that explicitly ask the extension
+ * to push the current site cookie now.
+ */
+export function handleCookieSyncRuntimeEvent(event: Record<string, unknown>): boolean {
+  const eventType = String(event.type ?? "");
+  if (eventType === "bilibili_cookie_sync_requested") {
+    void syncBilibiliCookieToBackend("runtime-stream-request");
+    return true;
+  }
+  if (eventType === "douyin_cookie_sync_requested") {
+    void syncDouyinCookieToBackend("runtime-stream-request");
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -194,6 +294,7 @@ function scheduleCookieSync(source: string): void {
   debounceTimer = setTimeout(() => {
     debounceTimer = null;
     void syncBilibiliCookieToBackend(source);
+    void syncDouyinCookieToBackend(source);
   }, COOKIE_SYNC_DEBOUNCE_MS);
 }
 
@@ -215,19 +316,26 @@ export function startCookieSync(): void {
   // Initial best-effort sync. The user might have been logged in before
   // installing the extension; this catches that case.
   void syncBilibiliCookieToBackend("startup");
+  void syncDouyinCookieToBackend("startup");
 
   // React to login / logout / refresh.
   chromeApi.cookies.onChanged.addListener((changeInfo) => {
     const domain = (changeInfo.cookie.domain || "").toLowerCase();
-    if (!domain.endsWith("bilibili.com")) {
+    if (domain.endsWith("bilibili.com")) {
+      if (!REQUIRED_COOKIE_NAMES.includes(changeInfo.cookie.name)) {
+        // Many bilibili.com cookies churn for tracking. Only the
+        // session-bearing ones matter for our use case.
+        return;
+      }
+      scheduleCookieSync(changeInfo.removed ? "logout" : "cookies-onchange");
       return;
     }
-    if (!REQUIRED_COOKIE_NAMES.includes(changeInfo.cookie.name)) {
-      // Many bilibili.com cookies churn for tracking. Only the
-      // session-bearing ones matter for our use case.
-      return;
+    if (domain.endsWith("douyin.com")) {
+      if (!IMPORTANT_DOUYIN_COOKIE_NAMES.includes(changeInfo.cookie.name)) {
+        return;
+      }
+      scheduleCookieSync(changeInfo.removed ? "douyin-logout" : "douyin-cookies-onchange");
     }
-    scheduleCookieSync(changeInfo.removed ? "logout" : "cookies-onchange");
   });
 
   // Hourly belt-and-braces refresh in case onChanged drops events while
@@ -246,5 +354,6 @@ export function handleCookieSyncAlarm(alarmName: string): boolean {
     return false;
   }
   void syncBilibiliCookieToBackend("hourly-alarm");
+  void syncDouyinCookieToBackend("hourly-alarm");
   return true;
 }

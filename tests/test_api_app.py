@@ -408,6 +408,136 @@ class TestBackendAPI:
         config_text = (tmp_path / "config.toml").read_text()
         assert cookie_value in config_text
 
+    def test_bilibili_cookie_sync_restarts_background_tasks_after_rebuild(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Cookie hot-reload must restart refresh loops after cancelling them.
+
+        ``RuntimeContext.rebuild_from_config`` cancels tracked background tasks
+        before replacing runtime components.  The cookie endpoint therefore
+        must call ``restart_background_tasks`` too, otherwise the refresh loop
+        that drives XHS / Douyin producers stays stopped after cookie sync.
+        """
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.bilibili.auth import AuthManager
+        from openbiliclaw.config import Config, save_config
+
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        save_config(Config(), tmp_path / "config.toml")
+
+        class _FakeNav:
+            is_login = True
+            uname = "test_user"
+            mid = 12345
+
+        class _FakeClient:
+            def __init__(self, cookie: str) -> None:
+                self.cookie = cookie
+
+            async def get_nav_info(self) -> _FakeNav:
+                return _FakeNav()
+
+            async def close(self) -> None:
+                pass
+
+        calls: list[str] = []
+
+        async def _fake_rebuild(self: RuntimeContext, config: object) -> None:
+            calls.append("rebuild")
+
+        async def _fake_restart(self: RuntimeContext, app: object) -> None:
+            calls.append("restart")
+
+        monkeypatch.setattr(
+            AuthManager,
+            "_default_api_client_factory",
+            staticmethod(lambda cookie: _FakeClient(cookie)),
+        )
+        monkeypatch.setattr(RuntimeContext, "rebuild_from_config", _fake_rebuild)
+        monkeypatch.setattr(RuntimeContext, "restart_background_tasks", _fake_restart)
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        with TestClient(app) as client:
+            calls.clear()
+            response = client.post(
+                "/api/bilibili/cookie",
+                json={
+                    "cookie": "SESSDATA=abc123; bili_jct=def456; DedeUserID=99999",
+                    "source": "extension",
+                    "validate_with_bilibili": True,
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["ok"] is True
+        assert calls == ["rebuild", "restart"]
+
+    def test_bilibili_cookie_sync_skips_hot_reload_when_cookie_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Repeated extension sync for the same cookie must be idempotent."""
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.bilibili.auth import AuthManager
+        from openbiliclaw.config import Config, save_config
+
+        cookie_value = "SESSDATA=abc123; bili_jct=def456; DedeUserID=99999"
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        config = Config()
+        config.bilibili.cookie = cookie_value
+        save_config(config, tmp_path / "config.toml")
+        AuthManager(tmp_path / "data").set_cookie(cookie_value)
+
+        class _FakeNav:
+            is_login = True
+            uname = "test_user"
+            mid = 12345
+
+        class _FakeClient:
+            def __init__(self, cookie: str) -> None:
+                self.cookie = cookie
+
+            async def get_nav_info(self) -> _FakeNav:
+                return _FakeNav()
+
+            async def close(self) -> None:
+                pass
+
+        calls: list[str] = []
+
+        async def _fake_rebuild(self: RuntimeContext, config: object) -> None:
+            calls.append("rebuild")
+
+        async def _fake_restart(self: RuntimeContext, app: object) -> None:
+            calls.append("restart")
+
+        monkeypatch.setattr(
+            AuthManager,
+            "_default_api_client_factory",
+            staticmethod(lambda cookie: _FakeClient(cookie)),
+        )
+        monkeypatch.setattr(RuntimeContext, "rebuild_from_config", _fake_rebuild)
+        monkeypatch.setattr(RuntimeContext, "restart_background_tasks", _fake_restart)
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        with TestClient(app) as client:
+            calls.clear()
+            response = client.post(
+                "/api/bilibili/cookie",
+                json={
+                    "cookie": cookie_value,
+                    "source": "extension",
+                    "validate_with_bilibili": True,
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["ok"] is True
+        assert calls == []
+
     def test_bilibili_cookie_endpoint_rejects_invalid_cookie(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -457,6 +587,40 @@ class TestBackendAPI:
         assert body["authenticated"] is False
         # No file written (because validation failed before persistence).
         assert not (tmp_path / "data" / "bilibili_cookie.json").exists()
+
+    def test_douyin_cookie_endpoint_persists_cookie_without_config_mirror(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        import json
+
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, save_config
+
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        save_config(Config(), tmp_path / "config.toml")
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        cookie_value = "msToken=abc; ttwid=tw; sessionid=sess"
+        response = client.post(
+            "/api/sources/dy/cookie",
+            json={"cookie": cookie_value, "source": "extension"},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["ok"] is True
+        assert body["has_cookie"] is True
+        assert body["cookie_names"] == ["msToken", "sessionid", "ttwid"]
+
+        cookie_file = tmp_path / "data" / "douyin_cookie.json"
+        assert cookie_file.exists()
+        payload = json.loads(cookie_file.read_text(encoding="utf-8"))
+        assert payload["cookie"] == cookie_value
+        assert payload["source"] == "extension"
+        assert cookie_value not in (tmp_path / "config.toml").read_text(encoding="utf-8")
 
     def test_events_endpoint_persists_batch(self) -> None:
         from fastapi.testclient import TestClient

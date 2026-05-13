@@ -5,7 +5,8 @@ This script is intended to be invoked by an AI coding agent (Claude Code,
 Codex CLI, OpenClaw, Cursor, etc.) after the user pastes the README "Agent
 deployment prompt" into the agent. The agent parses the prompt, runs this
 script with the appropriate flags, then handles any interactive follow-ups
-(missing API key, missing Bilibili cookie) that the script reports.
+(missing API key, missing Bilibili cookie, or explicit init source decisions)
+that the script reports.
 
 The script is intentionally non-interactive and machine-friendly:
 - emits structured JSON status lines prefixed with ``BOOTSTRAP_STATUS:``
@@ -293,6 +294,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "Use this when the user says no or has not opted in."
         ),
     )
+    douyin_group = parser.add_mutually_exclusive_group()
+    douyin_group.add_argument(
+        "--yes-douyin",
+        action="store_true",
+        help=(
+            "Explicitly opt in to Douyin post/favorite/like/follow data during auto-init. "
+            "AI agents should only pass this after asking the user."
+        ),
+    )
+    douyin_group.add_argument(
+        "--no-douyin",
+        action="store_true",
+        help=(
+            "Explicitly skip Douyin data during auto-init. Use this when the user says no "
+            "or has not opted in."
+        ),
+    )
     parser.add_argument(
         "--skip-ollama-setup",
         action="store_true",
@@ -397,7 +415,7 @@ def ollama_running(timeout: float = 2.0) -> bool:
 
     try:
         with urllib.request.urlopen(f"{OLLAMA_HOST}/api/version", timeout=timeout) as resp:
-            return resp.status == 200
+            return bool(resp.status == 200)
     except Exception:
         return False
 
@@ -697,6 +715,79 @@ def run_streaming(
     if check and proc.returncode != 0:
         raise RuntimeError(f"Command failed ({proc.returncode}): {shlex.join(cmd)}")
     return proc.returncode
+
+
+def _init_progress_event(line: str) -> dict[str, str] | None:
+    """Return structured progress metadata for high-signal init output lines."""
+
+    text = line.strip()
+    if not text:
+        return None
+
+    for phase in ("1/4", "2/4", "3/4", "4/4"):
+        if text.startswith(phase):
+            return {"phase": phase, "kind": "phase", "line": text}
+
+    progress_prefixes = (
+        "· ",
+        "✓ ",
+        "补货阶段",
+        "当前池子",
+        "阶段完成",
+        "初始化摘要",
+    )
+    if text.startswith(progress_prefixes):
+        return {"phase": "", "kind": "progress", "line": text}
+
+    return None
+
+
+def run_init_streaming(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    check: bool = True,
+) -> int:
+    """Run init while echoing output and emitting machine-readable progress."""
+
+    info(f"$ {shlex.join(cmd)}")
+    merged_env = dict(os.environ)
+    if env:
+        merged_env.update(env)
+    merged_env.setdefault("PYTHONUNBUFFERED", "1")
+    start = time.monotonic()
+    proc = subprocess.Popen(  # noqa: S603 — command is built by this bootstrap script.
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        env=merged_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(line, end="")
+        sys.stdout.flush()
+        details = _init_progress_event(line)
+        if details is None:
+            continue
+        emit(
+            BootstrapResult(
+                "progress",
+                "init_progress",
+                {
+                    **details,
+                    "elapsed_seconds": round(time.monotonic() - start, 1),
+                },
+            )
+        )
+
+    returncode = proc.wait()
+    if check and returncode != 0:
+        raise RuntimeError(f"Command failed ({returncode}): {shlex.join(cmd)}")
+    return returncode
 
 
 # ---------------------------------------------------------------------------
@@ -1088,7 +1179,7 @@ def detect_init_decisions(
     """Return user decisions required before non-interactive auto-init.
 
     ``agent_bootstrap.py`` never prompts. If the AI agent did not pass an
-    explicit embedding choice or Xiaohongshu opt-in/out, auto-init must pause
+    explicit embedding choice or source opt-in/out, auto-init must pause
     and surface those decisions instead of silently choosing for the user.
     """
 
@@ -1128,14 +1219,43 @@ def detect_init_decisions(
             "source": "missing",
         }
 
+    if args.yes_douyin:
+        douyin = {
+            "policy": "enabled",
+            "flag": "--yes-douyin",
+            "explicit": True,
+            "source": "flag",
+        }
+    elif args.no_douyin or os.environ.get("OPENBILICLAW_NO_DOUYIN", "").strip() == "1":
+        douyin = {
+            "policy": "disabled",
+            "flag": "--no-douyin",
+            "explicit": True,
+            "source": "env" if not args.no_douyin else "flag",
+        }
+    else:
+        missing.append("douyin")
+        douyin = {
+            "policy": "pending",
+            "flag": "",
+            "explicit": False,
+            "source": "missing",
+        }
+
     return {
         "missing": missing,
         "embedding": embedding,
         "xhs": xhs,
+        "douyin": douyin,
     }
 
 
-def build_init_command(mode: str, project_dir: Path, xhs_flag: str) -> list[str]:
+def build_init_command(
+    mode: str,
+    project_dir: Path,
+    xhs_flag: str,
+    douyin_flag: str,
+) -> list[str]:
     """Build the non-interactive init command used after bootstrap health checks."""
 
     if mode == "docker":
@@ -1161,6 +1281,8 @@ def build_init_command(mode: str, project_dir: Path, xhs_flag: str) -> list[str]
 
     if xhs_flag:
         init_cmd.append(xhs_flag)
+    if douyin_flag:
+        init_cmd.append(douyin_flag)
     return init_cmd
 
 
@@ -1737,8 +1859,26 @@ def run(args: argparse.Namespace) -> int:
             )
             try:
                 xhs_flag = str(init_decisions["xhs"]["flag"])
-                init_cmd = build_init_command(mode, project_dir, xhs_flag)
-                run_streaming(init_cmd, cwd=project_dir, check=False)
+                douyin_flag = str(init_decisions["douyin"]["flag"])
+                init_cmd = build_init_command(mode, project_dir, xhs_flag, douyin_flag)
+                init_returncode = run_init_streaming(init_cmd, cwd=project_dir, check=False)
+                if init_returncode != 0:
+                    emit(
+                        BootstrapResult(
+                            "warning",
+                            "init_failed",
+                            {
+                                "returncode": init_returncode,
+                                "init_command": shlex.join(init_cmd),
+                            },
+                        )
+                    )
+                    info(
+                        "Init exited with a non-zero status, but the backend is running. "
+                        "You can run 'openbiliclaw init' manually later "
+                        "(or 'docker exec -it openbiliclaw-backend openbiliclaw init' for Docker)."
+                    )
+                    return 0
                 emit(
                     BootstrapResult(
                         "complete",

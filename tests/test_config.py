@@ -85,6 +85,15 @@ class TestConfigDefaults:
 
         assert config.scheduler.pool_target_count == 600
 
+    def test_scheduler_pool_source_shares_defaults(self) -> None:
+        config = Config()
+
+        assert config.scheduler.pool_source_shares == {
+            "bilibili": 8,
+            "xiaohongshu": 1,
+            "douyin": 1,
+        }
+
     def test_build_from_empty_dict(self) -> None:
         config = _build_config({})
         assert config.language == "zh"
@@ -172,10 +181,13 @@ def test_load_config_with_diagnostics_creates_config_file(
     assert (tmp_path / "config.toml").exists()
     assert diagnostics.created_default_config is True
     assert diagnostics.config_path == tmp_path / "config.toml"
-    assert ConfigIssue(
-        field="llm.openai.api_key",
-        message="默认 provider `openai` 缺少 `api_key`，请在 config.toml 中填写。",
-    ) in diagnostics.issues
+    assert (
+        ConfigIssue(
+            field="llm.openai.api_key",
+            message="默认 provider `openai` 缺少 `api_key`，请在 config.toml 中填写。",
+        )
+        in diagnostics.issues
+    )
 
 
 def test_load_config_prefers_current_working_directory_for_default_config(
@@ -392,7 +404,7 @@ def test_validate_runtime_config_rejects_pool_target_count_above_cap() -> None:
             discovery_cron="0 */4 * * *",
             pool_target_count=601,
             account_sync_interval_hours=6,
-        )
+        ),
     )
 
     with pytest.raises(ConfigError, match="scheduler.pool_target_count"):
@@ -412,6 +424,27 @@ def test_build_config_supports_account_sync_interval() -> None:
     )
 
     assert config.scheduler.account_sync_interval_hours == 12
+
+
+def test_scheduler_pool_source_shares_override(tmp_path: Path) -> None:
+    toml_path = tmp_path / "c.toml"
+    toml_path.write_text(
+        """
+[scheduler.pool_source_shares]
+bilibili = 7
+xiaohongshu = 2
+douyin = 1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(toml_path)
+
+    assert config.scheduler.pool_source_shares == {
+        "bilibili": 7,
+        "xiaohongshu": 2,
+        "douyin": 1,
+    }
 
 
 def test_build_config_supports_sources_browser_cdp_url() -> None:
@@ -445,6 +478,18 @@ def test_sources_xiaohongshu_defaults() -> None:
     assert config.sources.xiaohongshu.task_interval_seconds == 45
 
 
+def test_sources_douyin_defaults() -> None:
+    config = _build_config({})
+
+    assert config.sources.douyin.enabled is False
+    assert config.sources.douyin.mode == "direct"
+    assert config.sources.douyin.cookie_env == "OPENBILICLAW_DOUYIN_COOKIE"
+    assert config.sources.douyin.daily_search_budget == 30
+    assert config.sources.douyin.daily_hot_budget == 5
+    assert config.sources.douyin.daily_feed_budget == 30
+    assert config.sources.douyin.request_interval_seconds == 2
+
+
 def test_build_config_supports_sources_xiaohongshu(tmp_path: Path) -> None:
     toml_path = tmp_path / "c.toml"
     toml_path.write_text(
@@ -464,6 +509,33 @@ task_interval_seconds = 60
     assert config.sources.xiaohongshu.task_interval_seconds == 60
 
 
+def test_build_config_supports_sources_douyin(tmp_path: Path) -> None:
+    toml_path = tmp_path / "c.toml"
+    toml_path.write_text(
+        """
+[sources.douyin]
+enabled = true
+mode = "direct"
+cookie_env = "CUSTOM_DY_COOKIE"
+daily_search_budget = 12
+daily_hot_budget = 3
+daily_feed_budget = 7
+request_interval_seconds = 4
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(toml_path)
+
+    assert config.sources.douyin.enabled is True
+    assert config.sources.douyin.mode == "direct"
+    assert config.sources.douyin.cookie_env == "CUSTOM_DY_COOKIE"
+    assert config.sources.douyin.daily_search_budget == 12
+    assert config.sources.douyin.daily_hot_budget == 3
+    assert config.sources.douyin.daily_feed_budget == 7
+    assert config.sources.douyin.request_interval_seconds == 4
+
+
 def test_save_config_round_trips_sources_browser_cdp_url(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config = Config()
@@ -473,6 +545,25 @@ def test_save_config_round_trips_sources_browser_cdp_url(tmp_path: Path) -> None
     loaded = load_config(config_path)
 
     assert loaded.sources.browser_cdp_url == "http://127.0.0.1:9222"
+
+
+def test_save_config_round_trips_pool_source_shares(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config = Config()
+    config.scheduler.pool_source_shares = {
+        "bilibili": 6,
+        "xiaohongshu": 2,
+        "douyin": 2,
+    }
+
+    save_config(config, config_path)
+    loaded = load_config(config_path)
+
+    assert loaded.scheduler.pool_source_shares == {
+        "bilibili": 6,
+        "xiaohongshu": 2,
+        "douyin": 2,
+    }
 
 
 def test_save_config_round_trips_runtime_changes(tmp_path: Path) -> None:

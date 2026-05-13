@@ -29,6 +29,7 @@ class SupportsCoreMemoryTask(Protocol):
         history: list[dict[str, str]] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        caller: str = "",
     ) -> LLMResponse: ...
 
 
@@ -44,9 +45,7 @@ class AwarenessAnalyzer:
 
     def __post_init__(self) -> None:
         if not hasattr(self.registry, "complete_structured_task"):
-            raise TypeError(
-                "AwarenessAnalyzer requires a service with complete_structured_task()."
-            )
+            raise TypeError("AwarenessAnalyzer requires a service with complete_structured_task().")
 
     async def analyze(
         self,
@@ -101,7 +100,7 @@ class AwarenessAnalyzer:
             raise AwarenessGenerationError(
                 f"LLM returned invalid JSON for awareness generation "
                 f"(raw_len={len(content.strip())})"
-        )
+            )
         if not isinstance(parsed, list):
             raise AwarenessGenerationError("LLM awareness response must be a JSON array.")
         return list(parsed)

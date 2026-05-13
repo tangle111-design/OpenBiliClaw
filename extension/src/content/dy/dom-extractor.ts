@@ -24,7 +24,11 @@
  * BootstrapItemSink filter (sees aweme_id or creator_sec_uid).
  */
 
-import type { DouyinBootstrapItem, DouyinScope } from "../../main/dy-fetch-tap.ts";
+import type {
+  DouyinBootstrapItem,
+  DouyinScope,
+  DouyinSearchItem,
+} from "../../main/dy-fetch-tap.ts";
 
 // ---------------------------------------------------------------------------
 // href shape guards
@@ -176,6 +180,40 @@ export function extractDouyinItemsFromDocument(
     return extractFollowItems(doc, baseUrl, cap);
   }
   return extractVideoItems(doc, scope, baseUrl, cap);
+}
+
+export function extractDouyinSearchItemsFromDocument(
+  doc: Document,
+  baseUrl: string,
+  maxItems: number,
+): DouyinSearchItem[] {
+  const cap = Math.max(0, Math.floor(maxItems));
+  if (cap === 0) return [];
+
+  const items: DouyinSearchItem[] = [];
+  const seen = new Set<string>();
+  const anchors = Array.from(
+    doc.querySelectorAll<HTMLAnchorElement>('a[href*="/video/"]'),
+  );
+  for (const anchor of anchors) {
+    if (items.length >= cap) break;
+    const href = anchor.getAttribute("href") ?? anchor.href ?? "";
+    const awemeId = extractAwemeIdFromHref(href);
+    if (!awemeId || seen.has(awemeId)) continue;
+    seen.add(awemeId);
+
+    const card = findCardContainer(anchor);
+    items.push({
+      scope: "dy_search",
+      aweme_id: awemeId,
+      url: absolutize(href, baseUrl),
+      title: pickCardTitle(card, anchor),
+      author: pickAuthorName(card),
+      author_sec_uid: pickAuthorSecUid(card),
+      cover_url: pickCoverUrl(card),
+    });
+  }
+  return items;
 }
 
 function extractVideoItems(

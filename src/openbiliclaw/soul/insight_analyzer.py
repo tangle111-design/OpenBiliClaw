@@ -30,6 +30,7 @@ class SupportsCoreMemoryTask(Protocol):
         history: list[dict[str, str]] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        caller: str = "",
     ) -> LLMResponse: ...
 
 
@@ -45,9 +46,7 @@ class InsightAnalyzer:
 
     def __post_init__(self) -> None:
         if not hasattr(self.registry, "complete_structured_task"):
-            raise TypeError(
-                "InsightAnalyzer requires a service with complete_structured_task()."
-            )
+            raise TypeError("InsightAnalyzer requires a service with complete_structured_task().")
 
     async def analyze(
         self,
@@ -79,10 +78,7 @@ class InsightAnalyzer:
         incoming: list[InsightHypothesis],
     ) -> list[InsightHypothesis]:
         """Merge hypotheses by normalized hypothesis text."""
-        merged = {
-            self._normalize_text(item.hypothesis): item
-            for item in existing
-        }
+        merged = {self._normalize_text(item.hypothesis): item for item in existing}
         for item in incoming:
             key = self._normalize_text(item.hypothesis)
             current = merged.get(key)
@@ -109,9 +105,8 @@ class InsightAnalyzer:
                 format_parse_failure(content, exc, label="insight generation"),
             )
             raise InsightGenerationError(
-                f"LLM returned invalid JSON for insight generation "
-                f"(raw_len={len(content.strip())})"
-        )
+                f"LLM returned invalid JSON for insight generation (raw_len={len(content.strip())})"
+            )
         if not isinstance(parsed, list):
             raise InsightGenerationError("LLM insight response must be a JSON array.")
         return list(parsed)

@@ -204,6 +204,19 @@ daily_creator_budget = 10
 # 扩展分发器两次任务之间的最小间隔（秒），进一步降低风控风险
 task_interval_seconds = 45
 
+# ── 抖音（Douyin）direct-cookie discovery 专用配置 ──
+# 初始化画像仍走浏览器扩展；这里仅控制可选的后台内容发现。
+# Cookie 优先读下方环境变量；未设置时会使用浏览器扩展同步到 data/douyin_cookie.json 的值。
+# 不要把真实 Cookie 写进 config.toml。
+[sources.douyin]
+enabled = false
+mode = "direct"
+cookie_env = "OPENBILICLAW_DOUYIN_COOKIE"
+daily_search_budget = 30
+daily_hot_budget = 5
+daily_feed_budget = 30
+request_interval_seconds = 2
+
 [scheduler]
 # Enable scheduled content discovery
 enabled = true
@@ -230,6 +243,13 @@ account_sync_interval_hours = 6
 # --- 自动更新 ---
 auto_update_enabled = true         # 是否自动检查并应用新版本（git pull + uv sync）
 auto_update_check_interval_hours = 6  # 检查间隔（小时）
+
+[scheduler.pool_source_shares]
+# Candidate-pool source mix by platform family. Default 8:1:1 keeps B 站
+# as the main source while reserving pool capacity for 小红书 and 抖音.
+bilibili = 8
+xiaohongshu = 1
+douyin = 1
 
 [storage]
 # SQLite database path

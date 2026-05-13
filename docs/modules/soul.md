@@ -43,6 +43,8 @@
 | SoulEngine.learn_from_dialogue() | ✅ | 聊天落 `dialogue` 事件、累计 insight candidate；单条 `interest/value/goal/dislike` 聊天信号到中高置信度时会先写入轻量 cognition update，达阈值后再驱动偏好/画像更新 |
 | 账户同步事件分析 | ✅ | 后台低频同步导入的 `view/favorite/follow` 事件会复用 `analyze_events()` 进入偏好与画像链 |
 | 小红书初始化画像信号 | ✅ | `openbiliclaw init` 会把插件解析到的小红书 `saved/liked/xhs_history` 转成 `favorite/like/view` 事件，并与 B 站历史、收藏、关注一起进入 `analyze_events()` 和初始画像 history |
+| 抖音初始化画像信号 | ✅ | `openbiliclaw init --yes-douyin` 会把插件解析到的抖音 `dy_post/dy_collect/dy_like/dy_follow` 转成 `view/favorite/like/follow` 事件，并进入偏好分析和初始画像 history |
+| 小红书 / 抖音增量画像事件 | ✅ | profile 已存在时，`/api/sources/xhs/task-result` 和 `/api/sources/dy/task-result` 的 bootstrap 新增事件会在落 memory 后进入 `ProfileUpdatePipeline`，参与后续分层画像更新 |
 | ToneProfile | ✅ | 从 `OnionProfile`、偏好摘要和近期反馈推断 `density/warmth/playfulness/directness`，统一驱动推荐、画像和聊天语气 |
 | Cognition updates | ✅ | 在反馈刷新和聊天学习后生成 `interest_added / dislike_added / profile_shift` 结构化 cognition card，包含 `summary / context_line / source_label / expand_hint / impact / reasoning / evidence / source / created_at`，供插件提醒与画像页展开展示；即时反馈和聊天会尽量指出具体内容或本轮聊天，聚合判断则保守回退到”基于最近几条相关内容” |
 | Layered profile cognition | ✅ | `OnionProfile` 新增 MBTI / Values / Interest 等分层，画像生成会同时消费 `history + preference + awareness + insights`，避免把兴趣 topic 堆成整段画像 |
@@ -225,7 +227,7 @@
 首次初始化时，走的是 `SoulEngine.build_initial_profile(history)`：
 
 1. 先读取已有 `preference` 层。
-2. `openbiliclaw init` 已经先把 B 站历史 / 收藏 / 关注和小红书 bootstrap signals 汇总成事件批次，调用 `analyze_events()` 更新偏好层。
+2. `openbiliclaw init` 已经先把 B 站历史 / 收藏 / 关注，以及显式启用的小红书 / 抖音 bootstrap signals 汇总成事件批次，调用 `analyze_events()` 更新偏好层。
 3. 再加载历史 `awareness_notes` 和 `active_insights`。
 4. `ProfileBuilder.build()` 把 `history_summary + preference_summary + awareness + insights` 一起送给 LLM。
 5. LLM 返回结构化 JSON，必须包含：
@@ -247,10 +249,20 @@
 | `liked` | `like` | 中高强度偏好信号 |
 | `xhs_history` | `view` | 小红书页面明确暴露时的浏览/足迹 state，强度较弱；普通推荐流不计入 |
 
+抖音 bootstrap signals 的来源是浏览器插件在抖音页面中解析出的 videos / creators，不是后端爬虫，也不读取 Chrome 浏览器历史。scope 映射为：
+
+| 抖音 scope | 事件类型 | 用途 |
+|-----------|----------|------|
+| `dy_post` | `view` | 用户自己发布内容，作为弱口味信号 |
+| `dy_collect` | `favorite` | 收藏/想回看信号，强度最高 |
+| `dy_like` | `like` | 中高强度偏好信号 |
+| `dy_follow` | `follow` | 对创作者长期内容的兴趣信号 |
+
 这里有两个重要约束：
 
-- `personality_portrait` 至少 200 字，否则认为画像无效
-- 如果 LLM 返回坏 JSON、缺字段或空内容，旧画像不会被覆盖
+- `personality_portrait` prompt 目标为 150-260 字，后端校验容忍 120-500 字；超出范围认为画像无效
+- 如果 LLM 返回坏 JSON 或空内容，旧画像不会被覆盖；初始化大批量 history 触发风控 / 坏 JSON 时会移除原始标题和 context，用结构化偏好、来源分布、觉察和洞察重试一次
+- 辅助字段（如 `motivational_drivers`、`values`、`deep_needs`）缺失或轻微格式不符时会补空值并记录 warning，避免真实 provider 少吐一个列表字段导致首次初始化失败
 
 所以初始化不是“随便生成一段描述”，而是一次严格结构化的建档。
 
@@ -268,6 +280,8 @@
    一起发给 LLM，提取结构化偏好。
 4. 返回结果会进入 `merge_preferences()`，与旧偏好合并。
 5. 合并后的偏好写回 `preference.json`。
+
+初始化这类大批量事件会按分片并发分析。若某个分片被 LLM 风控拒绝或返回非 JSON，`PreferenceAnalyzer` 会递归拆小该分片；最终只有仍失败的单条事件会被跳过，其他事件继续参与偏好合并。网络错误、provider 错误仍会让调用失败，避免把服务不可用伪装成成功。
 
 这一层真正做的不是“生成画像”，而是把近期行为压缩成结构化偏好状态，例如：
 
@@ -293,6 +307,8 @@
 - `style/context` 先继承默认值，再叠加旧状态，再叠加新状态
 
 这意味着行为事件对画像的第一影响，通常不是直接改 `personality_portrait`，而是先慢慢把偏好层往一个更稳定的方向推。
+
+小红书 / 抖音插件任务还有一条增量路径：当 `soul_engine.is_profile_ready()` 已经为真时，bootstrap task-result 新增的事件会先写入 memory，再通过 `signals_from_events()` 转成 `ProfileSignal` 进入 `ProfileUpdatePipeline.ingest_batch()`。首次 init 期间不会走这条增量更新，避免同一批初始化事件同时被 `analyze_events()` 和 pipeline 重复学习。
 
 ### 3. 推荐反馈路径：分成“即时记住”和“批量学习”两档
 
@@ -449,7 +465,7 @@ system prompt 的核心约束是：
 
 - 只能根据给定材料推断
 - 必须输出严格 JSON
-- 人格描述至少 200 字
+- 人格描述目标 150-260 字，后端校验容忍 120-500 字
 - 先写“怎么处理信息”，再写“长期在找什么”，最后写“最近处于什么阶段”
 - 不要把兴趣 topic 堆成画像主体
 
@@ -781,7 +797,7 @@ profile = await builder.build(
 )
 # 返回 OnionProfile，自动填充五层结构
 
-assert len(profile.personality_portrait) >= 200
+assert 120 <= len(profile.personality_portrait) <= 500
 assert len(profile.core_traits) >= 3
 assert profile.core.mbti.type  # MBTI 现已包含
 assert profile.values_layer.motivational_drivers

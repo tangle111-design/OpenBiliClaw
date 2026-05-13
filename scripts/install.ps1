@@ -304,26 +304,30 @@ missing = details.get("missing") or []
 init_decisions = details.get("init_decisions") or {}
 decision_missing = init_decisions.get("missing") or []
 xhs_flag = ((init_decisions.get("xhs") or {}).get("flag") or "")
+douyin_flag = ((init_decisions.get("douyin") or {}).get("flag") or "")
 print(f"STATUS={final.get('status', 'unknown')}")
 print(f"HEALTH_URL={details.get('health_url', '')}")
 print(f"MISSING={','.join(missing)}")
 print(f"DECISIONS={','.join(decision_missing)}")
 print(f"XHS_FLAG={xhs_flag}")
+print(f"DOUYIN_FLAG={douyin_flag}")
 '@
     # PS 5.1 (Windows 10/11 default) lacks the ?? null-coalescing operator
     # — that's a PS 7+ feature. Use a defensive fallback instead.
     $reuseArg = if ($null -ne $ReuseFrom) { $ReuseFrom } else { '' }
     $summary = & $PythonExe -c $parser $script:BootstrapLog $InstallDir "$Port" $ApiHost $reuseArg
 
-    $status = ''; $healthUrl = ''; $missing = ''; $decisions = ''; $xhsFlag = ''
+    $status = ''; $healthUrl = ''; $missing = ''; $decisions = ''; $xhsFlag = ''; $douyinFlag = ''
     foreach ($line in $summary -split "`r?`n") {
         if ($line -like 'STATUS=*')     { $status    = $line.Substring(7) }
         elseif ($line -like 'HEALTH_URL=*') { $healthUrl = $line.Substring(11) }
         elseif ($line -like 'MISSING=*')    { $missing   = $line.Substring(8) }
         elseif ($line -like 'DECISIONS=*')  { $decisions = $line.Substring(10) }
         elseif ($line -like 'XHS_FLAG=*')   { $xhsFlag   = $line.Substring(9) }
+        elseif ($line -like 'DOUYIN_FLAG=*') { $douyinFlag = $line.Substring(12) }
     }
     if (-not $xhsFlag) { $xhsFlag = '--no-xhs' }
+    if (-not $douyinFlag) { $douyinFlag = '--no-douyin' }
 
     # v0.3.20: distinguish "only B站 cookie missing" (the expected state for
     # users on the recommended browser-extension auto-sync path) from
@@ -376,9 +380,10 @@ print(f"XHS_FLAG={xhs_flag}")
         Write-Host '       If they choose Gemini/OpenAI/custom instead, replace'
         Write-Host '       the --embedding-* flags below.'
         Write-Host ''
-        Write-Host '  2. Xiaohongshu data (privacy choice):'
-        Write-Host '       Ask whether to include Xiaohongshu likes/favorites in'
-        Write-Host '       the initial profile. Default is NO unless they opt in.'
+        Write-Host '  2. Source bootstrap data (privacy choice):'
+        Write-Host '       Ask whether to include Xiaohongshu likes/favorites and'
+        Write-Host '       Douyin post/favorite/like/follow in the initial profile.'
+        Write-Host '       Default is NO unless they opt in per source.'
         Write-Host ''
         Write-Host '  3. Re-run bootstrap with explicit choices (DO NOT add --skip-init):'
         Write-Host ''
@@ -389,9 +394,11 @@ print(f"XHS_FLAG={xhs_flag}")
             Write-Host "         --embedding-model bge-m3 ``"
         }
         Write-Host "         $xhsFlag ``"
+        Write-Host "         $douyinFlag ``"
         Write-Host "         --port $Port --host $ApiHost"
         Write-Host ''
-        Write-Host '     Use --yes-xhs only after the user says yes; otherwise keep --no-xhs.'
+        Write-Host '     Use --yes-xhs / --yes-douyin only after the user says yes;'
+        Write-Host '     otherwise keep --no-xhs / --no-douyin.'
         Write-Host '     This then runs init: B站 history, soul profile, first discovery.'
     } elseif ($missingOnlyCookie) {
         Write-Host 'Next step - get your B站 Cookie to the backend (pick ONE):'
@@ -406,6 +413,7 @@ print(f"XHS_FLAG={xhs_flag}")
         Write-Host '      Required before init:'
         Write-Host '        - Embedding model/service (default: Ollama bge-m3)'
         Write-Host '        - Xiaohongshu likes/favorites? (default: no; yes only on opt-in)'
+        Write-Host '        - Douyin post/favorite/like/follow? (default: no; yes only on opt-in)'
         Write-Host ''
         Write-Host '  (B) [manual fallback]'
         Write-Host "      F12 -> Network -> copy the 'Cookie' header from any"
@@ -418,8 +426,10 @@ print(f"XHS_FLAG={xhs_flag}")
             Write-Host "            --embedding-model bge-m3 ``"
         }
         Write-Host "            $xhsFlag ``"
+        Write-Host "            $douyinFlag ``"
         Write-Host "            --port $Port --host $ApiHost"
-        Write-Host '      Use --yes-xhs only after the user opts in; otherwise keep --no-xhs.'
+        Write-Host '      Use --yes-xhs / --yes-douyin only after the user opts in;'
+        Write-Host '      otherwise keep --no-xhs / --no-douyin.'
         Write-Host ''
         Write-Host '  Verify the backend is healthy any time:'
         Write-Host "      Invoke-RestMethod $healthUrl"
@@ -447,8 +457,9 @@ print(f"XHS_FLAG={xhs_flag}")
         Write-Host '     Alternatives: Gemini embedding, OpenAI text-embedding-3-small,'
         Write-Host '     or a custom OpenAI-compatible embedding endpoint.'
         Write-Host ''
-        Write-Host '  3. Ask whether to include Xiaohongshu likes/favorites:'
-        Write-Host '     Default: no. Use --yes-xhs only after explicit opt-in.'
+        Write-Host '  3. Ask whether to include source bootstrap data:'
+        Write-Host '     Xiaohongshu likes/favorites and Douyin post/favorite/like/follow.'
+        Write-Host '     Default: no. Use --yes-xhs / --yes-douyin only after explicit opt-in.'
         Write-Host ''
         Write-Host '  4. Prepare missing values, then run with values filled in (DO NOT add --skip-init):'
         Write-Host ''
@@ -461,10 +472,11 @@ print(f"XHS_FLAG={xhs_flag}")
             Write-Host "         --embedding-model bge-m3 ``"
         }
         Write-Host "         $xhsFlag ``"
+        Write-Host "         $douyinFlag ``"
         if ($missing -match 'bilibili.cookie') { Write-Host "         --bilibili-cookie '<YOUR_COOKIE>' ``" }
         Write-Host "         --port $Port --host $ApiHost"
         Write-Host ''
-        Write-Host '     Replace the embedding flags and --no-xhs according to the'
+        Write-Host '     Replace the embedding/source flags according to the'
         Write-Host '     user answers before running the command.'
         Write-Host ''
         Write-Host "     This auto-runs 'openbiliclaw init' once credentials check out:"
@@ -472,6 +484,7 @@ print(f"XHS_FLAG={xhs_flag}")
         Write-Host '       - generates the soul profile'
         Write-Host '       - runs the first content discovery pass'
         Write-Host '     Takes 2-5 minutes. Without this step the extension shows nothing.'
+        Write-Host '     During init, relay BOOTSTRAP_STATUS init_progress events to the user.'
         Write-Host ''
         Write-Host '  3. Verify the backend is healthy:'
         Write-Host "      Invoke-RestMethod $healthUrl"

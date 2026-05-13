@@ -28,6 +28,7 @@ class SupportsCoreMemoryTask(Protocol):
         history: list[dict[str, str]] | None = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
+        caller: str = "",
     ) -> LLMResponse: ...
 
 
@@ -143,7 +144,7 @@ class PreferenceAnalyzer:
         # below folds each chunk's normalized output into the real
         # ``existing_preference`` using merge_preferences, which already
         # handles weighted interest aggregation across calls.
-        async def _run_chunk(
+        async def _run_chunk_once(
             chunk: list[dict[str, object]],
         ) -> tuple[dict[str, object], dict[str, object]]:
             messages = build_preference_analysis_prompt(
@@ -162,7 +163,34 @@ class PreferenceAnalyzer:
             raw = self._parse_response(response.content)
             return raw, self._normalize_preference(raw)
 
-        outcomes = await _asyncio.gather(*(_run_chunk(chunk) for chunk in chunks))
+        async def _run_chunk_resilient(
+            chunk: list[dict[str, object]],
+        ) -> list[tuple[dict[str, object], dict[str, object]]]:
+            try:
+                return [await _run_chunk_once(chunk)]
+            except PreferenceAnalysisError as exc:
+                # Provider / transport errors should still abort the whole
+                # run. Invalid JSON / model refusal is often content-local:
+                # split the batch to isolate the offending event, then skip
+                # only that final single event if it still refuses.
+                if exc.__cause__ is not None:
+                    raise
+                if len(chunk) <= 1:
+                    event = chunk[0] if chunk else {}
+                    logger.warning(
+                        "preference chunk skipped after invalid LLM response: title=%r",
+                        str(event.get("title", "")) if isinstance(event, dict) else "",
+                    )
+                    return []
+                midpoint = max(1, len(chunk) // 2)
+                left, right = await _asyncio.gather(
+                    _run_chunk_resilient(chunk[:midpoint]),
+                    _run_chunk_resilient(chunk[midpoint:]),
+                )
+                return [*left, *right]
+
+        outcome_groups = await _asyncio.gather(*(_run_chunk_resilient(chunk) for chunk in chunks))
+        outcomes = [item for group in outcome_groups for item in group]
 
         # Fold each chunk's normalized preference into the running merge
         # one at a time. merge_preferences already does weighted interest

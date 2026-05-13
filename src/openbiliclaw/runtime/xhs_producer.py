@@ -52,7 +52,7 @@ class XhsTaskProducer:
     keywords_per_cycle: int = 5
     _last_skip_reason: str = field(default="", init=False)
 
-    async def produce_if_due(self) -> dict[str, object]:
+    async def produce_if_due(self, *, limit: int | None = None) -> dict[str, object]:
         """Run one producer cycle if enough time has passed.
 
         Returns a summary dict for diagnostics. When the producer is
@@ -81,10 +81,14 @@ class XhsTaskProducer:
         if profile is None:
             return self._skip("no_profile")
 
+        keyword_count = min(
+            self.keywords_per_cycle,
+            max(1, int(limit or self.keywords_per_cycle)),
+        )
         keywords = await generate_xhs_keywords(
             self.llm_service,
             profile,
-            count=self.keywords_per_cycle,
+            count=keyword_count,
         )
         if not keywords:
             return self._skip("no_keywords")
@@ -121,9 +125,7 @@ class XhsTaskProducer:
         last = _parse_sqlite_timestamp(created_at_str)
         if last is None:
             return True
-        return datetime.now(UTC) - last >= timedelta(
-            hours=self.min_interval_hours
-        )
+        return datetime.now(UTC) - last >= timedelta(hours=self.min_interval_hours)
 
     def _skip(self, reason: str) -> dict[str, object]:
         # v0.3.53+: log skip reason on transition (not every minute) so

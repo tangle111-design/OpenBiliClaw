@@ -6,8 +6,23 @@ Task 1 of the Douyin bootstrap import plan
 
 from __future__ import annotations
 
-from openbiliclaw.sources.dy_tasks import dy_bootstrap_videos_to_events
+from typing import TYPE_CHECKING
+
+import pytest
+
+from openbiliclaw.sources.dy_tasks import DyTaskQueue, dy_bootstrap_videos_to_events
 from openbiliclaw.sources.event_format import SOURCE_DOUYIN
+from openbiliclaw.storage.database import Database
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+@pytest.fixture
+def database(tmp_path: Path) -> Database:
+    db = Database(tmp_path / "openbiliclaw.db")
+    db.initialize()
+    return db
 
 
 def test_dy_bootstrap_videos_to_events_maps_scopes_to_event_types() -> None:
@@ -151,3 +166,29 @@ def test_dy_bootstrap_videos_to_events_follow_uses_creator_sec_uid() -> None:
     metadata = events[0]["metadata"]
     assert metadata["creator_sec_uid"] == "abc"
     assert events[0]["event_type"] == "follow"
+
+
+def test_dy_task_queue_ignores_stale_pending_failures_for_daily_budget(
+    database: Database,
+) -> None:
+    queue = DyTaskQueue(database)
+
+    stale_id = queue.enqueue_with_id("search", {"keywords": ["旧任务"]}, daily_budget=2)
+    assert stale_id is not None
+    queue.fail(stale_id, error="stale_pending")
+    assert queue.enqueue_with_id("search", {"keywords": ["有效任务"]}, daily_budget=2)
+
+    assert queue.enqueue_with_id("search", {"keywords": ["补池任务"]}, daily_budget=2)
+
+
+def test_dy_task_queue_counts_non_stale_failures_for_daily_budget(
+    database: Database,
+) -> None:
+    queue = DyTaskQueue(database)
+
+    failed_id = queue.enqueue_with_id("search", {"keywords": ["超时任务"]}, daily_budget=2)
+    assert failed_id is not None
+    queue.fail(failed_id, error="task_timeout")
+    assert queue.enqueue_with_id("search", {"keywords": ["有效任务"]}, daily_budget=2)
+
+    assert queue.enqueue_with_id("search", {"keywords": ["第三个任务"]}, daily_budget=2) is None

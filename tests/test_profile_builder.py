@@ -49,6 +49,53 @@ class FakeStructuredService:
         return LLMResponse(content=self.content, provider="openai")
 
 
+class SequenceStructuredService:
+    def __init__(self, contents: list[str]) -> None:
+        self.contents = list(contents)
+        self.calls: list[dict[str, object]] = []
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+    ) -> LLMResponse:
+        self.calls.append(
+            {
+                "system_instruction": system_instruction,
+                "user_input": user_input,
+                "history": history,
+            }
+        )
+        content = self.contents.pop(0)
+        return LLMResponse(content=content, provider="openai")
+
+
+_VALID_PROFILE_PAYLOAD = json.dumps(
+    {
+        "personality_portrait": (
+            "你这人不是随便被内容推着走的类型，心里有一套自己的筛子。"
+            "你需要事情有意思，也需要它说得通；只热闹不扎实会让你很快失去耐心，"
+            "只严肃不鲜活又会让你觉得生活被拧得太紧。你更舒服的状态，是在松弛和较真之间自由切换，"
+            "既能接住轻松的情绪能量，也愿意花时间把一件事拆到里面看。最近你的节奏像是在重新校准："
+            "一边保留玩心，一边想把判断、能力和生活秩序都捋得更清楚。"
+        ),
+        "core_traits": ["杂食", "较真", "自我节奏感强"],
+        "cognitive_style": ["会先看结构", "对信息密度敏感"],
+        "motivational_drivers": ["保持有趣", "把事情想明白"],
+        "current_phase": "最近在把轻松感和认真感重新调到一个更舒服的位置。",
+        "values": ["真实", "成长"],
+        "life_stage": "稳定积累阶段",
+        "deep_needs": ["在玩乐与正经之间自由切换的空间", "不被打扰的深度专注时间"],
+    },
+    ensure_ascii=False,
+)
+
+
 @pytest.mark.asyncio
 async def test_profile_builder_creates_soul_profile_from_json() -> None:
     from openbiliclaw.soul.profile_builder import ProfileBuilder
@@ -103,6 +150,29 @@ async def test_profile_builder_creates_soul_profile_from_json() -> None:
 
 
 @pytest.mark.asyncio
+async def test_profile_builder_retries_with_compact_history_after_invalid_json() -> None:
+    from openbiliclaw.soul.profile_builder import ProfileBuilder
+
+    service = SequenceStructuredService(
+        [
+            "The request was rejected because it was considered high risk",
+            _VALID_PROFILE_PAYLOAD,
+        ]
+    )
+
+    profile = await ProfileBuilder(service).build(
+        history=[{"title": f"标题 {idx}", "author": "作者"} for idx in range(120)],
+        preference={"interests": [{"name": "科技", "category": "知识"}]},
+        awareness_notes=[],
+        active_insights=[],
+    )
+
+    assert profile.core_traits == ["杂食", "较真", "自我节奏感强"]
+    assert len(service.calls) == 2
+    assert "history omitted after profile-build retry" in str(service.calls[1]["user_input"])
+
+
+@pytest.mark.asyncio
 async def test_profile_builder_raises_on_invalid_json() -> None:
     from openbiliclaw.soul.profile_builder import ProfileBuilder, SoulProfileBuildError
 
@@ -148,13 +218,77 @@ async def test_profile_builder_raises_when_portrait_is_too_short() -> None:
         )
     )
 
-    with pytest.raises(SoulProfileBuildError, match="at least 200"):
+    with pytest.raises(SoulProfileBuildError, match="expected 120-500 chars"):
         await ProfileBuilder(service).build(
             history=[{"title": "AI 视频"}],
             preference={},
             awareness_notes=[],
             active_insights=[],
         )
+
+
+@pytest.mark.asyncio
+async def test_profile_builder_accepts_slightly_long_real_model_portrait() -> None:
+    from openbiliclaw.soul.profile_builder import ProfileBuilder
+
+    portrait = (
+        "你这人不是那种被内容推着走的人，心里一直有一套自己的筛子。"
+        "你需要事情有趣，也需要它说得通；只热闹不扎实会让你很快失去耐心，"
+        "只严肃不鲜活又会让你觉得生活被拧得太紧。你更舒服的状态，"
+        "是在松弛和较真之间自由切换，既能接住轻松的情绪能量，"
+        "也愿意花时间把一件事拆到里面看。你对世界的兴趣不只是消费，"
+        "更像是在找一种能让自己持续长出判断力的生活方式。最近你的节奏像是在重新校准："
+        "一边保留玩心，一边想把判断、能力和生活秩序都捋得更清楚。"
+        "这种状态并不焦虑，反而说明你开始更在意什么东西真正值得留下。"
+        "你不想被单一身份框住，也不太愿意为了迎合外界节奏放弃自己的好奇心。"
+        "所以你真正看重的不是某一个固定标签，而是自己能不能在不断变化的内容和生活里，"
+        "仍然保留判断、选择和重新出发的余地。"
+    )
+    assert len(portrait) > 320
+
+    service = FakeStructuredService(
+        json.dumps(
+            {
+                "personality_portrait": portrait,
+                "core_traits": ["杂食", "较真", "自我节奏感强"],
+                "cognitive_style": ["会先看结构"],
+                "motivational_drivers": ["把事情想明白"],
+                "current_phase": "最近在重新校准自己的节奏。",
+                "values": ["真实", "成长"],
+                "life_stage": "稳定积累阶段",
+                "deep_needs": ["保留自由切换的空间"],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    profile = await ProfileBuilder(service).build(
+        history=[{"title": "AI 视频"}],
+        preference={"interests": [{"name": "科技"}]},
+        awareness_notes=[],
+        active_insights=[],
+    )
+
+    assert profile.personality_portrait == portrait
+
+
+@pytest.mark.asyncio
+async def test_profile_builder_defaults_missing_auxiliary_list_fields() -> None:
+    from openbiliclaw.soul.profile_builder import ProfileBuilder
+
+    payload = json.loads(_VALID_PROFILE_PAYLOAD)
+    payload.pop("motivational_drivers")
+    service = FakeStructuredService(json.dumps(payload, ensure_ascii=False))
+
+    profile = await ProfileBuilder(service).build(
+        history=[{"title": "AI 视频"}],
+        preference={"interests": [{"name": "科技"}]},
+        awareness_notes=[],
+        active_insights=[],
+    )
+
+    assert profile.motivational_drivers == []
+    assert profile.core_traits == ["杂食", "较真", "自我节奏感强"]
 
 
 @pytest.mark.asyncio

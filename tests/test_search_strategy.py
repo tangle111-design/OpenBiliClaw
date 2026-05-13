@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 
 import pytest
@@ -316,3 +317,60 @@ async def test_search_strategy_uses_bounded_request_concurrency_and_keeps_limit(
     # Search runs sequentially to avoid B站 rate-limiting, so max_active == 1
     assert bilibili_client.max_active_calls == 1
     assert [item.bvid for item in results] == ["BV1A", "BV1B"]
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_caps_llm_eval_candidates_for_small_limit() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    class BatchRecordingLLM:
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> object:
+            del system_instruction, history, temperature, max_tokens, caller, reasoning_effort
+            if "<content_batch>" not in user_input:
+                return _FakeResponse('{"queries": ["q0", "q1", "q2", "q3"]}')
+            batch = json.loads(user_input.split("<content_batch>")[1].split("</content_batch>")[0])
+            self.batch_sizes.append(len(batch))
+            return _FakeResponse(
+                json.dumps(
+                    [{"score": 0.82, "reason": "ok", "style_key": "deep_dive"} for _ in batch]
+                )
+            )
+
+    llm_service = BatchRecordingLLM()
+    bilibili_client = FakeBilibiliClient(
+        {
+            f"q{query_index}": [
+                {
+                    "bvid": f"BVQ{query_index}_{item_index}",
+                    "title": f"q{query_index}-{item_index}",
+                    "author": f"UP{query_index}",
+                    "mid": item_index,
+                }
+                for item_index in range(20)
+            ]
+            for query_index in range(4)
+        }
+    )
+    strategy = SearchStrategy(
+        llm_service=llm_service,
+        bilibili_client=bilibili_client,
+        score_threshold=0.65,
+    )
+
+    results = await strategy.discover(_build_profile(), limit=3)
+
+    assert llm_service.batch_sizes == [6]
+    assert [item.bvid for item in results] == ["BVQ0_0", "BVQ1_0", "BVQ2_0"]

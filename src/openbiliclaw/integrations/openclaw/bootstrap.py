@@ -26,6 +26,8 @@ from openbiliclaw.storage.database import Database
 
 from .operations import OpenClawAdapter
 
+_DEFAULT_POOL_SOURCE_SHARES = {"bilibili": 8, "xiaohongshu": 1, "douyin": 1}
+
 
 @dataclass(slots=True)
 class OpenClawAdapterServices:
@@ -59,15 +61,16 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         memory=memory_manager,
     )
     llm_service = LLMService(registry=llm_registry, memory=memory_manager)
-    from openbiliclaw.recommendation.curator import PoolCurator
-
     from openbiliclaw.llm.registry import build_embedding_service
+    from openbiliclaw.recommendation.curator import PoolCurator
 
     embedding_service = build_embedding_service(config, llm_registry)
 
     curator = PoolCurator(database)
     recommendation_engine = RecommendationEngine(
-        llm=llm_service, database=database, curator=curator,
+        llm=llm_service,
+        database=database,
+        curator=curator,
         embedding_service=embedding_service,
     )
     bilibili_client = BilibiliAPIClient(
@@ -113,12 +116,24 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         llm_service=llm_service,
         bilibili_client=bilibili_client,
         concurrency=concurrency,
-        database=database,
+        database=cast("Any", database),
     )
     discovery_engine.register_strategy(search_strategy)
     discovery_engine.register_strategy(trending_strategy)
     discovery_engine.register_strategy(related_strategy)
     discovery_engine.register_strategy(explore_strategy)
+
+    from openbiliclaw.runtime.douyin_producer import build_douyin_discovery_producer
+
+    douyin_producer = build_douyin_discovery_producer(
+        config=config,
+        database=database,
+        soul_engine=soul_engine,
+        discovery_engine=discovery_engine,
+    )
+    pool_source_shares = getattr(config.scheduler, "pool_source_shares", None)
+    if not isinstance(pool_source_shares, dict):
+        pool_source_shares = _DEFAULT_POOL_SOURCE_SHARES
 
     runtime_controller = ContinuousRefreshController(
         memory_manager=memory_manager,
@@ -127,6 +142,8 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         discovery_engine=discovery_engine,
         recommendation_engine=recommendation_engine,
         pool_target_count=config.scheduler.pool_target_count,
+        pool_source_shares=dict(pool_source_shares),
+        douyin_producer=douyin_producer,
     )
     account_sync_service = AccountSyncService(
         memory_manager=memory_manager,

@@ -27,6 +27,8 @@ from openbiliclaw.api.models import (
     ConfigUpdateResponse,
     DelightAckIn,
     DelightAckResponse,
+    DouyinCookieIn,
+    DouyinCookieResponse,
     EmbeddingConfigOut,
     EventIngestResponse,
     FeedbackIn,
@@ -224,6 +226,43 @@ def create_app(
             with suppress(Exception):
                 await refresh_after_feedback()
 
+    async def _ingest_profile_update_events(events: list[dict[str, Any]]) -> None:
+        """Feed source task events into the profile-update pipeline when ready.
+
+        Init handles first-run analysis explicitly via ``analyze_events`` +
+        ``build_initial_profile``. After a profile exists, extension task
+        results should also affect the incremental update buffers instead of
+        only being persisted to event memory.
+        """
+        if not events or ctx.soul_engine is None:
+            return
+        is_ready = getattr(ctx.soul_engine, "is_profile_ready", None)
+        if callable(is_ready):
+            with suppress(Exception):
+                if not bool(is_ready()):
+                    return
+
+        pipeline = getattr(ctx.soul_engine, "pipeline", None)
+        if pipeline is None:
+            return
+
+        from openbiliclaw.soul.pipeline import signals_from_events
+
+        signals = signals_from_events(events)
+        if not signals:
+            return
+        try:
+            ingest_batch = getattr(pipeline, "ingest_batch", None)
+            if callable(ingest_batch):
+                await ingest_batch(signals)
+                return
+            ingest = getattr(pipeline, "ingest", None)
+            if callable(ingest):
+                for signal in signals:
+                    await ingest(signal)
+        except Exception:
+            logger.exception("Failed to ingest source task events into profile pipeline")
+
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse(status="ok", service="openbiliclaw-api")
@@ -313,16 +352,34 @@ def create_app(
             username = ""
             user_id = 0
 
-        # 2) Persist to both stores.
-        auth_manager.set_cookie(cookie_value)  # → data/bilibili_cookie.json
-        config.bilibili.cookie = cookie_value
-        save_config(config, diagnostics.config_path)
+        # 2) Persist to both stores, but keep repeated extension syncs
+        # idempotent. Chrome may POST the same Cookie several times around
+        # startup; rebuilding for an unchanged effective cookie cancels and
+        # restarts producer loops for no behavioral gain.
+        stored_cookie = ""
+        with suppress(Exception):
+            stored_cookie = auth_manager.load_cookie().strip()
+        configured_cookie = config.bilibili.cookie.strip()
+        effective_cookie_before = configured_cookie or stored_cookie
+        cookie_file_changed = stored_cookie != cookie_value
+        config_changed = configured_cookie != cookie_value
+        runtime_cookie_changed = effective_cookie_before != cookie_value
+
+        if cookie_file_changed:
+            auth_manager.set_cookie(cookie_value)  # → data/bilibili_cookie.json
+        if config_changed:
+            config.bilibili.cookie = cookie_value
+            save_config(config, diagnostics.config_path)
 
         # 3) Reload runtime so existing in-flight components pick up
         # the new client. ``rebuild_from_config`` is atomic — if it
         # fails partway, the old runtime stays intact.
-        with suppress(Exception):
-            await ctx.rebuild_from_config(config)
+        runtime_refreshed = False
+        if runtime_cookie_changed or config_changed:
+            with suppress(Exception):
+                await ctx.rebuild_from_config(config)
+                await ctx.restart_background_tasks(app)
+                runtime_refreshed = True
 
         # 4) Tell the extension UI the cookie just got refreshed —
         # this is how the popup knows it can stop nagging the user
@@ -342,7 +399,54 @@ def create_app(
             authenticated=authenticated,
             username=username,
             user_id=user_id,
-            message="Cookie synced and runtime refreshed.",
+            message=(
+                "Cookie synced and runtime refreshed."
+                if runtime_refreshed
+                else "Cookie already synced; runtime unchanged."
+            ),
+        )
+
+    @app.post("/api/sources/dy/cookie", response_model=DouyinCookieResponse)
+    async def sync_douyin_cookie(payload: DouyinCookieIn) -> DouyinCookieResponse:
+        """Receive a Douyin cookie from the browser extension.
+
+        Unlike Bilibili, Douyin direct-cookie discovery currently has no
+        stable nav endpoint that cleanly distinguishes "logged out" from
+        "soft anti-bot returned HTTP 200 with empty data". We therefore
+        persist the browser-provided Cookie header as-is and let discovery
+        smoke surface whether search / hot / feed calls return content.
+        """
+        from openbiliclaw.sources.douyin_auth import DouyinCookieManager
+        from openbiliclaw.sources.douyin_direct import parse_cookie_header
+
+        cookie_value = payload.cookie.strip()
+        if not cookie_value:
+            return DouyinCookieResponse(
+                ok=False,
+                has_cookie=False,
+                message="cookie payload is empty",
+                error_code="empty_cookie",
+            )
+
+        runtime_config = getattr(ctx, "config", None) or config
+        manager = DouyinCookieManager(runtime_config.data_path)
+        manager.set_cookie(cookie_value, source=payload.source)
+        cookie_names = sorted(parse_cookie_header(cookie_value).keys())
+
+        with suppress(Exception):
+            await ctx.event_hub.publish(
+                {
+                    "type": "douyin_cookie_synced",
+                    "source": payload.source,
+                    "cookie_names": cookie_names,
+                }
+            )
+
+        return DouyinCookieResponse(
+            ok=True,
+            has_cookie=True,
+            cookie_names=cookie_names,
+            message="Douyin Cookie synced.",
         )
 
     @app.post("/api/init-completed")
@@ -406,6 +510,7 @@ def create_app(
         client_name = str(websocket.query_params.get("client", "") or "").strip().lower()
         if client_name in {"background", "extension", "service-worker"}:
             from openbiliclaw.bilibili.auth import resolve_runtime_cookie
+            from openbiliclaw.sources.douyin_auth import resolve_douyin_cookie
 
             runtime_config = getattr(ctx, "config", None) or config
             with suppress(Exception):
@@ -421,6 +526,21 @@ def create_app(
                             "source": "runtime-stream",
                         }
                     )
+            with suppress(Exception):
+                dy_cfg = getattr(runtime_config.sources, "douyin", None)
+                if dy_cfg is not None and bool(getattr(dy_cfg, "enabled", False)):
+                    dy_cookie = resolve_douyin_cookie(
+                        data_dir=runtime_config.data_path,
+                        cookie_env=str(getattr(dy_cfg, "cookie_env", "OPENBILICLAW_DOUYIN_COOKIE")),
+                    )
+                    if not str(dy_cookie or "").strip():
+                        await websocket.send_json(
+                            {
+                                "type": "douyin_cookie_sync_requested",
+                                "reason": "missing_cookie",
+                                "source": "runtime-stream",
+                            }
+                        )
         try:
             while True:
                 event = await queue.get()
@@ -840,9 +960,7 @@ def create_app(
         if ctx.recommendation_engine is None or ctx.soul_engine is None:
             return
         if not ctx.soul_engine.is_profile_ready():
-            logger.debug(
-                "Background pool classification skipped: soul profile not ready"
-            )
+            logger.debug("Background pool classification skipped: soul profile not ready")
             return
         try:
             profile = await ctx.soul_engine.get_profile()
@@ -1050,7 +1168,7 @@ def create_app(
             }
             with suppress(Exception):
                 await ctx.event_hub.publish(payload_event)
-            pushed.append(payload_event["bvid"])
+            pushed.append(str(payload_event["bvid"]))
 
         # Clear cooldown so the regular push loop isn't gated after manual
         # trigger.
@@ -2007,9 +2125,7 @@ def create_app(
         if author and nickname and author == nickname:
             return True
         author_id = str(note.get("author_id", "") or "").strip().lower()
-        if author_id and user_id and author_id == user_id:
-            return True
-        return False
+        return bool(author_id and user_id and author_id == user_id)
 
     def _purge_self_authored_pool_items(
         database: Any,
@@ -2317,17 +2433,19 @@ def create_app(
                 # own "favorite/like" signals and warp the soul profile.
                 propagated = 0
                 skipped_self = 0
+                profile_events: list[dict[str, Any]] = []
                 for note in added_notes:
                     if _is_self_authored_note(note, self_info_now):
                         skipped_self += 1
                         continue
                     for event in xhs_bootstrap_notes_to_events([note]):
                         await ctx.memory_manager.propagate_event(event)
+                        profile_events.append(event)
                         propagated += 1
+                await _ingest_profile_update_events(profile_events)
                 if skipped_self > 0:
                     logger.info(
-                        "xhs bootstrap propagate: dropped %d self-authored note(s) "
-                        "(%d propagated)",
+                        "xhs bootstrap propagate: dropped %d self-authored note(s) (%d propagated)",
                         skipped_self,
                         propagated,
                     )
@@ -2460,9 +2578,12 @@ def create_app(
                 complete=is_final,
             )
             if task_type == "bootstrap_profile" and added_videos:
+                profile_events: list[dict[str, Any]] = []
                 for video in added_videos:
                     for event in dy_bootstrap_videos_to_events([video]):
                         await ctx.memory_manager.propagate_event(event)
+                        profile_events.append(event)
+                await _ingest_profile_update_events(profile_events)
         else:
             _dy_task_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
 
@@ -2786,8 +2907,7 @@ def create_app(
         _purged = _purge_self_authored_pool_items(ctx.database, _existing_self_info)
         if _purged:
             logger.info(
-                "startup purge: suppressed %d self-authored xhs pool item(s) "
-                "(nickname=%r)",
+                "startup purge: suppressed %d self-authored xhs pool item(s) (nickname=%r)",
                 _purged,
                 _existing_self_info.get("nickname", ""),
             )

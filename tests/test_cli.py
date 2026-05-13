@@ -1,6 +1,7 @@
 """CLI tests for configuration guidance behavior."""
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import typer
@@ -21,6 +22,11 @@ from openbiliclaw.soul.profile import (
     SoulProfile,
     ValuesLayer,
 )
+
+
+class _FakeMemoryLayer:
+    def __init__(self, data: dict[str, object] | None = None) -> None:
+        self.data = data or {}
 
 
 def _write_example_config(project_root: Path) -> None:
@@ -714,6 +720,568 @@ def test_discover_displays_preview_rows(monkeypatch: pytest.MonkeyPatch, runner:
     assert "相关性分数" in result.stdout
 
 
+def test_discover_douyin_requires_enabled_config(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.douyin.enabled = False
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["discover", "--source", "douyin"])
+
+    assert result.exit_code == 1
+    assert "抖音 direct discovery 未启用" in result.stdout
+
+
+def test_discover_douyin_runs_direct_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.douyin.enabled = True
+    config.sources.douyin.cookie_env = "TEST_DY_COOKIE"
+
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeDiscoveryEngine:
+        def __init__(self) -> None:
+            self.registered: list[object] = []
+
+        def register_strategy(self, strategy: object) -> None:
+            self.registered.append(strategy)
+
+        async def discover(
+            self,
+            profile: SoulProfile,
+            strategies: list[str] | None = None,
+            limit: int = 30,
+        ) -> list[DiscoveredContent]:
+            assert strategies == ["douyin_direct"]
+            assert limit == 5
+            assert self.registered
+            return [
+                DiscoveredContent(
+                    bvid="dy:1",
+                    content_id="1",
+                    content_url="https://www.douyin.com/video/1",
+                    title="抖音发现内容",
+                    up_name="抖音作者",
+                    source_platform="douyin",
+                    source_strategy="dy-direct-search",
+                    relevance_score=0.8,
+                )
+            ]
+
+    fake_engine = FakeDiscoveryEngine()
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine(), raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_discovery_engine",
+        lambda: fake_engine,
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setenv("TEST_DY_COOKIE", "msToken=t; ttwid=tw;")
+
+    result = runner.invoke(app, ["discover", "--source", "douyin", "--limit", "5"])
+
+    assert result.exit_code == 0
+    assert "抖音内容发现" in result.stdout
+    assert "抖音发现内容" in result.stdout
+    assert "douyin" in result.stdout
+
+
+def test_discover_douyin_reads_cookie_from_synced_file(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    config = config_module.Config(data_dir=str(tmp_path / "data"))
+    config.sources.douyin.enabled = True
+    config.sources.douyin.cookie_env = "TEST_DY_COOKIE"
+
+    (tmp_path / "data").mkdir(parents=True)
+    (tmp_path / "data" / "douyin_cookie.json").write_text(
+        '{"cookie": "msToken=file; ttwid=tw;"}',
+        encoding="utf-8",
+    )
+
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeDiscoveryEngine:
+        def register_strategy(self, strategy: object) -> None:
+            assert cast("Any", strategy).client.cookie == "msToken=file; ttwid=tw;"
+
+        async def discover(
+            self,
+            profile: SoulProfile,
+            strategies: list[str] | None = None,
+            limit: int = 30,
+        ) -> list[DiscoveredContent]:
+            return []
+
+    monkeypatch.delenv("TEST_DY_COOKIE", raising=False)
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine(), raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_discovery_engine",
+        lambda: FakeDiscoveryEngine(),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(app, ["discover", "--source", "douyin", "--limit", "5"])
+
+    assert result.exit_code == 0
+    assert "没有发现到新抖音内容" in result.stdout
+
+
+def test_discover_douyin_does_not_use_recent_bootstrap_creator_seeds_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.douyin.enabled = True
+    config.sources.douyin.cookie_env = "TEST_DY_COOKIE"
+
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeDiscoveryEngine:
+        def register_strategy(self, strategy: object) -> None:
+            assert cast("Any", strategy).creator_sec_uids == ()
+            assert cast("Any", strategy).sources == ("search", "hot", "feed")
+
+        async def discover(
+            self,
+            profile: SoulProfile,
+            strategies: list[str] | None = None,
+            limit: int = 30,
+        ) -> list[DiscoveredContent]:
+            return []
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine(), raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_discovery_engine",
+        lambda: FakeDiscoveryEngine(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_recent_douyin_creator_sec_uids",
+        lambda limit=20: pytest.fail("creator seeds should not be read by default"),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setenv("TEST_DY_COOKIE", "msToken=t; ttwid=tw;")
+    monkeypatch.delenv("OPENBILICLAW_DOUYIN_CREATOR_SEC_UIDS", raising=False)
+
+    result = runner.invoke(app, ["discover", "--source", "douyin", "--limit", "5"])
+
+    assert result.exit_code == 0
+
+
+def test_discover_douyin_standalone_command_passes_debug_options(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run_douyin_discovery(**kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cli_module, "_run_douyin_discovery", fake_run_douyin_discovery)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "discover-douyin",
+            "--keyword",
+            "猫咪,机械键盘",
+            "--source",
+            "search,feed",
+            "--limit",
+            "12",
+            "--no-cache",
+            "--no-evaluate",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured == {
+        "limit": 12,
+        "keywords": ("猫咪", "机械键盘"),
+        "creator_sec_uids": (),
+        "sources": ("search", "feed"),
+        "cache": False,
+        "evaluate": False,
+    }
+
+
+def test_discover_douyin_source_normalization_accepts_feed_and_rejects_creator() -> None:
+    assert cli_module._normalize_douyin_discovery_sources(("search,feed",)) == (
+        "search",
+        "feed",
+    )
+    with pytest.raises(typer.BadParameter, match="search、hot、feed"):
+        cli_module._normalize_douyin_discovery_sources(("creator",))
+
+
+def test_discover_douyin_search_uses_plugin_client(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.douyin.enabled = True
+    config.sources.douyin.cookie_env = "TEST_DY_COOKIE"
+
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(
+                personality_portrait="稳定用户画像" * 30,
+                preferences=PreferenceLayer(
+                    interests=[],
+                ),
+            )
+
+    class FakeDirectClient:
+        cookie = "msToken=t; ttwid=tw;"
+
+        def __init__(self, *, cookie: str) -> None:
+            self.cookie = cookie
+
+        async def __aenter__(self) -> "FakeDirectClient":
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def search_aweme(self, keyword: str, *, limit: int = 30) -> list[dict[str, object]]:
+            return []
+
+        async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
+            return []
+
+        async def get_creator_posts(
+            self,
+            sec_uid: str,
+            *,
+            limit: int = 30,
+        ) -> list[dict[str, object]]:
+            return []
+
+    class FakePluginSearchClient:
+        cookie = "msToken=t; ttwid=tw;"
+
+        def __init__(
+            self,
+            *,
+            database: object,
+            direct_client: FakeDirectClient,
+            **kwargs: object,
+        ) -> None:
+            del database, kwargs
+            self.cookie = direct_client.cookie
+
+        async def search_aweme(self, keyword: str, *, limit: int = 30) -> list[dict[str, object]]:
+            assert keyword == "猫"
+            assert limit == 5
+            return [
+                {
+                    "aweme_id": "plugin-1",
+                    "desc": "插件搜索结果",
+                    "author": {"nickname": "插件作者"},
+                }
+            ]
+
+        async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
+            return []
+
+        async def get_creator_posts(
+            self,
+            sec_uid: str,
+            *,
+            limit: int = 30,
+        ) -> list[dict[str, object]]:
+            return []
+
+    class FakeDatabase:
+        conn = object()
+
+    import openbiliclaw.sources.douyin_direct as douyin_direct_module
+    import openbiliclaw.sources.douyin_plugin_search as plugin_search_module
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine(), raising=False)
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase(), raising=False)
+    monkeypatch.setattr(douyin_direct_module, "DouyinDirectClient", FakeDirectClient)
+    monkeypatch.setattr(plugin_search_module, "DouyinPluginSearchClient", FakePluginSearchClient)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setenv("TEST_DY_COOKIE", "msToken=t; ttwid=tw;")
+
+    result = runner.invoke(
+        app,
+        [
+            "discover-douyin",
+            "--source",
+            "search",
+            "--keyword",
+            "猫",
+            "--limit",
+            "5",
+            "--no-cache",
+            "--no-evaluate",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "插件搜索结果" in result.stdout
+
+
+def test_discover_douyin_hot_uses_plugin_client(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.douyin.enabled = True
+    config.sources.douyin.cookie_env = "TEST_DY_COOKIE"
+    config.sources.douyin.daily_search_budget = 11
+    config.sources.douyin.daily_hot_budget = 13
+
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeDirectClient:
+        cookie = "msToken=t; ttwid=tw;"
+
+        def __init__(self, *, cookie: str) -> None:
+            self.cookie = cookie
+
+        async def __aenter__(self) -> "FakeDirectClient":
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def search_aweme(self, keyword: str, *, limit: int = 30) -> list[dict[str, object]]:
+            return []
+
+        async def get_hot_terms(self, *, limit: int = 30) -> list[dict[str, object]]:
+            return [{"word": "热点词", "sentence_id": "2495363"}]
+
+        async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
+            return []
+
+        async def get_creator_posts(
+            self,
+            sec_uid: str,
+            *,
+            limit: int = 30,
+        ) -> list[dict[str, object]]:
+            return []
+
+    captured: dict[str, object] = {}
+
+    class FakePluginSearchClient:
+        hot_source_strategy = "dy-plugin-hot-related"
+
+        def __init__(
+            self,
+            *,
+            database: object,
+            direct_client: FakeDirectClient,
+            **kwargs: object,
+        ) -> None:
+            del database
+            self.cookie = direct_client.cookie
+            captured.update(kwargs)
+
+        async def search_aweme(self, keyword: str, *, limit: int = 30) -> list[dict[str, object]]:
+            return []
+
+        async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
+            assert limit == 5
+            return [
+                {
+                    "aweme_id": "plugin-hot-1",
+                    "desc": "插件热点相关结果",
+                    "author": {"nickname": "热点作者"},
+                }
+            ]
+
+        async def get_creator_posts(
+            self,
+            sec_uid: str,
+            *,
+            limit: int = 30,
+        ) -> list[dict[str, object]]:
+            return []
+
+    class FakeDatabase:
+        conn = object()
+
+    import openbiliclaw.sources.douyin_direct as douyin_direct_module
+    import openbiliclaw.sources.douyin_plugin_search as plugin_search_module
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine(), raising=False)
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase(), raising=False)
+    monkeypatch.setattr(douyin_direct_module, "DouyinDirectClient", FakeDirectClient)
+    monkeypatch.setattr(plugin_search_module, "DouyinPluginSearchClient", FakePluginSearchClient)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setenv("TEST_DY_COOKIE", "msToken=t; ttwid=tw;")
+
+    result = runner.invoke(
+        app,
+        [
+            "discover-douyin",
+            "--source",
+            "hot",
+            "--limit",
+            "5",
+            "--no-cache",
+            "--no-evaluate",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "插件热点相关结果" in result.stdout
+    assert captured["daily_search_budget"] == 11
+    assert captured["daily_hot_budget"] == 13
+
+
+def test_discover_douyin_feed_uses_plugin_client(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+) -> None:
+    config = config_module.Config()
+    config.sources.douyin.enabled = True
+    config.sources.douyin.cookie_env = "TEST_DY_COOKIE"
+    config.sources.douyin.daily_feed_budget = 17
+
+    class FakeSoulEngine:
+        async def get_profile(self) -> SoulProfile:
+            return SoulProfile(personality_portrait="稳定用户画像" * 30)
+
+    class FakeDirectClient:
+        cookie = "msToken=t; ttwid=tw;"
+
+        def __init__(self, *, cookie: str) -> None:
+            self.cookie = cookie
+
+        async def __aenter__(self) -> "FakeDirectClient":
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def search_aweme(self, keyword: str, *, limit: int = 30) -> list[dict[str, object]]:
+            return []
+
+        async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
+            return []
+
+        async def get_creator_posts(
+            self,
+            sec_uid: str,
+            *,
+            limit: int = 30,
+        ) -> list[dict[str, object]]:
+            return []
+
+    captured: dict[str, object] = {}
+
+    class FakePluginSearchClient:
+        feed_source_strategy = "dy-plugin-feed"
+
+        def __init__(
+            self,
+            *,
+            database: object,
+            direct_client: FakeDirectClient,
+            **kwargs: object,
+        ) -> None:
+            del database
+            self.cookie = direct_client.cookie
+            captured.update(kwargs)
+
+        async def search_aweme(self, keyword: str, *, limit: int = 30) -> list[dict[str, object]]:
+            return []
+
+        async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
+            return []
+
+        async def get_creator_posts(
+            self,
+            sec_uid: str,
+            *,
+            limit: int = 30,
+        ) -> list[dict[str, object]]:
+            return []
+
+        async def get_recommend_feed(self, *, limit: int = 30) -> list[dict[str, object]]:
+            assert limit == 5
+            return [
+                {
+                    "aweme_id": "plugin-feed-1",
+                    "desc": "插件首页推荐结果",
+                    "author": {"nickname": "推荐作者"},
+                }
+            ]
+
+    class FakeDatabase:
+        conn = object()
+
+    import openbiliclaw.sources.douyin_direct as douyin_direct_module
+    import openbiliclaw.sources.douyin_plugin_search as plugin_search_module
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(config_module, "load_config", lambda: config)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: FakeSoulEngine(), raising=False)
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase(), raising=False)
+    monkeypatch.setattr(douyin_direct_module, "DouyinDirectClient", FakeDirectClient)
+    monkeypatch.setattr(plugin_search_module, "DouyinPluginSearchClient", FakePluginSearchClient)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setenv("TEST_DY_COOKIE", "msToken=t; ttwid=tw;")
+
+    result = runner.invoke(
+        app,
+        [
+            "discover-douyin",
+            "--source",
+            "feed",
+            "--limit",
+            "5",
+            "--no-cache",
+            "--no-evaluate",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "插件首页推荐结果" in result.stdout
+    assert captured["daily_feed_budget"] == 17
+
+
 def test_chat_prints_init_guidance_when_profile_missing(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner
 ) -> None:
@@ -1234,14 +1802,14 @@ def test_init_guides_missing_runtime_config_interactively(
         raising=False,
     )
 
-    # Wizard + xhs-prompt inputs (v0.3.27+):
+    # Wizard + source-prompt inputs:
     #   1. menu choice: "gemini"
     #   2. API key
     #   3. model (accept default)
     #   4. embedding choice "1" (follow primary)
     #   5. "n" — skip module overrides
-    #   6. "n" — skip xhs inclusion (v0.3.27 added a y/n prompt before
-    #      data fetch)
+    #   6. "n" — skip xhs inclusion
+    #   7. "n" — skip douyin inclusion
     wizard_input = (
         "\n".join(
             [
@@ -1249,6 +1817,7 @@ def test_init_guides_missing_runtime_config_interactively(
                 "gemini-key",
                 "",
                 "1",
+                "n",
                 "n",
                 "n",
             ]
@@ -1317,9 +1886,10 @@ def test_init_guides_missing_auth_interactively(
     # v0.3.13: auth wizard now opens with a 2-choice prompt
     # (1=install extension and skip / 2=paste cookie now). To keep this
     # test exercising the manual-paste path, send "2" first.
-    # v0.3.27+: a y/n xhs prompt fires before data fetch. Send "n" so
-    # the test stays focused on the cookie-prompt path.
-    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\nn\n")
+    # v0.3.27+: a y/n xhs prompt fires before data fetch; v0.3.64+
+    # then asks for douyin. Send "n" to both so this test stays
+    # focused on the cookie-prompt path.
+    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\nn\nn\n")
 
     assert result.exit_code == 1
     assert fake_auth.saved_cookie == "SESSDATA=valid"
@@ -1425,6 +1995,10 @@ def test_init_runs_history_preference_profile_and_discovery(
         async def propagate_event(self, event: dict[str, object]) -> None:
             self.events.append(event)
 
+        def get_layer(self, name: str) -> _FakeMemoryLayer:
+            assert name == "preference"
+            return _FakeMemoryLayer()
+
     class FakeSoulEngine:
         def __init__(self) -> None:
             self.analyzed_events: list[list[dict[str, object]]] = []
@@ -1452,6 +2026,7 @@ def test_init_runs_history_preference_profile_and_discovery(
             profile: SoulProfile,
             strategies: list[str] | None = None,
             limit: int = 30,
+            **_: object,
         ) -> list[DiscoveredContent]:
             self.calls.append((profile, strategies, limit))
             return [
@@ -1500,7 +2075,7 @@ def test_init_runs_history_preference_profile_and_discovery(
     assert "3/4" in result.stdout
     assert "4/4" in result.stdout
     assert "浏览历史" in result.stdout
-    assert "发现内容数" in result.stdout
+    assert "首轮发现内容" in result.stdout
     assert fake_memory.events[0]["event_type"] == "view"
     assert fake_soul.analyzed_events
     assert fake_soul.built_history
@@ -1665,6 +2240,169 @@ def test_init_includes_xhs_bootstrap_events(
     assert any(item.get("title") == "小红书收藏咖啡" for item in built_history)
 
 
+def test_init_includes_douyin_bootstrap_events_in_analysis_and_profile(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    from openbiliclaw.sources.dy_tasks import dy_bootstrap_videos_to_events
+
+    class FakeAuthManager:
+        async def get_status(self) -> AuthStatus:
+            return AuthStatus(
+                has_cookie=True,
+                authenticated=True,
+                cookie_path=tmp_path / "bilibili_cookie.json",
+                username="alice",
+                user_id=10086,
+                message="Cookie 验证成功。",
+            )
+
+    class FakeBilibiliClient:
+        async def get_user_history(self, max_items: int = 100) -> list[dict[str, object]]:
+            return [
+                {
+                    "history": {"bvid": "BV1A", "view_at": 1710000000},
+                    "title": "讲透历史叙事",
+                    "author_name": "历史实验室",
+                }
+            ]
+
+        async def get_all_favorites(self, **_: object) -> list[object]:
+            return []
+
+        async def get_following(self, **_: object) -> list[object]:
+            return []
+
+    class FakeMemoryManager:
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = []
+
+        async def propagate_event(self, event: dict[str, object]) -> None:
+            self.events.append(event)
+
+        def get_layer(self, name: str) -> _FakeMemoryLayer:
+            assert name == "preference"
+            return _FakeMemoryLayer()
+
+    class FakeSoulEngine:
+        def __init__(self) -> None:
+            self.analyzed_events: list[list[dict[str, object]]] = []
+            self.built_history: list[list[dict[str, object]]] = []
+
+        async def analyze_events(
+            self,
+            events: list[dict[str, object]],
+            event_chunk_size: int = 0,
+        ) -> None:
+            self.analyzed_events.append(events)
+
+        async def build_initial_profile(self, history: list[dict[str, object]]) -> SoulProfile:
+            self.built_history.append(history)
+            return SoulProfile(
+                personality_portrait="稳定用户画像" * 30,
+                core_traits=["理性"],
+                preferences=PreferenceLayer(),
+            )
+
+    async def passthrough_progress(coro: object, **_: object) -> object:
+        return await coro  # type: ignore[misc]
+
+    async def fake_discovery_backfill(*_: object, **__: object) -> int:
+        return 0
+
+    dy_events = dy_bootstrap_videos_to_events(
+        [
+            {
+                "scope": "dy_collect",
+                "title": "抖音收藏咖啡",
+                "url": "https://www.douyin.com/video/dy-fav-1",
+                "aweme_id": "dy-fav-1",
+                "author": "抖音作者",
+            },
+            {
+                "scope": "dy_like",
+                "title": "抖音点赞历史",
+                "url": "https://www.douyin.com/video/dy-like-1",
+                "aweme_id": "dy-like-1",
+                "author": "点赞作者",
+            },
+        ]
+    )
+    fake_memory = FakeMemoryManager()
+    fake_soul = FakeSoulEngine()
+    fake_database = type(
+        "FakeDatabase",
+        (),
+        {"count_pool_candidates": lambda self: 0},
+    )()
+
+    def fail_xhs_enqueue() -> str | None:
+        raise AssertionError("--no-xhs should skip xhs enqueue")
+
+    monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(cli_module, "_load_runtime_config_error", lambda render=True: None)
+    monkeypatch.setattr(cli_module, "_build_auth_manager", lambda: FakeAuthManager(), raising=False)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_bilibili_client",
+        lambda: FakeBilibiliClient(),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_module, "_build_memory_manager", lambda: fake_memory, raising=False)
+    monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: fake_soul, raising=False)
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: fake_database, raising=False)
+    monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setattr(cli_module, "_run_with_progress", passthrough_progress)
+    monkeypatch.setattr(
+        cli_module,
+        "_run_init_discovery_backfill_async",
+        fake_discovery_backfill,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_build_draft_profile_for_discover",
+        lambda memory: SoulProfile(preferences=PreferenceLayer()),
+    )
+    monkeypatch.setattr(cli_module, "_notify_running_server_init_completed", lambda: None)
+    monkeypatch.setattr(cli_module, "_enqueue_xhs_bootstrap_task", fail_xhs_enqueue, raising=False)
+    monkeypatch.setattr(cli_module, "_enqueue_dy_bootstrap_task", lambda: "fake-dy-task-id")
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_dy_bootstrap_events",
+        lambda task_id, **_: (
+            dy_events,
+            {"dy_post": 0, "dy_collect": 1, "dy_like": 1, "dy_follow": 0},
+            "ok",
+        ),
+    )
+
+    result = runner.invoke(app, ["init", "--no-xhs", "--yes-douyin"])
+
+    assert result.exit_code == 0, result.output
+    assert "抖音" in result.stdout
+    assert "抖音信号" in result.stdout
+    assert "收藏" in result.stdout
+    assert "点赞" in result.stdout
+    assert fake_soul.analyzed_events
+    analyzed_events = fake_soul.analyzed_events[0]
+    assert any(
+        event.get("metadata", {}).get("source_platform") == "douyin" for event in analyzed_events
+    )
+    assert fake_soul.built_history
+    built_history = fake_soul.built_history[0]
+    assert any(
+        item.get("title") == "抖音收藏咖啡"
+        and item.get("source_platform") == "douyin"
+        and "抖音收藏" in str(item.get("context", ""))
+        for item in built_history
+    )
+    assert any(
+        item.get("title") == "抖音点赞历史"
+        and item.get("source_platform") == "douyin"
+        and "抖音点赞" in str(item.get("context", ""))
+        for item in built_history
+    )
+
+
 def test_collect_xhs_bootstrap_events_status_branches(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1749,6 +2487,49 @@ def test_collect_xhs_bootstrap_events_status_branches(
     assert status == "skipped"
     assert events == []
     assert counts == {}
+
+
+def test_collect_source_bootstrap_events_default_wait_is_180_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    from openbiliclaw.cli import (
+        _collect_dy_bootstrap_events,
+        _collect_xhs_bootstrap_events,
+    )
+
+    class FakeDatabase:
+        conn = object()
+
+    class AlwaysPendingQueue:
+        def __init__(self, _db: object) -> None:
+            self.get_calls = 0
+
+        def get(self, _task_id: str) -> dict[str, str]:
+            self.get_calls += 1
+            return {"status": "pending", "result_json": "{}"}
+
+    xhs_queue = AlwaysPendingQueue(FakeDatabase())
+    dy_queue = AlwaysPendingQueue(FakeDatabase())
+    monkeypatch.delenv("OPENBILICLAW_XHS_BOOTSTRAP_WAIT_SECONDS", raising=False)
+    monkeypatch.delenv("OPENBILICLAW_DY_BOOTSTRAP_WAIT_SECONDS", raising=False)
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr("openbiliclaw.sources.xhs_tasks.XhsTaskQueue", lambda _db: xhs_queue)
+    monkeypatch.setattr("openbiliclaw.sources.dy_tasks.DyTaskQueue", lambda _db: dy_queue)
+
+    xhs_ticks = iter([0.0, 179.9, 180.0])
+    monkeypatch.setattr(time, "monotonic", lambda: next(xhs_ticks))
+    _events, _counts, xhs_status = _collect_xhs_bootstrap_events("xhs-task")
+    dy_ticks = iter([0.0, 179.9, 180.0])
+    monkeypatch.setattr(time, "monotonic", lambda: next(dy_ticks))
+    _events, _counts, dy_status = _collect_dy_bootstrap_events("dy-task")
+
+    assert xhs_status == "timeout"
+    assert dy_status == "timeout"
+    assert xhs_queue.get_calls == 2
+    assert dy_queue.get_calls == 2
 
 
 def test_enqueue_xhs_bootstrap_task_uses_env_overrides(
@@ -1850,6 +2631,10 @@ def test_init_no_xhs_flag_skips_enqueue(
     class FakeMemoryManager:
         async def propagate_event(self, event: dict[str, object]) -> None:
             return None
+
+        def get_layer(self, name: str) -> _FakeMemoryLayer:
+            assert name == "preference"
+            return _FakeMemoryLayer()
 
     class FakeSoulEngine:
         def __init__(self) -> None:
@@ -1957,6 +2742,10 @@ def test_init_backfills_pool_in_stages_until_target_is_reached(
         async def propagate_event(self, event: dict[str, object]) -> None:
             return None
 
+        def get_layer(self, name: str) -> _FakeMemoryLayer:
+            assert name == "preference"
+            return _FakeMemoryLayer()
+
     class FakeSoulEngine:
         async def analyze_events(
             self, events: list[dict[str, object]], event_chunk_size: int = 0
@@ -1987,12 +2776,11 @@ def test_init_backfills_pool_in_stages_until_target_is_reached(
             profile: SoulProfile,
             strategies: list[str] | None = None,
             limit: int = 30,
+            **_: object,
         ) -> list[DiscoveredContent]:
             self.calls.append((strategies, limit))
-            if strategies == ["search", "related_chain"]:
-                self.database.pool_count = 20
-            elif strategies == ["trending"]:
-                self.database.pool_count = 100
+            if strategies == ["search", "trending", "related_chain", "explore"]:
+                self.database.pool_count = 15
             else:
                 raise AssertionError(f"unexpected strategies: {strategies}")
             return [
@@ -2034,19 +2822,17 @@ def test_init_backfills_pool_in_stages_until_target_is_reached(
 
     assert result.exit_code == 0
     assert fake_discovery.calls == [
-        (["search", "related_chain"], 100),
-        (["trending"], 80),
+        (["search", "trending", "related_chain", "explore"], 20),
     ]
-    assert "补货阶段 1/3" in result.stdout
-    assert "search + related_chain" in result.stdout
-    assert "当前池子 0/100" in result.stdout
+    assert "补货阶段 1/1" in result.stdout
+    assert "search + trending + related_chain + explore" in result.stdout
+    assert "当前池子 0/15" in result.stdout
     assert "阶段完成" in result.stdout
-    assert "当前池子 20/100" in result.stdout
-    assert "发现内容数" in result.stdout
-    assert "2" in result.stdout
+    assert "当前池子 15/15" in result.stdout
+    assert "首轮发现内容" in result.stdout
 
 
-def test_init_stops_backfill_early_when_first_stage_reaches_pool_target(
+def test_init_skips_backfill_when_pool_target_is_already_reached(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
 ) -> None:
     class FakeAuthManager:
@@ -2073,6 +2859,10 @@ def test_init_stops_backfill_early_when_first_stage_reaches_pool_target(
     class FakeMemoryManager:
         async def propagate_event(self, event: dict[str, object]) -> None:
             return None
+
+        def get_layer(self, name: str) -> _FakeMemoryLayer:
+            assert name == "preference"
+            return _FakeMemoryLayer()
 
     class FakeSoulEngine:
         async def analyze_events(
@@ -2104,6 +2894,7 @@ def test_init_stops_backfill_early_when_first_stage_reaches_pool_target(
             profile: SoulProfile,
             strategies: list[str] | None = None,
             limit: int = 30,
+            **_: object,
         ) -> list[DiscoveredContent]:
             self.calls.append((strategies, limit))
             self.database.pool_count = 100
@@ -2145,7 +2936,7 @@ def test_init_stops_backfill_early_when_first_stage_reaches_pool_target(
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
-    assert fake_discovery.calls == [(["search", "related_chain"], 55)]
+    assert fake_discovery.calls == []
 
 
 def test_init_reports_partial_success_when_discovery_fails(
@@ -2176,6 +2967,10 @@ def test_init_reports_partial_success_when_discovery_fails(
         async def propagate_event(self, event: dict[str, object]) -> None:
             return None
 
+        def get_layer(self, name: str) -> _FakeMemoryLayer:
+            assert name == "preference"
+            return _FakeMemoryLayer()
+
     class FakeSoulEngine:
         async def analyze_events(
             self, events: list[dict[str, object]], event_chunk_size: int = 0
@@ -2195,6 +2990,7 @@ def test_init_reports_partial_success_when_discovery_fails(
             profile: SoulProfile,
             strategies: list[str] | None = None,
             limit: int = 30,
+            **_: object,
         ) -> list[DiscoveredContent]:
             raise RuntimeError("discovery unavailable")
 
@@ -2655,6 +3451,81 @@ def test_collect_dy_bootstrap_events_surfaces_failed_status(
     assert status == "failed"
 
 
+def test_enqueue_dy_search_task_records_keywords(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.cli import _enqueue_dy_search_task
+
+    captured: dict = {}
+
+    class FakeQueue:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        def enqueue_with_id(self, task_type: str, payload: dict, *, daily_budget: int) -> str:
+            captured["task_type"] = task_type
+            captured["payload"] = payload
+            captured["daily_budget"] = daily_budget
+            return "dy-search-task"
+
+    class FakeDatabase:
+        conn = object()
+
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr("openbiliclaw.sources.dy_tasks.DyTaskQueue", FakeQueue)
+
+    task_id = _enqueue_dy_search_task(("猫", "美食"), max_items_per_keyword=7)
+    assert task_id == "dy-search-task"
+    assert captured["task_type"] == "search"
+    assert captured["payload"] == {
+        "keywords": ["猫", "美食"],
+        "max_items_per_keyword": 7,
+    }
+
+
+def test_collect_dy_search_results_reads_completed_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from openbiliclaw.cli import _collect_dy_search_results
+
+    class FakeQueue:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        def get(self, task_id: str) -> dict:
+            assert task_id == "search-1"
+            return {
+                "id": "search-1",
+                "status": "completed",
+                "result_json": json.dumps(
+                    {
+                        "videos": [
+                            {
+                                "scope": "dy_search",
+                                "title": "搜索结果",
+                                "url": "https://www.douyin.com/video/7788",
+                                "aweme_id": "7788",
+                            }
+                        ],
+                        "scope_counts": {"dy_search": 1},
+                    }
+                ),
+            }
+
+    class FakeDatabase:
+        conn = object()
+
+    monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: FakeDatabase())
+    monkeypatch.setattr("openbiliclaw.sources.dy_tasks.DyTaskQueue", FakeQueue)
+
+    videos, counts, status = _collect_dy_search_results("search-1", max_wait_seconds=0)
+    assert status == "ok"
+    assert counts == {"dy_search": 1}
+    assert videos[0]["aweme_id"] == "7788"
+
+
 def test_dy_events_to_history_items_preserves_context_and_source_platform() -> None:
     """The history-item adapter must keep the natural-language context
     field and tag rows with source_platform=douyin so cross-source
@@ -2739,6 +3610,39 @@ def test_fetch_douyin_command_renders_scope_counts_after_extension_done(
     assert "收藏" in result.output and "点赞" in result.output
 
 
+def test_fetch_source_commands_default_wait_is_180_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    observed: dict[str, float] = {}
+
+    monkeypatch.setattr(cli_module, "_enqueue_dy_bootstrap_task", lambda: "dy-task")
+    monkeypatch.setattr(cli_module, "_enqueue_xhs_bootstrap_task", lambda: "xhs-task")
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_dy_bootstrap_events",
+        lambda task_id, *, max_wait_seconds: (
+            observed.setdefault("dy", max_wait_seconds)
+            and ([], {"dy_post": 0, "dy_collect": 0, "dy_like": 0, "dy_follow": 0}, "empty")
+        ),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_xhs_bootstrap_events",
+        lambda task_id, *, max_wait_seconds: (
+            observed.setdefault("xhs", max_wait_seconds)
+            and ([], {"saved": 0, "liked": 0, "xhs_history": 0}, "empty")
+        ),
+    )
+
+    dy_result = runner.invoke(app, ["fetch-douyin"])
+    xhs_result = runner.invoke(app, ["fetch-xhs"])
+
+    assert dy_result.exit_code == 0, dy_result.output
+    assert xhs_result.exit_code == 0, xhs_result.output
+    assert observed == {"dy": 180.0, "xhs": 180.0}
+
+
 def test_fetch_douyin_does_not_call_prepare_init_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2800,6 +3704,36 @@ def test_fetch_douyin_does_not_propagate_events_cli_side(
     assert propagated == [], (
         "fetch-douyin should not propagate events CLI-side; daemon already does it"
     )
+
+
+def test_fetch_douyin_does_not_rebuild_profile_cli_side(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``fetch-douyin`` only verifies/imports the source data. Profile
+    rebuild stays on the init / learning paths instead of being hidden
+    behind the smoke command."""
+    runner = CliRunner()
+    rebuilt = {"called": False}
+
+    def trip_soul_engine() -> object:
+        rebuilt["called"] = True
+        raise AssertionError("fetch-douyin should not build or rebuild the soul profile")
+
+    monkeypatch.setattr(cli_module, "_build_soul_engine", trip_soul_engine)
+    monkeypatch.setattr(cli_module, "_enqueue_dy_bootstrap_task", lambda: "task-id")
+    monkeypatch.setattr(
+        cli_module,
+        "_collect_dy_bootstrap_events",
+        lambda task_id, *, max_wait_seconds: (
+            [{"event_type": "favorite", "title": "x", "metadata": {}}],
+            {"dy_post": 0, "dy_collect": 1, "dy_like": 0, "dy_follow": 0},
+            "ok",
+        ),
+    )
+
+    result = runner.invoke(app, ["fetch-douyin"])
+    assert result.exit_code == 0, result.output
+    assert rebuilt["called"] is False
 
 
 def test_fetch_douyin_exits_with_code_1_when_enqueue_fails(

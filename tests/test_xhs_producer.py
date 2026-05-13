@@ -106,6 +106,39 @@ async def test_producer_enqueues_keywords_up_to_budget(
 
 
 @pytest.mark.asyncio
+async def test_producer_limits_keyword_generation_to_requested_gap(
+    queue: XhsTaskQueue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_counts: list[int] = []
+
+    async def fake_keywords(_llm: Any, _profile: Any, *, count: int) -> list[str]:
+        requested_counts.append(count)
+        return [f"kw-{i}" for i in range(count)]
+
+    monkeypatch.setattr(
+        "openbiliclaw.runtime.xhs_producer.generate_xhs_keywords",
+        fake_keywords,
+    )
+
+    producer = XhsTaskProducer(
+        task_queue=queue,
+        soul_engine=_FakeSoulEngine(_profile_with_interests()),
+        llm_service=_FakeLLMService(),
+        enabled=True,
+        daily_budget=30,
+        keywords_per_cycle=5,
+        min_interval_hours=0,
+    )
+    result = await producer.produce_if_due(limit=2)
+
+    assert requested_counts == [2]
+    assert result["reason"] == "ok"
+    assert result["attempted"] == 2
+    assert result["enqueued"] == 2
+
+
+@pytest.mark.asyncio
 async def test_producer_throttled_when_recent_task_exists(
     queue: XhsTaskQueue,
     monkeypatch: pytest.MonkeyPatch,

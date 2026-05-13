@@ -21,7 +21,11 @@
  * we navigate through 4 scopes serially.
  */
 
-import type { DouyinBootstrapItem, DouyinScope } from "../main/dy-fetch-tap.js";
+import type {
+  DouyinBootstrapItem,
+  DouyinScope,
+  DouyinSearchItem,
+} from "../main/dy-fetch-tap.js";
 // Cross-source mutex via globalThis. Mirror of the helper inlined
 // in xhs-task-dispatcher; both dispatchers coordinate by writing to
 // the same field on globalThis. See dispatcher-mutex.ts for the
@@ -83,6 +87,7 @@ const NEXT_TASK_URL = "http://127.0.0.1:8420/api/sources/dy/next-task";
 const TASK_RESULT_URL = "http://127.0.0.1:8420/api/sources/dy/task-result";
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 const TASK_TIMEOUT_MS = 30_000;
+const SEARCH_TASK_TIMEOUT_MS = 180_000;
 const BOOTSTRAP_PER_ROUND_TIMEOUT_MS = 3_000;
 const BOOTSTRAP_MAX_TASK_TIMEOUT_MS = 360_000;
 const POLL_ALARM_NAME = "openbiliclaw-dy-task-poll";
@@ -95,11 +100,22 @@ const KNOWN_SCOPES: readonly DouyinScope[] = [
 
 export interface DyTask {
   id: string;
-  type: "bootstrap_profile";
+  type: "bootstrap_profile" | "search" | "hot" | "feed";
   scopes?: DouyinScope[];
   max_items_per_scope?: number;
   max_scroll_rounds?: number;
   max_stagnant_scroll_rounds?: number;
+  keywords?: string[];
+  max_items_per_keyword?: number;
+  hot_items?: DyHotTaskItem[];
+  max_items_per_hot?: number;
+  max_items?: number;
+}
+
+export interface DyHotTaskItem {
+  word?: string;
+  sentence_id: string;
+  hot_value?: number;
 }
 
 export interface DyTaskResult {
@@ -134,12 +150,50 @@ interface TaskProgress {
 
 let progress: TaskProgress | null = null;
 
+interface SearchProgress {
+  task_id: string;
+  keywords: string[];
+  current_keyword_idx: number;
+  accumulated_count: number;
+  max_items_per_keyword: number;
+}
+
+let searchProgress: SearchProgress | null = null;
+
+interface HotProgress {
+  task_id: string;
+  hot_items: DyHotTaskItem[];
+  current_hot_idx: number;
+  accumulated_count: number;
+  max_items_per_hot: number;
+  max_items_total: number;
+}
+
+let hotProgress: HotProgress | null = null;
+
+interface FeedProgress {
+  task_id: string;
+  accumulated_count: number;
+  max_items: number;
+}
+
+let feedProgress: FeedProgress | null = null;
+
 // ---------------------------------------------------------------------------
 // Pure helpers (testable without chrome)
 // ---------------------------------------------------------------------------
 
 export function buildDyTaskUrl(task: DyTask): string | null {
   if (task.type === "bootstrap_profile") {
+    return "https://www.douyin.com/";
+  }
+  if (task.type === "search") {
+    return "https://www.douyin.com/";
+  }
+  if (task.type === "hot") {
+    return "https://www.douyin.com/";
+  }
+  if (task.type === "feed") {
     return "https://www.douyin.com/";
   }
   return null;
@@ -149,6 +203,22 @@ export function isValidDyTask(task: unknown): task is DyTask {
   if (typeof task !== "object" || task === null) return false;
   const t = task as Record<string, unknown>;
   if (typeof t.id !== "string" || !t.id) return false;
+  if (t.type === "search") {
+    if (!Array.isArray(t.keywords)) return false;
+    return t.keywords.some((keyword) => typeof keyword === "string" && keyword.trim());
+  }
+  if (t.type === "hot") {
+    if (!Array.isArray(t.hot_items)) return false;
+    return t.hot_items.some((item) => {
+      if (!item || typeof item !== "object") return false;
+      const row = item as Record<string, unknown>;
+      return typeof row.sentence_id === "string" && Boolean(row.sentence_id.trim());
+    });
+  }
+  if (t.type === "feed") {
+    if (t.max_items === undefined) return true;
+    return typeof t.max_items === "number" && Number.isFinite(t.max_items) && t.max_items > 0;
+  }
   if (t.type !== "bootstrap_profile") return false;
   if (t.scopes !== undefined) {
     if (!Array.isArray(t.scopes)) return false;
@@ -160,6 +230,25 @@ export function isValidDyTask(task: unknown): task is DyTask {
 }
 
 export function computeDyTaskTimeoutMs(task: DyTask): number {
+  if (task.type === "search") {
+    const keywordCount =
+      Array.isArray(task.keywords) && task.keywords.length > 0 ? task.keywords.length : 1;
+    return Math.min(
+      Math.max(SEARCH_TASK_TIMEOUT_MS, keywordCount * SEARCH_TASK_TIMEOUT_MS),
+      BOOTSTRAP_MAX_TASK_TIMEOUT_MS,
+    );
+  }
+  if (task.type === "hot") {
+    const hotCount =
+      Array.isArray(task.hot_items) && task.hot_items.length > 0 ? task.hot_items.length : 1;
+    return Math.min(
+      Math.max(TASK_TIMEOUT_MS, TASK_TIMEOUT_MS + hotCount * 70_000),
+      BOOTSTRAP_MAX_TASK_TIMEOUT_MS,
+    );
+  }
+  if (task.type === "feed") {
+    return Math.min(Math.max(TASK_TIMEOUT_MS, 60_000), BOOTSTRAP_MAX_TASK_TIMEOUT_MS);
+  }
   // Default per-task timeout has to account for the executor visiting
   // up to 4 scope tabs in series, each scrolling up to N rounds. We
   // assume 4 scopes if the task didn't enumerate them — the CLI's
@@ -189,7 +278,30 @@ export function buildDyExecuteMessageData(task: DyTask): Record<string, unknown>
   if (task.max_stagnant_scroll_rounds !== undefined) {
     data.max_stagnant_scroll_rounds = task.max_stagnant_scroll_rounds;
   }
+  if (task.keywords !== undefined) data.keywords = task.keywords;
+  if (task.max_items_per_keyword !== undefined) {
+    data.max_items_per_keyword = task.max_items_per_keyword;
+  }
+  if (task.hot_items !== undefined) data.hot_items = task.hot_items;
+  if (task.max_items_per_hot !== undefined) {
+    data.max_items_per_hot = task.max_items_per_hot;
+  }
+  if (task.max_items !== undefined) data.max_items = task.max_items;
   return data;
+}
+
+export function shouldFinalizeHotTask({
+  accumulatedCount,
+  maxItemsTotal,
+  currentHotIndex,
+  hotItemCount,
+}: {
+  accumulatedCount: number;
+  maxItemsTotal: number;
+  currentHotIndex: number;
+  hotItemCount: number;
+}): boolean {
+  return accumulatedCount >= maxItemsTotal || currentHotIndex + 1 >= hotItemCount;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +350,9 @@ function cleanupTask(): void {
   ownsTaskTab = false;
   currentTask = null;
   progress = null;
+  searchProgress = null;
+  hotProgress = null;
+  feedProgress = null;
   taskInFlight = false;
   releaseDispatcherMutex("dy");
 }
@@ -267,14 +382,42 @@ function armTaskTimeout(task: DyTask): void {
  * itself up on first complete signal so intra-page navigations don't
  * re-trigger the handshake.
  */
-function onTabReady(tabId: number, callback: () => void): void {
+export function onTabReady(
+  tabId: number,
+  callback: () => void,
+  options: { fallbackMs?: number } = {},
+): void {
+  let completed = false;
+  let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
   const listener = (updatedId: number, info: { status?: string }): void => {
     if (updatedId !== tabId) return;
     if (info.status !== "complete") return;
+    runOnce();
+  };
+  const runOnce = (): void => {
+    if (completed) return;
+    completed = true;
+    if (fallbackTimer !== null) {
+      clearTimeout(fallbackTimer);
+      fallbackTimer = null;
+    }
     chrome.tabs.onUpdated.removeListener(listener);
     callback();
   };
   chrome.tabs.onUpdated.addListener(listener);
+  if (
+    typeof options.fallbackMs === "number" &&
+    Number.isFinite(options.fallbackMs) &&
+    options.fallbackMs >= 0
+  ) {
+    fallbackTimer = setTimeout(runOnce, options.fallbackMs);
+  }
+  void chrome.tabs.get(tabId).then((tab) => {
+    if (tab.status === "complete") runOnce();
+  }).catch(() => {
+    // Tab may close between create/update and readiness probing. The timeout
+    // path will report the task failure if no completion event arrives.
+  });
 }
 
 /**
@@ -335,6 +478,130 @@ function sendScopeExecuteMessage(): void {
     });
 }
 
+function buildSearchPageUrl(keyword: string): string {
+  return `https://www.douyin.com/search/${encodeURIComponent(keyword)}?type=video`;
+}
+
+function buildHotPageUrl(sentenceId: string): string {
+  return `https://www.douyin.com/hot/${encodeURIComponent(sentenceId)}`;
+}
+
+function sendSearchExecuteMessage(): void {
+  if (!searchProgress || !taskTabId) return;
+  const keyword = searchProgress.keywords[searchProgress.current_keyword_idx];
+  if (!keyword) return;
+  void chrome.tabs
+    .sendMessage(taskTabId, {
+      action: "DY_SEARCH_EXECUTE",
+      data: {
+        task_id: searchProgress.task_id,
+        keyword,
+        max_items: searchProgress.max_items_per_keyword,
+        debug_inject_status: _lastInjectStatus,
+      },
+    })
+    .catch((err) => {
+      void handleDySearchResult({
+        task_id: searchProgress!.task_id,
+        keyword,
+        items: [],
+        scope_count: searchProgress!.accumulated_count,
+        status: "failed",
+        error: `sendMessage_failed: ${String(err)}`,
+      });
+    });
+}
+
+function sendHotExecuteMessage(): void {
+  if (!hotProgress || !taskTabId) return;
+  const hotItem = hotProgress.hot_items[hotProgress.current_hot_idx];
+  if (!hotItem) return;
+  void chrome.tabs
+    .sendMessage(taskTabId, {
+      action: "DY_HOT_EXECUTE",
+      data: {
+        task_id: hotProgress.task_id,
+        sentence_id: hotItem.sentence_id,
+        word: hotItem.word ?? "",
+        max_items: hotProgress.max_items_per_hot,
+        debug_inject_status: _lastInjectStatus,
+      },
+    })
+    .catch((err) => {
+      void handleDyHotResult({
+        task_id: hotProgress!.task_id,
+        sentence_id: hotItem.sentence_id,
+        word: hotItem.word ?? "",
+        items: [],
+        scope_count: hotProgress!.accumulated_count,
+        status: "failed",
+        error: `sendMessage_failed: ${String(err)}`,
+      });
+    });
+}
+
+function sendFeedExecuteMessage(): void {
+  if (!feedProgress || !taskTabId) return;
+  void chrome.tabs
+    .sendMessage(taskTabId, {
+      action: "DY_FEED_EXECUTE",
+      data: {
+        task_id: feedProgress.task_id,
+        max_items: feedProgress.max_items,
+        debug_inject_status: _lastInjectStatus,
+      },
+    })
+    .catch((err) => {
+      void handleDyFeedResult({
+        task_id: feedProgress!.task_id,
+        items: [],
+        scope_count: feedProgress!.accumulated_count,
+        status: "failed",
+        error: `sendMessage_failed: ${String(err)}`,
+      });
+    });
+}
+
+function navigateToCurrentSearch(): void {
+  if (!searchProgress || taskTabId === null) return;
+  const keyword = searchProgress.keywords[searchProgress.current_keyword_idx];
+  if (!keyword) return;
+  chrome.tabs.update(taskTabId, { url: buildSearchPageUrl(keyword) }, () => {
+    onTabReady(taskTabId!, () => {
+      void injectFetchTapInto(taskTabId!).then(() => {
+        debugLog("executeSearchTask:inject_done", { inject_status: _lastInjectStatus });
+        sendSearchExecuteMessage();
+      });
+    }, { fallbackMs: 8_000 });
+  });
+}
+
+function navigateToCurrentHot(): void {
+  if (!hotProgress || taskTabId === null) return;
+  const hotItem = hotProgress.hot_items[hotProgress.current_hot_idx];
+  if (!hotItem) return;
+  chrome.tabs.update(taskTabId, { url: buildHotPageUrl(hotItem.sentence_id) }, () => {
+    onTabReady(taskTabId!, () => {
+      void injectFetchTapInto(taskTabId!).then(() => {
+        debugLog("executeHotTask:inject_done", { inject_status: _lastInjectStatus });
+        sendHotExecuteMessage();
+      });
+    }, { fallbackMs: 10_000 });
+  });
+}
+
+function navigateToFeed(): void {
+  if (!feedProgress || taskTabId === null) return;
+  chrome.tabs.update(taskTabId, { url: "https://www.douyin.com/" }, () => {
+    onTabReady(taskTabId!, () => {
+      void injectFetchTapInto(taskTabId!).then(() => {
+        debugLog("executeFeedTask:inject_done", { inject_status: _lastInjectStatus });
+        sendFeedExecuteMessage();
+      });
+    }, { fallbackMs: 8_000 });
+  });
+}
+
 function navigateToCurrentScope(): void {
   // Click-driven navigation lives entirely in the content script
   // (douyin.ts: clickToScope). Dispatcher just hands it off — no
@@ -372,6 +639,22 @@ async function injectFetchTapInto(tabId: number): Promise<void> {
   }
 }
 
+function normalizeHotTaskItems(items: DyHotTaskItem[] | undefined): DyHotTaskItem[] {
+  const seen = new Set<string>();
+  const result: DyHotTaskItem[] = [];
+  for (const item of items ?? []) {
+    const sentenceId = String(item?.sentence_id ?? "").trim();
+    if (!sentenceId || seen.has(sentenceId)) continue;
+    seen.add(sentenceId);
+    result.push({
+      sentence_id: sentenceId,
+      word: String(item.word ?? "").trim(),
+      hot_value: item.hot_value,
+    });
+  }
+  return result;
+}
+
 export async function executeTask(task: DyTask): Promise<void> {
   debugLog("executeTask:start", { task_id: task.id, taskInFlight });
   if (taskInFlight) {
@@ -388,6 +671,133 @@ export async function executeTask(task: DyTask): Promise<void> {
   if (!mutexAcquired) return;
   taskInFlight = true;
   currentTask = task;
+
+  if (task.type === "search") {
+    const keywords = (task.keywords ?? [])
+      .map((keyword) => String(keyword).trim())
+      .filter((keyword, index, all) => keyword && all.indexOf(keyword) === index);
+    searchProgress = {
+      task_id: task.id,
+      keywords,
+      current_keyword_idx: 0,
+      accumulated_count: 0,
+      max_items_per_keyword: Math.max(1, Math.floor(task.max_items_per_keyword ?? 20)),
+    };
+
+    let tab: chrome.tabs.Tab;
+    try {
+      tab = await chrome.tabs.create({ url: "https://www.douyin.com/", active: true });
+      debugLog("executeSearchTask:tab_created", { tabId: tab.id, keywords: keywords.length });
+    } catch (err) {
+      await postTaskResult({
+        task_id: task.id,
+        status: "failed",
+        error: "tab_create_failed",
+      });
+      cleanupTask();
+      return;
+    }
+    taskTabId = tab.id ?? null;
+    ownsTaskTab = true;
+    armTaskTimeout(task);
+    if (taskTabId === null || keywords.length === 0) {
+      await postTaskResult({
+        task_id: task.id,
+        status: "failed",
+        error: taskTabId === null ? "tab_id_unknown" : "missing_keywords",
+      });
+      cleanupTask();
+      return;
+    }
+    onTabReady(taskTabId, () => {
+      navigateToCurrentSearch();
+    }, { fallbackMs: 5_000 });
+    return;
+  }
+
+  if (task.type === "hot") {
+    const hotItems = normalizeHotTaskItems(task.hot_items);
+    const maxItemsTotal = Math.max(1, Math.floor(task.max_items ?? task.max_items_per_hot ?? 20));
+    hotProgress = {
+      task_id: task.id,
+      hot_items: hotItems,
+      current_hot_idx: 0,
+      accumulated_count: 0,
+      max_items_per_hot: Math.max(
+        1,
+        Math.min(maxItemsTotal, Math.floor(task.max_items_per_hot ?? maxItemsTotal)),
+      ),
+      max_items_total: maxItemsTotal,
+    };
+
+    let tab: chrome.tabs.Tab;
+    try {
+      tab = await chrome.tabs.create({ url: "https://www.douyin.com/", active: true });
+      debugLog("executeHotTask:tab_created", { tabId: tab.id, hot_count: hotItems.length });
+    } catch (err) {
+      await postTaskResult({
+        task_id: task.id,
+        status: "failed",
+        error: "tab_create_failed",
+      });
+      cleanupTask();
+      return;
+    }
+    taskTabId = tab.id ?? null;
+    ownsTaskTab = true;
+    armTaskTimeout(task);
+    if (taskTabId === null || hotItems.length === 0) {
+      await postTaskResult({
+        task_id: task.id,
+        status: "failed",
+        error: taskTabId === null ? "tab_id_unknown" : "missing_hot_items",
+      });
+      cleanupTask();
+      return;
+    }
+    onTabReady(taskTabId, () => {
+      navigateToCurrentHot();
+    }, { fallbackMs: 5_000 });
+    return;
+  }
+
+  if (task.type === "feed") {
+    feedProgress = {
+      task_id: task.id,
+      accumulated_count: 0,
+      max_items: Math.max(1, Math.floor(task.max_items ?? 20)),
+    };
+
+    let tab: chrome.tabs.Tab;
+    try {
+      tab = await chrome.tabs.create({ url: "https://www.douyin.com/", active: true });
+      debugLog("executeFeedTask:tab_created", { tabId: tab.id });
+    } catch (err) {
+      await postTaskResult({
+        task_id: task.id,
+        status: "failed",
+        error: "tab_create_failed",
+      });
+      cleanupTask();
+      return;
+    }
+    taskTabId = tab.id ?? null;
+    ownsTaskTab = true;
+    armTaskTimeout(task);
+    if (taskTabId === null) {
+      await postTaskResult({
+        task_id: task.id,
+        status: "failed",
+        error: "tab_id_unknown",
+      });
+      cleanupTask();
+      return;
+    }
+    onTabReady(taskTabId, () => {
+      navigateToFeed();
+    }, { fallbackMs: 5_000 });
+    return;
+  }
 
   const scopes: DouyinScope[] =
     task.scopes && task.scopes.length > 0
@@ -508,6 +918,138 @@ export async function handleDyScopeResult(result: DyScopeResult): Promise<void> 
   cleanupTask();
 }
 
+export async function handleDySearchResult(result: DySearchResult): Promise<void> {
+  if (!searchProgress || result.task_id !== searchProgress.task_id) return;
+  const expectedKeyword = searchProgress.keywords[searchProgress.current_keyword_idx];
+  if (result.keyword !== expectedKeyword) return;
+
+  if (result.status === "failed") {
+    await postTaskResult({
+      task_id: searchProgress.task_id,
+      status: "failed",
+      error: result.error || "search_failed",
+      debug: result.debug,
+    });
+    cleanupTask();
+    return;
+  }
+
+  searchProgress.accumulated_count += result.items.length;
+  await postTaskResult({
+    task_id: searchProgress.task_id,
+    status: "partial",
+    videos: result.items,
+    scope_counts: { dy_search: searchProgress.accumulated_count },
+    debug: {
+      keyword: result.keyword,
+      keyword_status: result.status,
+      ...(result.debug ?? {}),
+    },
+  });
+
+  searchProgress.current_keyword_idx += 1;
+  if (searchProgress.current_keyword_idx < searchProgress.keywords.length) {
+    navigateToCurrentSearch();
+    return;
+  }
+
+  await postTaskResult({
+    task_id: searchProgress.task_id,
+    status: "ok",
+    videos: [],
+    scope_counts: { dy_search: searchProgress.accumulated_count },
+  });
+  cleanupTask();
+}
+
+export async function handleDyHotResult(result: DyHotResult): Promise<void> {
+  if (!hotProgress || result.task_id !== hotProgress.task_id) return;
+  const expected = hotProgress.hot_items[hotProgress.current_hot_idx];
+  if (!expected || result.sentence_id !== expected.sentence_id) return;
+
+  hotProgress.accumulated_count += result.items.length;
+  await postTaskResult({
+    task_id: hotProgress.task_id,
+    status: "partial",
+    videos: result.items,
+    scope_counts: { dy_hot: hotProgress.accumulated_count },
+    debug: {
+      sentence_id: result.sentence_id,
+      word: result.word,
+      hot_status: result.status,
+      ...(result.debug ?? {}),
+      ...(result.error ? { error: result.error } : {}),
+    },
+  });
+
+  if (
+    shouldFinalizeHotTask({
+      accumulatedCount: hotProgress.accumulated_count,
+      maxItemsTotal: hotProgress.max_items_total,
+      currentHotIndex: hotProgress.current_hot_idx,
+      hotItemCount: hotProgress.hot_items.length,
+    })
+  ) {
+    await postTaskResult({
+      task_id: hotProgress.task_id,
+      status: "ok",
+      videos: [],
+      scope_counts: { dy_hot: hotProgress.accumulated_count },
+    });
+    cleanupTask();
+    return;
+  }
+
+  hotProgress.current_hot_idx += 1;
+  if (hotProgress.current_hot_idx < hotProgress.hot_items.length) {
+    navigateToCurrentHot();
+    return;
+  }
+
+  await postTaskResult({
+    task_id: hotProgress.task_id,
+    status: "ok",
+    videos: [],
+    scope_counts: { dy_hot: hotProgress.accumulated_count },
+  });
+  cleanupTask();
+}
+
+export async function handleDyFeedResult(result: DyFeedResult): Promise<void> {
+  if (!feedProgress || result.task_id !== feedProgress.task_id) return;
+
+  if (result.status === "failed") {
+    await postTaskResult({
+      task_id: feedProgress.task_id,
+      status: "failed",
+      error: result.error || "feed_failed",
+      debug: result.debug,
+    });
+    cleanupTask();
+    return;
+  }
+
+  feedProgress.accumulated_count += result.items.length;
+  await postTaskResult({
+    task_id: feedProgress.task_id,
+    status: "partial",
+    videos: result.items,
+    scope_counts: { dy_feed: feedProgress.accumulated_count },
+    debug: {
+      feed_status: result.status,
+      ...(result.debug ?? {}),
+    },
+  });
+
+  await postTaskResult({
+    task_id: feedProgress.task_id,
+    status: "ok",
+    videos: [],
+    scope_counts: { dy_feed: feedProgress.accumulated_count },
+  });
+  cleanupTask();
+}
+
 /**
  * Legacy single-shot result handler — retained so the existing
  * service-worker.ts DY_TASK_RESULT branch keeps working for any
@@ -527,6 +1069,36 @@ export interface DyScopeResult {
   task_id: string;
   scope: DouyinScope;
   items: DouyinBootstrapItem[];
+  scope_count: number;
+  status: "ok" | "empty" | "failed";
+  error?: string;
+  debug?: Record<string, unknown>;
+}
+
+export interface DySearchResult {
+  task_id: string;
+  keyword: string;
+  items: DouyinSearchItem[];
+  scope_count: number;
+  status: "ok" | "empty" | "failed";
+  error?: string;
+  debug?: Record<string, unknown>;
+}
+
+export interface DyHotResult {
+  task_id: string;
+  sentence_id: string;
+  word: string;
+  items: DouyinSearchItem[];
+  scope_count: number;
+  status: "ok" | "empty" | "failed";
+  error?: string;
+  debug?: Record<string, unknown>;
+}
+
+export interface DyFeedResult {
+  task_id: string;
+  items: DouyinSearchItem[];
   scope_count: number;
   status: "ok" | "empty" | "failed";
   error?: string;
@@ -594,3 +1166,6 @@ export function pollDyTaskNow(): void {
  * interfere.
  */
 export const handleDyTaskResult = handleTaskResult;
+export const handleDySearchTaskResult = handleDySearchResult;
+export const handleDyHotTaskResult = handleDyHotResult;
+export const handleDyFeedTaskResult = handleDyFeedResult;

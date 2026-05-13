@@ -75,18 +75,20 @@ Next action (init has been run automatically):
 If the block says `Status: needs_decisions`, credentials are present
 but init has deliberately not run. Ask the listed init choices, then
 re-run the printed `agent_bootstrap.py` command with explicit
-`--embedding-*` and `--yes-xhs` / `--no-xhs`.
+`--embedding-*`, `--yes-xhs` / `--no-xhs`, and
+`--yes-douyin` / `--no-douyin`.
 
 ### After init succeeds — relay the per-source signal counts
 
 When `openbiliclaw init` finishes, the CLI prints a "初始化摘要" key-
-value table with explicit B 站 + 小红书 breakdowns (v0.3.58+). The
+value table with explicit B 站 + 小红书 + 抖音 breakdowns (v0.3.67+). The
 agent **must summarise these numbers in the user-facing reply** so
 the user knows what fed their soul profile. Render approximately:
 
 > 「初始化已完成 ✅
 >   - 📺 B 站:观看历史 N 条 / 收藏 M 条 / 关注 K 个 UP → **入库 X 条事件**
 >   - 📕 小红书:收藏 P 条 / 点赞 Q 条 / 浏览记录 R 条 → **入库 Y 条事件**
+>   - 🎵 抖音:发布 A 条 / 收藏 B 条 / 点赞 C 条 / 关注 D 人 → **入库 E 条事件**
 >   - 📊 画像建模总事件:Z 条
 >   - 🔍 首轮发现内容池:D 条
 > 现在可以打开扩展 popup 看推荐了。」
@@ -190,14 +192,16 @@ less likely to silently expire — a one-line "我用了 v0.3.x 那次留下
 ## Handling missing credentials
 
 When `Missing` is non-empty, or the final status is
-`needs_decisions`, you (the AI agent) walk the user through **four
+`needs_decisions`, you (the AI agent) walk the user through **five
 questions, in order**: pick an LLM, pick an embedding service, get a
-B 站 cookie, then ask whether Xiaohongshu likes/favorites may be used.
+B 站 cookie, ask whether Xiaohongshu likes/favorites may be used, then
+ask whether Douyin post/favorite/like/follow signals may be used.
 Each question must have a clear default — most users will accept it.
 
 `agent_bootstrap.py` is intentionally non-interactive. If credentials
 are already present but you did not pass an explicit embedding choice
-and an explicit `--yes-xhs` / `--no-xhs`, it returns
+and explicit source choices (`--yes-xhs` / `--no-xhs` plus
+`--yes-douyin` / `--no-douyin`), it returns
 `status=needs_decisions` and **does not run init**. Ask the missing
 questions, then re-run bootstrap with those flags.
 
@@ -502,24 +506,32 @@ uv run openbiliclaw init                                  # local + uv
 
 **If user picks B**: collect the cookie string, run with
 `--bilibili-cookie "<full cookie string>"` plus the explicit embedding
-and Xiaohongshu flags from the user's answers — bootstrap auto-runs
+and source flags from the user's answers — bootstrap auto-runs
 init once everything's present.
 
-### Step 5 — Xiaohongshu data opt-in
+### Step 5 — Source data opt-in
 
 Before any non-interactive auto-init, ask:
 
 > 「要把你的小红书收藏 / 点赞也混进初始画像吗？这能让跨平台口味更准，
 > 但会让扩展打开小红书页面抓取这些信号。默认不启用；你明确说要用我才开。」
 
-Map the answer to exactly one bootstrap flag:
+Then ask separately:
 
-| 用户回答 | 命令行参数 |
-|---|---|
-| 明确同意 | `--yes-xhs` |
-| 拒绝 / 没有小红书 / 不确定 / 没回答 | `--no-xhs` |
+> 「要把你的抖音发布 / 收藏 / 点赞 / 关注也混进初始画像吗？这会让抖音口味进入画像，
+> 但会让扩展打开抖音页面执行拉取；扩展也会把 douyin.com Cookie 同步给后续 discovery，search / hot / feed discovery 则优先复用登录浏览器插件签名桥。
+> 默认不启用；你明确说要用我才开。」
 
-Do not omit the flag. Omitting it means the agent never asked; bootstrap
+Map each answer to exactly one bootstrap flag:
+
+| 源 | 用户回答 | 命令行参数 |
+|---|---|---|
+| 小红书 | 明确同意 | `--yes-xhs` |
+| 小红书 | 拒绝 / 没有小红书 / 不确定 / 没回答 | `--no-xhs` |
+| 抖音 | 明确同意 | `--yes-douyin` |
+| 抖音 | 拒绝 / 没有抖音 / 不确定 / 没回答 | `--no-douyin` |
+
+Do not omit these flags. Omitting either source means the agent never asked; bootstrap
 will pause with `status=needs_decisions` instead of running init.
 
 ### Putting it all together — example commands
@@ -535,7 +547,8 @@ python3 scripts/agent_bootstrap.py \
   --llm-api-key sk-... \
   --embedding-provider ollama \
   --embedding-model bge-m3 \
-  --no-xhs
+  --no-xhs \
+  --no-douyin
 ```
 
 Pass embedding flags explicitly because the user actively picked option 1 —
@@ -552,7 +565,8 @@ python3 scripts/agent_bootstrap.py \
   --llm-api-key AIza... \
   --embedding-provider gemini \
   --embedding-model gemini-embedding-001 \
-  --no-xhs
+  --no-xhs \
+  --no-douyin
 ```
 
 Note: no `--embedding-api-key` because the same Gemini API key the
@@ -567,7 +581,8 @@ python3 scripts/agent_bootstrap.py \
   --llm-model llama3 \
   --embedding-provider ollama \
   --embedding-model bge-m3 \
-  --no-xhs
+  --no-xhs \
+  --no-douyin
 ```
 
 **"我不想想这个,跟随主 LLM" 路径** (选项 3 / 用户跳过)：
@@ -577,7 +592,8 @@ python3 scripts/agent_bootstrap.py \
   --provider deepseek \
   --llm-api-key sk-... \
   --embedding-provider "" \
-  --no-xhs
+  --no-xhs \
+  --no-douyin
 ```
 
 When no `--embedding-*` flag is passed AND the primary is Claude /
@@ -597,7 +613,8 @@ python3 scripts/agent_bootstrap.py \
   --llm-model meta-llama/Llama-3.1-70B-Instruct \
   --embedding-provider ollama \
   --embedding-model bge-m3 \
-  --no-xhs
+  --no-xhs \
+  --no-douyin
 ```
 
 Embedding explicitly pinned to local Ollama because most self-hosted
@@ -607,7 +624,8 @@ the runtime fallback would still work but adds a startup warning.
 > ⚠️ **Do NOT pass `--skip-init`** here. The point of running the
 > bootstrap with credentials is to reach a usable state. When all
 > credentials are present, `--skip-init` is absent, and both init
-> decisions are explicit (`--embedding-*` plus `--yes-xhs` / `--no-xhs`),
+> decisions are explicit (`--embedding-*` plus source flags:
+> `--yes-xhs` / `--no-xhs` and `--yes-douyin` / `--no-douyin`),
 > `agent_bootstrap.py` will automatically run `openbiliclaw init` after
 > the backend is healthy: it pulls the user's Bilibili history,
 > generates the soul profile, and runs the first content discovery
@@ -620,14 +638,18 @@ After running, **always**:
 2. Report the final state to the user, including:
    - "✅ 后端已启动，监听 http://127.0.0.1:8420"
    - "✅ 配置已写入"
-   - "✅ 初始化已完成 —— 已拉取你的 B 站历史、生成画像、跑了首轮内容发现"
+   - "✅ 初始化已完成 —— 已拉取你的 B 站历史，按你的同意混入小红书 / 抖音信号，生成画像并跑了首轮内容发现"
    - "👉 下一步：装浏览器扩展（链接）来看推荐"
 
 **`init` takes 2-5 minutes on first run** (real LLM calls + real
-Bilibili fetches). Tell the user upfront so they don't think it's
-hung. The bootstrap streams init's stdout so progress is visible.
+Bilibili / optional Xiaohongshu / optional Douyin fetches). Tell the user upfront so they don't think it's
+hung. The bootstrap streams init's stdout so progress is visible, and
+also emits `BOOTSTRAP_STATUS` events with `status=progress` and
+`message=init_progress` for key milestones (`1/4`, `2/4`, `3/4`,
+`4/4`, discovery refill progress). AI agents must relay those progress
+events to the user instead of staying silent until `init_complete`.
 
-### Init 期间会问用户:小红书数据是否加入(v0.3.27+)
+### Init 期间会问用户:小红书 / 抖音数据是否加入
 
 `openbiliclaw init` 在拉 B 站数据**之前**会弹一个交互式问题:是否把
 小红书的收藏 / 点赞混进画像。三种状态:
@@ -646,6 +668,18 @@ hung. The bootstrap streams init's stdout so progress is visible.
   `--yes-xhs` / `--no-xhs` 二选一。没传就返回
   `status=needs_decisions`,不会运行 init。
 
+随后 `init` 会单独问抖音发布 / 收藏 / 点赞 / 关注是否加入画像：
+
+- **`openbiliclaw init --no-douyin`**:跳过提问 + 跳过 enqueue,只用
+  B 站(+小红书,如启用)数据建画像。
+- **`openbiliclaw init --yes-douyin`**:跳过提问直接启用,适合脚本化。
+- **`OPENBILICLAW_NO_DOUYIN=1` 环境变量**:同 `--no-douyin`,用于永久跳过。
+- **直接调用 `openbiliclaw init` 的非交互式终端(管道 / CI)**:
+  CLI 默认跳过抖音；脚本化安装仍必须传 `--yes-douyin` 或
+  `--no-douyin` 让行为可审计。
+- **通过 `agent_bootstrap.py` 自动 init**:bootstrap 会强制要求
+  `--yes-douyin` / `--no-douyin` 二选一。
+
 **关键:接入会前台抢焦点**。`max_scroll_rounds=15`(v0.3.64+ CLI 默认,
 v0.3.22 ~ v0.3.63 是 3)触发滚动模式,扩展会在用户浏览器里
 `chrome.tabs.create({active: true})` 打开一个前台 tab(URL:
@@ -662,9 +696,15 @@ https://www.xiaohongshu.com/explore),自动跳到用户 profile 页向下滚动
     `OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS=0` 改用浅层模式
     (只读初始 state,后台 tab,但只能拿 ~10-20 条)
 
-AI agent 视角:**不要省略这个问题**。一句话安装走的是
+抖音接入也会前台抢焦点。扩展会打开抖音页面，依次访问发布 /
+收藏 / 点赞 / 关注 scope，结合 DOM 和 MAIN-world API harvester
+分批回传结果。默认只在用户明确同意时启用；不登录或触发风控时
+可能 0 条，但 init 会继续完成。
+
+AI agent 视角:**不要省略这些问题**。一句话安装走的是
 `agent_bootstrap.py` 的非交互路径,不会有交互式 prompt 替你兜底。
-用户明确同意才传 `--yes-xhs`;其余情况传 `--no-xhs`。
+用户明确同意才传 `--yes-xhs` / `--yes-douyin`;其余情况传
+`--no-xhs` / `--no-douyin`。
 
 ### Per-module overrides（高级，默认不要问）
 

@@ -4,6 +4,68 @@
 
 ---
 
+## v0.3.69: 抖音首页推荐流 discovery（2026-05-12）
+
+- 新增抖音首页推荐流 discovery：`discover-douyin --source feed` 会入队 `dy_tasks(type="feed")`，扩展在已登录抖音首页通过 MAIN-world `byted_acrawler.frontierSign()` 签名 `/aweme/v1/web/tab/feed/`，候选以 `dy-plugin-feed` 进入 discovery。
+- 抖音公开 discovery 子来源调整为 `search` / `hot` / `feed`；`creator` 不再作为 CLI 可选渠道，避免把作者主页时间线当作默认内容发现来源。
+- `[sources.douyin]` 新增 `daily_feed_budget`，限制每日 `dy_tasks(type="feed")` 入队次数；`daily_search_budget` / `daily_hot_budget` 继续分别约束 search / hot。
+- 新增 `[scheduler.pool_source_shares]` 平台级候选池配比配置，默认 B 站 / 小红书 / 抖音 = 8 / 1 / 1；`pool_target_count=600` 时目标为 `bilibili=480`、`xiaohongshu=60`、`douyin=60`。
+- runtime refresh 改为按平台族统计和修剪候选池：B 站四个策略统一计入 `bilibili`，小红书 `xhs-extension-*` 计入 `xiaohongshu`，抖音 `dy-plugin-*` 计入 `douyin`；小平台低于配额时会保护 / 复活其候选，平台族超过配额时即使总池子未满也会先压回配额内。
+- discovery LLM 评估增加池子容量感知：runtime 会按 B 站平台缺口而不是总池子缺口决定本轮 limit；`search` / `trending` / `related_chain` / `explore` / `douyin_direct` 在送 LLM 前会把候选窗口收缩到 `max(12, limit*4)`、上限 90，避免只缺少量候选时仍评估几十条并随后立刻 suppressed。
+- discovery batch 评估解析补强：兼容 provider 回显输入 JSON 后再输出结果、Markdown fenced JSON，以及一行一个 JSON object 的 NDJSON 结果，避免 batch 解析失败后退回 N 次单条 LLM 评估。
+- 小红书 / 抖音 bootstrap task-result 的新增事件现在不只落 memory：profile 已初始化后会转成 `ProfileSignal` 进入 `ProfileUpdatePipeline`，让后续拉到的收藏 / 点赞 / 关注事件参与增量画像更新；首次 init 仍由 `analyze_events()` + `build_initial_profile()` 统一处理，避免重复学习。
+- 初始化偏好分析的并发分片增加容错：当某个分片被 LLM 风控拒绝或返回非 JSON 时，会递归拆小定位问题事件，最终只跳过仍失败的单条事件，避免一个标题导致整次 `init` 中断；provider / 网络错误仍会正常失败并暴露。
+- 初始化画像生成增加 compact retry：首轮 `history_summary` 触发模型风控或坏 JSON 时，会移除原始标题 / context 后用结构化偏好、来源分布、觉察和洞察重试一次，避免真实多源初始化在最后画像阶段被单个高风险标题中断。
+- `ProfileBuilder` 的画像长度校验上限从 320 放宽到 500 字：prompt 仍要求 150-260 字，但真实模型偶尔会返回 330 字左右的有效画像，不再因为轻微超长让完整 init 失败。
+- `ProfileBuilder` 对画像辅助字段更容错：`core_traits` / `cognitive_style` / `motivational_drivers` / `values` / `deep_needs` / `life_stage` / `current_phase` 缺失或列表格式轻微不符时会保守补空值并记录 warning，不再因为单个辅助字段漏吐中断首次初始化。
+- `openbiliclaw init --yes-douyin` 完成摘要现在会把抖音信号也写进“本次画像综合了...”提示；只启用抖音或同时启用小红书 / 抖音时，不再错误显示“两个平台”且漏掉抖音。
+- 一句话安装的 auto-init 现在会在原样输出 `openbiliclaw init` 日志的同时，额外发 `BOOTSTRAP_STATUS status=progress message=init_progress` 结构化事件；AI agent 可实时提示 1/4、2/4、3/4、4/4 和补货阶段进度，不必等最终 `init_complete`。
+- 新增 runtime `DouyinDiscoveryProducer`：当抖音低于平台配额且 `[sources.douyin].enabled=true` 时，后台通过 `DouyinDiscoveryService(cache=True)` 复用 search / hot / feed 插件签名链路补池。
+- 修复 B 站 Cookie 自动同步后的后台循环丢失：`/api/bilibili/cookie` 热重载 runtime 后会重新启动 refresh / account sync / auto update 任务，避免扩展首次同步 Cookie 后把小红书与抖音 producer 停住，导致抖音配额长期为 0；重复同步相同 Cookie 时保持幂等，不再反复 hot-reload 打断抖音 discovery 等待。
+- 抖音插件 discovery 入队前会清理过期的 search / hot / feed pending 任务，避免旧版本重复 hot-reload 留下的陈旧队列挡住当前 producer，导致新任务等到超时才回退。
+- discovery engine 注册同名 strategy 时改为替换旧实例，避免 runtime `DouyinDiscoveryService(cache=True)` 每轮追加一个新的 `douyin_direct`，导致后续一次抖音 discovery 同时跑多个相同 search 任务、快速耗尽 `daily_search_budget`。
+- 抖音扩展 search 任务的单关键词超时窗口从 60 秒放宽到 180 秒，后端 runtime / CLI 默认等待窗口同步为 180 秒；真实 smoke 显示搜索页导航到 `DY_SEARCH_EXECUTE` 可能已消耗 100s+，旧 120s 会在 search API bridge 返回前先触发 `task_timeout`。
+- runtime 抖音 producer 每轮只取 1 个画像关键词做 search，然后继续跑 hot / feed，避免后台补池在多个搜索关键词上串行等待插件超时并消耗过多 search budget；CLI `discover-douyin` 仍可按显式关键词调试多 search。
+- runtime 补池进一步收敛无效成本：B 站四策略共享同一个平台缺口预算并通过 `strategy_limits` 分摊到各策略，手动 refresh 也复用同一套平台缺口计划；小红书 producer 会按小红书缺口减少本轮关键词数；抖音 producer 在小缺口时优先 feed / hot，只有缺口较大才恢复 search；各策略送 LLM 评估前的窗口从 `max(12, limit*4)` 收紧到 `max(6, limit*2)`、上限 90。
+- 抖音补池预算修正：`dy_tasks` 中因 daemon 重启 / 插件未及时消费而失败的 `stale_pending` discovery 任务不再计入 search / hot / feed 每日预算，避免历史陈旧 pending 吃光当天 search 配额。
+- 抖音 runtime 大缺口补池改为优先 `search` / `hot`，不再把低产出的 `feed` 混进大批量补池；`daily_hot_budget` 在 runtime 中会按本轮抖音缺口动态抬高到最多 60，默认 `5` 仍作为小缺口 / 手动调试的保守基线。
+- 参考开源实现确认首页推荐流端点：F2 暴露 `fetch_post_feed` + `TAB_FEED=/aweme/v1/web/tab/feed/`，Douyin_TikTok_Download_API 也记录了 `TAB_FEED` 和 `PostFeed` 参数模型；本项目不引入第三方依赖，只复用端点和参数形态。
+- 优化抖音 hot discovery 稳定性：hot 插件任务现在带总目标 `max_items`，累计达到目标即提前结束；后端小批量 hot 请求只展开少量 hot seed，避免 `--limit 3` 为了 3 条候选串行打开 3 个 `/hot/{sentence_id}` 页面并撞上 `task_timeout`。
+- 文档同步补齐抖音事件与 discovery：README / README_EN、一句话安装、agent 部署、OpenClaw quickstart 和 discovery 模块文档都更新为抖音 search / hot / feed、`--yes-douyin` / `--no-douyin`、`BOOTSTRAP_STATUS init_progress` 的当前行为。
+
+---
+
+## v0.3.68: 抖音插件搜索 smoke 跑通（2026-05-11）
+
+- 新增 `openbiliclaw search-douyin` 独立命令：CLI 入队 `dy_tasks(type="search")`，浏览器扩展在已登录抖音会话中打开搜索页，回传 `dy_search` 候选，便于单独调试抖音搜索 discovery 召回。
+- 抖音扩展任务桥新增 search 类型：background dispatcher 支持关键词队列、逐词执行、partial + final 回写；后端保留搜索结果在 `dy_tasks.result_json`，不会传播成初始化画像事件，避免把 discovery 候选误当用户行为。
+- 修复插件搜索 0 结果问题：MAIN-world search API bridge 现在使用完整浏览器参数，并调用页面 `byted_acrawler.frontierSign()` 给搜索 URL 追加 `X-Bogus`；主搜索端点有结果时不再继续打 fallback 端点。
+- 修复抖音插件搜索偶发 `task_timeout`：dispatcher 等待抖音首页 / 搜索页 ready 时，除了监听 `chrome.tabs.onUpdated(status=complete)`，也会在 tab 已经 complete 或抖音 SPA 没有再发 complete 事件时走 fallback，避免任务停在 `/jingxuan` 不继续跳搜索页。
+- `discover-douyin --source search` / `discover --source douyin` 的 search 子来源现在优先复用插件签名搜索链路，候选以 `dy-plugin-search` 写入 discovery 结果；插件任务空 / 失败时再回退 direct-cookie search。
+- `discover-douyin --source hot` / `discover --source douyin` 的 hot 子来源改为插件 hot-related 链路：后端先从 hot board 取 `sentence_id`，扩展打开 `/hot/{sentence_id}` 解析跳转后的 seed aweme，再用页面 acrawler 签名 `/aweme/v1/web/aweme/related/`，候选以 `dy-plugin-hot-related` 进入 discovery；插件空结果时再回退 direct-cookie hot。
+- `[sources.douyin].daily_hot_budget` 现在实际限制 `dy_tasks(type="hot")` 入队次数，`daily_search_budget` 继续限制 search 插件任务。
+- 真实 smoke：关闭旧临时未登录 Chrome 干扰后，`openbiliclaw search-douyin -k 猫 --max-items-per-keyword 10 -w 180` 拉到 10 条候选。
+- 真实 smoke：`openbiliclaw discover-douyin --source search --keyword 猫 --limit 5 --no-cache --no-evaluate` 拉到 5 条 `dy-plugin-search` 候选。
+
+---
+
+## v0.3.67: 抖音收藏/点赞拉取 E2E 补强（2026-05-09）
+
+- 新增抖音 direct-cookie discovery 设计与首批实现：`discover --source douyin` 可在 `[sources.douyin].enabled=true` 且存在环境变量覆盖或扩展同步 Cookie 时拉取 `dy-direct-search` / `dy-direct-hot` / `dy-direct-creator` 候选，并按 `source_platform="douyin"` 写入 discovery pool；初始化画像仍保留扩展路径。
+- 浏览器扩展新增抖音 Cookie 自动同步：service worker 读取 douyin.com Cookie 后 POST 到 `/api/sources/dy/cookie`，后端保存到 `data/douyin_cookie.json`；`discover --source douyin` / `discover-douyin` 现在按“环境变量覆盖 → 扩展同步文件”解析 Cookie，不再要求普通用户手动导出。
+- 抖音 Cookie 同步门槛从“必须有 `msToken`”放宽为“存在登录态 / session / passport 类 Cookie 即同步”：真实 Chrome 登录态可能只有 `sessionid` / `sid_guard` / `ttwid` / `odin_tt` 等 Cookie，扩展会完整同步 header，让 direct discovery 自己通过 smoke 判断有效性。
+- 扩展 Cookie alarm 兜底同步现在同时刷新 B 站和抖音 Cookie：后端重启、runtime-stream 短暂断开或用户登录态早已存在时，不再只补发 B 站 Cookie。
+- 抖音 direct-cookie 请求遇到连接异常时改为软失败返回空结果并记录日志，避免 `discover-douyin` 在单次网络抖动时直接 traceback。
+- 抖音 creator discovery 增加最近 bootstrap 作者兜底：不显式传 `--creator-sec-uid` 时，会先读 `OPENBILICLAW_DOUYIN_CREATOR_SEC_UIDS`，再从最近完成的抖音发布 / 收藏 / 点赞 / 关注任务结果里提取 creator `sec_uid`，优先用 creator timeline 拉公开视频，避免 search / hot 软返回空列表时默认 discovery 只能产出 0 条。
+- 抖音 discovery 抽成独立 `DouyinDiscoveryService`：CLI、runtime 或未来 API 都可以复用同一服务；新增 `openbiliclaw discover-douyin` 独立调试命令，支持指定关键词、creator sec_uid、子来源，并可用 `--no-cache --no-evaluate` 直接查看源接口召回。
+- 抖音扩展 MAIN-world API harvester 增加可测试导出，并补齐收藏 / 点赞分页桥接单测，覆盖 `dy_collect`、`dy_like` 从页面 API 到 isolated world 的 postMessage 路径。
+- 后端 `/api/sources/dy/task-result` 增加真实 dispatcher 形态回归：各 scope 以 `partial` 分批回传 videos，最终 `ok/empty` 完成任务时保留已回传视频、去重并完成任务。
+- CLI 增加 `init --yes-douyin` 对接测试，确认抖音事件会进入 `analyze_events()` 与 `build_initial_profile()`；同时明确 `fetch-douyin` 仍是纯拉取命令，不会隐式重建画像。
+- 小红书 / 抖音 bootstrap collect 默认等待统一到 `180s`：`init --yes-xhs --yes-douyin` 连续跑两源时，小红书有更长窗口结束前台 tab 任务，降低超时后立刻启动抖音造成焦点竞争的概率；`fetch-xhs` / `fetch-douyin` 默认 smoke 窗口也同步为 `180s`。
+- `agent_bootstrap.py` / 一句话安装脚本增加 `--yes-douyin` / `--no-douyin` 显式决策透传；README、CLI、Soul、架构、Docker 和 agent 安装文档同步记录抖音 init 数据流。
+
+---
+
 ## v0.3.66: 修复 pool 上限失守（refresh 结束时漏 enforce 总量 cap）（2026-05-08）
 
 ### 背景

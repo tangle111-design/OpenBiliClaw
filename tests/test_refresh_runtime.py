@@ -52,6 +52,7 @@ class _FakeDatabase:
         self.count_delight_thresholds: list[float] = []
         self.get_delight_thresholds: list[float] = []
         self.trim_source_share_quotas: dict[str, int] | None = None
+        self.trim_overflow_source_share_quotas: dict[str, int] | None = None
         self.reactivate_source_share_quotas: dict[str, int] | None = None
         self.recommendations = [
             {"id": 1, "presented": 0},
@@ -120,6 +121,10 @@ class _FakeDatabase:
         self.pool_count = target
         return trimmed
 
+    def trim_pool_source_overflow(self, *, source_share_quotas: dict[str, int]) -> int:
+        self.trim_overflow_source_share_quotas = dict(source_share_quotas)
+        return 0
+
     def evict_stale_pool_items(self, *, max_age_days: int = 14) -> int:
         return 0
 
@@ -162,15 +167,37 @@ class _FakeSoulEngine:
 class _FakeDiscoveryEngine:
     def __init__(self) -> None:
         self.calls: list[tuple[dict[str, object], list[str] | None, int]] = []
+        self.strategy_limit_calls: list[dict[str, int] | None] = []
 
     async def discover(
         self,
         profile: dict[str, object],
         strategies: list[str] | None = None,
         limit: int = 30,
+        *,
+        strategy_limits: dict[str, int] | None = None,
     ) -> list[dict[str, object]]:
         self.calls.append((profile, strategies, limit))
+        self.strategy_limit_calls.append(dict(strategy_limits) if strategy_limits else None)
         return [{"bvid": "BV1X", "relevance_score": 0.9, "view_count": 100}]
+
+
+class _FakeXhsProducer:
+    def __init__(self) -> None:
+        self.calls: list[int | None] = []
+
+    async def produce_if_due(self, *, limit: int | None = None) -> dict[str, object]:
+        self.calls.append(limit)
+        return {"enqueued": 1, "attempted": 1, "reason": "ok"}
+
+
+class _FakeDouyinProducer:
+    def __init__(self) -> None:
+        self.calls: list[int | None] = []
+
+    async def produce_if_due(self, *, limit: int | None = None) -> dict[str, object]:
+        self.calls.append(limit)
+        return {"discovered": 3, "reason": "ok"}
 
 
 class _FakeRecommendationEngine:
@@ -344,9 +371,7 @@ async def test_refresh_controller_backfills_pool_copy_after_replenishment() -> N
     # default 2-strategy plan produces 2 calls. Each carries the same
     # profile + per-refresh backfill limit.
     assert len(recommendations.pool_copy_calls) >= 1
-    assert all(
-        call == ({"profile": "ok"}, 60) for call in recommendations.pool_copy_calls
-    )
+    assert all(call == ({"profile": "ok"}, 60) for call in recommendations.pool_copy_calls)
 
 
 async def test_refresh_controller_uses_shared_delight_threshold_for_runtime_queries() -> None:
@@ -424,8 +449,9 @@ async def test_refresh_controller_reports_zero_replenishment_without_false_posit
     pool_updated = next(
         event for event in event_hub.events if event["type"] == "refresh.pool_updated"
     )
-    # force_refresh runs two phases: each returns 1 item from fake engine
-    assert pool_updated["last_discovered_count"] == 2
+    # force_refresh now uses the same source-aware replenishment plan as
+    # periodic refresh, so all Bilibili strategies share one grouped call.
+    assert pool_updated["last_discovered_count"] == 1
     assert pool_updated["last_replenished_count"] == 0
     assert pool_updated["message"] == (
         "\u8fd9\u8f6e\u627e\u5230\u4e86\u5185\u5bb9\uff0c"
@@ -458,7 +484,7 @@ async def test_refresh_controller_tracks_discovered_count_when_net_pool_does_not
 
     await controller.force_refresh()
 
-    assert memory.state["last_discovered_count"] == 2
+    assert memory.state["last_discovered_count"] == 1
     assert memory.state["last_replenished_count"] == 0
 
 
@@ -532,9 +558,72 @@ async def test_force_refresh_runs_even_when_threshold_not_met() -> None:
 
     assert result["refreshed"] is True
     assert set(result["strategies"]) == {"search", "trending", "related_chain", "explore"}
-    assert len(discovery.calls) == 2  # Two phases: search+trending, related_chain+explore
+    assert len(discovery.calls) == 1
     assert recommendations.calls == []
     assert result["recommendation_count"] == 0
+
+
+async def test_force_refresh_skips_bilibili_when_platform_quota_full() -> None:
+    discovery = _FakeDiscoveryEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=540,
+            source_counts={"bilibili": 480, "xiaohongshu": 0, "douyin": 60},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=discovery,
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        discovery_limit=30,
+    )
+
+    result = await controller.force_refresh()
+
+    assert result == {"refreshed": False, "strategies": [], "reason": "below_threshold"}
+    assert discovery.calls == []
+
+
+async def test_manual_refresh_skip_does_not_reuse_stale_replenishment_message() -> None:
+    memory = _FakeMemoryManager(
+        {
+            "last_event_refresh_at": "",
+            "last_trending_refresh_at": "",
+            "last_explore_refresh_at": "",
+            "last_processed_event_id": 0,
+            "last_notification_at": "",
+            "last_discovered_count": 5,
+            "last_replenished_count": 1,
+            "recent_pool_topics": ["旧主题"],
+        }
+    )
+    event_hub = _FakeEventHub()
+    discovery = _FakeDiscoveryEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=memory,
+        database=_FakeDatabase(
+            [],
+            pool_count=540,
+            source_counts={"bilibili": 480, "xiaohongshu": 60, "douyin": 0},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=discovery,
+        recommendation_engine=_FakeRecommendationEngine(),
+        event_hub=event_hub,
+        pool_target_count=600,
+        discovery_limit=30,
+    )
+
+    await controller._complete_manual_refresh()
+
+    assert discovery.calls == []
+    assert controller.get_runtime_status()["manual_refresh_state"] == "success"
+    assert controller.get_runtime_status()["manual_refresh_message"] == "这轮没补进新的候选。"
+    pool_updated = next(
+        event for event in event_hub.events if event["type"] == "refresh.pool_updated"
+    )
+    assert pool_updated["message"] == "这轮没补进新的候选。"
 
 
 async def test_refresh_controller_requests_discovery_with_backfill_limit() -> None:
@@ -755,12 +844,11 @@ async def test_refresh_controller_prioritizes_underfilled_sources() -> None:
                 {"id": 5, "event_type": "feedback"},
                 {"id": 6, "event_type": "view"},
             ],
-            pool_count=24,
+            pool_count=16,
             source_counts={
-                "search": 2,
-                "related_chain": 4,
-                "trending": 0,
-                "explore": 18,
+                "bilibili": 10,
+                "xiaohongshu": 3,
+                "douyin": 3,
             },
         ),
         soul_engine=_FakeSoulEngine(),
@@ -775,15 +863,48 @@ async def test_refresh_controller_prioritizes_underfilled_sources() -> None:
     result = await controller.refresh_if_needed()
 
     assert result["refreshed"] is True
-    # All deficient sources merged into a single discover() call so they
-    # run in parallel and get mixed via _compress_topic_repeats in one round.
-    # Pool deficit is 30-24=6, but the per-source max-deficit is 6 (trending=0,
-    # search=2 of 8, related_chain=4 of 8). _requested_refresh_limit may
-    # expand the merged limit to fill the pool gap.
+    # Bilibili is under its platform quota (24/30 target pool maps to
+    # bilibili=24), so the four established B strategies are merged into
+    # one discover() call and get mixed in one round.
     assert len(discovery.calls) == 1
     call_profile, call_strategies, _call_limit = discovery.calls[0]
     assert call_profile == {"profile": "ok"}
-    assert call_strategies == ["search", "related_chain", "trending"]
+    assert call_strategies == ["search", "related_chain", "trending", "explore"]
+
+
+async def test_refresh_controller_skips_bilibili_when_only_small_sources_underfilled() -> None:
+    discovery = _FakeDiscoveryEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [
+                {"id": 1, "event_type": "view"},
+                {"id": 2, "event_type": "search"},
+                {"id": 3, "event_type": "favorite"},
+                {"id": 4, "event_type": "comment"},
+                {"id": 5, "event_type": "feedback"},
+                {"id": 6, "event_type": "view"},
+            ],
+            pool_count=24,
+            source_counts={
+                "bilibili": 24,
+                "xiaohongshu": 0,
+                "douyin": 0,
+            },
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=discovery,
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=30,
+        discovery_limit=4,
+        trending_refresh_hours=999,
+        explore_refresh_hours=999,
+    )
+
+    result = await controller.refresh_if_needed()
+
+    assert result == {"refreshed": False, "strategies": [], "reason": "below_threshold"}
+    assert discovery.calls == []
 
 
 async def test_trigger_manual_refresh_sets_running_state() -> None:
@@ -930,7 +1051,7 @@ async def test_refresh_trims_pool_overflow_before_skipping() -> None:
     assert database.pool_count == 30  # trimmed back down to target
 
 
-def test_source_target_counts_include_xhs_family() -> None:
+def test_source_target_counts_use_platform_default_shares() -> None:
     controller = ContinuousRefreshController(
         memory_manager=_FakeMemoryManager(),
         database=_FakeDatabase([], pool_count=600),
@@ -941,11 +1062,82 @@ def test_source_target_counts_include_xhs_family() -> None:
     )
 
     assert controller._source_target_counts() == {
-        "search": 141,
-        "related_chain": 141,
-        "trending": 35,
-        "explore": 141,
-        "xiaohongshu": 142,
+        "bilibili": 480,
+        "xiaohongshu": 60,
+        "douyin": 60,
+    }
+
+
+def test_source_target_counts_use_configured_platform_shares() -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase([], pool_count=600),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        pool_source_shares={"bilibili": 6, "xiaohongshu": 2, "douyin": 2},
+    )
+
+    assert controller._source_target_counts() == {
+        "bilibili": 360,
+        "xiaohongshu": 120,
+        "douyin": 120,
+    }
+
+
+def test_source_replenishment_plan_maps_bilibili_deficit_to_bilibili_strategies() -> None:
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=420,
+            source_counts={
+                "bilibili": 300,
+                "xiaohongshu": 60,
+                "douyin": 60,
+            },
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+    )
+
+    assert controller._build_source_replenishment_plan() == [
+        (["search", "related_chain", "trending", "explore"], 180)
+    ]
+
+
+async def test_refresh_controller_uses_bilibili_deficit_for_discovery_limit() -> None:
+    discovery = _FakeDiscoveryEngine()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=543,
+            source_counts={
+                "bilibili": 475,
+                "xiaohongshu": 60,
+                "douyin": 8,
+            },
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=discovery,
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        discovery_limit=30,
+    )
+
+    await controller.refresh_if_needed()
+
+    assert discovery.calls[0][1] == ["search", "related_chain", "trending", "explore"]
+    assert discovery.calls[0][2] == 5
+    assert discovery.strategy_limit_calls[0] == {
+        "search": 2,
+        "related_chain": 1,
+        "trending": 1,
+        "explore": 1,
     }
 
 
@@ -956,11 +1148,9 @@ def test_source_replenishment_plan_leaves_xhs_deficit_to_xhs_producer() -> None:
             [],
             pool_count=458,
             source_counts={
-                "search": 141,
-                "related_chain": 141,
-                "trending": 35,
-                "explore": 141,
+                "bilibili": 480,
                 "xiaohongshu": 0,
+                "douyin": 60,
             },
         ),
         soul_engine=_FakeSoulEngine(),
@@ -970,6 +1160,71 @@ def test_source_replenishment_plan_leaves_xhs_deficit_to_xhs_producer() -> None:
     )
 
     assert controller._build_source_replenishment_plan() == []
+
+
+async def test_xhs_producer_receives_source_deficit_limit() -> None:
+    producer = _FakeXhsProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=598,
+            source_counts={"bilibili": 480, "xiaohongshu": 58, "douyin": 60},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        discovery_limit=30,
+        xhs_producer=producer,
+    )
+
+    await controller._tick_xhs_producer()
+
+    assert producer.calls == [2]
+
+
+async def test_douyin_producer_runs_when_douyin_under_quota() -> None:
+    producer = _FakeDouyinProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=540,
+            source_counts={"bilibili": 480, "xiaohongshu": 60, "douyin": 0},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        discovery_limit=30,
+        douyin_producer=producer,
+    )
+
+    await controller._tick_douyin_producer()
+
+    assert producer.calls == [30]
+
+
+async def test_douyin_producer_skips_when_douyin_at_quota() -> None:
+    producer = _FakeDouyinProducer()
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=_FakeDatabase(
+            [],
+            pool_count=600,
+            source_counts={"bilibili": 480, "xiaohongshu": 60, "douyin": 60},
+        ),
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+        douyin_producer=producer,
+    )
+
+    await controller._tick_douyin_producer()
+
+    assert producer.calls == []
 
 
 def test_pool_cap_trim_receives_xhs_family_quota() -> None:
@@ -985,7 +1240,28 @@ def test_pool_cap_trim_receives_xhs_family_quota() -> None:
 
     assert controller._enforce_pool_cap() is True
     assert database.trim_source_share_quotas is not None
-    assert database.trim_source_share_quotas["xiaohongshu"] == 142
+    assert database.trim_source_share_quotas["bilibili"] == 480
+    assert database.trim_source_share_quotas["xiaohongshu"] == 60
+    assert database.trim_source_share_quotas["douyin"] == 60
+
+
+def test_pool_cap_enforces_platform_caps_even_when_ready_pool_below_target() -> None:
+    database = _FakeDatabase([], pool_count=580)
+    controller = ContinuousRefreshController(
+        memory_manager=_FakeMemoryManager(),
+        database=database,
+        soul_engine=_FakeSoulEngine(),
+        discovery_engine=_FakeDiscoveryEngine(),
+        recommendation_engine=_FakeRecommendationEngine(),
+        pool_target_count=600,
+    )
+
+    assert controller._enforce_pool_cap() is False
+    assert database.trim_overflow_source_share_quotas == {
+        "bilibili": 480,
+        "xiaohongshu": 60,
+        "douyin": 60,
+    }
 
 
 def test_pool_cap_reactivates_under_quota_sources_before_trim() -> None:
@@ -1001,7 +1277,9 @@ def test_pool_cap_reactivates_under_quota_sources_before_trim() -> None:
 
     assert controller._enforce_pool_cap() is True
     assert database.reactivate_source_share_quotas is not None
-    assert database.reactivate_source_share_quotas["xiaohongshu"] == 142
+    assert database.reactivate_source_share_quotas["bilibili"] == 480
+    assert database.reactivate_source_share_quotas["xiaohongshu"] == 60
+    assert database.reactivate_source_share_quotas["douyin"] == 60
     assert database.trim_source_share_quotas is not None
     assert database.pool_count == 600
 
@@ -1256,7 +1534,7 @@ async def test_run_forever_cancels_child_loops_on_shutdown() -> None:
         check_interval_seconds=3600,
     )
 
-    started = {name: asyncio.Event() for name in ("refresh", "soul", "xhs", "push")}
+    started = {name: asyncio.Event() for name in ("refresh", "soul", "xhs", "douyin", "push")}
     cancelled = {name: asyncio.Event() for name in started}
     spawned_tasks: list[asyncio.Task[None]] = []
 
@@ -1276,6 +1554,7 @@ async def test_run_forever_cancels_child_loops_on_shutdown() -> None:
     controller._loop_refresh = make_loop("refresh")  # type: ignore[method-assign]
     controller._loop_soul_pipeline = make_loop("soul")  # type: ignore[method-assign]
     controller._loop_xhs_producer = make_loop("xhs")  # type: ignore[method-assign]
+    controller._loop_douyin_producer = make_loop("douyin")  # type: ignore[method-assign]
     controller._loop_proactive_push = make_loop("push")  # type: ignore[method-assign]
 
     task = asyncio.create_task(controller.run_forever())

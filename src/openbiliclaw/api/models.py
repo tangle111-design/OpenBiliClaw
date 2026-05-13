@@ -220,6 +220,30 @@ class BilibiliCookieResponse(BaseModel):
     error_code: str = ""
 
 
+class DouyinCookieIn(BaseModel):
+    """Cookie sync payload for Douyin direct-cookie discovery."""
+
+    cookie: str = Field(
+        ...,
+        description="Cookie header string from douyin.com.",
+        min_length=1,
+    )
+    source: str = Field(
+        default="extension",
+        description="Where the cookie came from. Used for telemetry only.",
+    )
+
+
+class DouyinCookieResponse(BaseModel):
+    """Result of syncing a Douyin Cookie header."""
+
+    ok: bool
+    has_cookie: bool
+    cookie_names: list[str] = Field(default_factory=list)
+    message: str = ""
+    error_code: str = ""
+
+
 class NotificationAckIn(BaseModel):
     """Acknowledge one browser notification delivery."""
 

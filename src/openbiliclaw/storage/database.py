@@ -36,6 +36,10 @@ _LOCK_RETRY_SLEEP_SECONDS = 0.02
 _BVID_PATTERN = re.compile(r"(BV[0-9A-Za-z]+)")
 _XHS_SOURCE_FAMILY = "xiaohongshu"
 _XHS_SOURCE_PREFIXES = ("xhs-", "xhs_", "xiaohongshu")
+_DOUYIN_SOURCE_FAMILY = "douyin"
+_DOUYIN_SOURCE_PREFIXES = ("dy-", "dy_", "douyin")
+_BILIBILI_SOURCE_FAMILY = "bilibili"
+_BILIBILI_SOURCE_KEYS = ("search", "related_chain", "trending", "explore")
 _EXPLORE_HIGH_RISK_CLUSTERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "manufacturing",
@@ -146,6 +150,10 @@ def _pool_source_family(source: object, source_platform: object = "") -> str:
     source_key = raw_source.lower()
     if platform in {_XHS_SOURCE_FAMILY, "xhs"} or source_key.startswith(_XHS_SOURCE_PREFIXES):
         return _XHS_SOURCE_FAMILY
+    if platform in {_DOUYIN_SOURCE_FAMILY, "dy"} or source_key.startswith(_DOUYIN_SOURCE_PREFIXES):
+        return _DOUYIN_SOURCE_FAMILY
+    if platform in {_BILIBILI_SOURCE_FAMILY, "bili"} or source_key in _BILIBILI_SOURCE_KEYS:
+        return _BILIBILI_SOURCE_FAMILY
     return raw_source or "unknown"
 
 
@@ -1393,6 +1401,97 @@ class Database:
             "suppressed=%d, by-source: %s",
             target,
             len(rows),
+            len(clean_bvids),
+            breakdown or "(none)",
+        )
+        return len(clean_bvids)
+
+    def trim_pool_source_overflow(self, *, source_share_quotas: dict[str, int]) -> int:
+        """Suppress fresh rows that exceed platform-family pool quotas.
+
+        ``trim_pool_to_target_count`` caps the total pool size. This pass caps
+        each tracked platform family independently, so an over-filled family
+        cannot occupy capacity reserved for another source while the total pool
+        is still below target.
+        """
+        clean_quotas: dict[str, int] = {}
+        for source_family, quota in source_share_quotas.items():
+            try:
+                clean_quotas[str(source_family)] = max(0, int(quota))
+            except (TypeError, ValueError):
+                continue
+        if not clean_quotas:
+            return 0
+
+        cursor = self.conn.execute(
+            """
+            SELECT bvid, source, source_platform, content_url, relevance_score, last_scored_at
+            FROM content_cache
+            WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+              AND COALESCE(feedback_type, '') != 'dislike'
+              AND NOT EXISTS (
+                SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
+              )
+            """
+        )
+        viewed_bvids = self.get_recent_viewed_bvids()
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in cursor.fetchall():
+            bvid = str(row["bvid"]).strip()
+            if not bvid or bvid in viewed_bvids:
+                continue
+            if not _is_linkable_pool_source(
+                row["source"],
+                row["source_platform"],
+                row["content_url"],
+            ):
+                continue
+            source_family = _pool_source_family(row["source"], row["source_platform"])
+            if source_family in clean_quotas:
+                grouped[source_family].append(dict(row))
+
+        overflow_rows: list[dict[str, Any]] = []
+        for source_family, rows in grouped.items():
+            quota = clean_quotas[source_family]
+            if len(rows) <= quota:
+                continue
+            ranked = sorted(
+                rows,
+                key=lambda row: (
+                    -float(row.get("relevance_score", 0.0) or 0.0),
+                    -self._sort_timestamp_score(str(row.get("last_scored_at", ""))),
+                    1 if str(row.get("source", "") or "") == "explore" else 0,
+                    str(row.get("bvid", "")),
+                ),
+            )
+            overflow_rows.extend(ranked[quota:])
+
+        clean_bvids = [str(row.get("bvid", "")).strip() for row in overflow_rows]
+        clean_bvids = [bvid for bvid in clean_bvids if bvid]
+        if not clean_bvids:
+            return 0
+
+        placeholders = ", ".join("?" for _ in clean_bvids)
+        self._execute_write(
+            f"""
+            UPDATE content_cache
+            SET pool_status = 'suppressed'
+            WHERE bvid IN ({placeholders})
+            """,
+            clean_bvids,
+        )
+        per_source: dict[str, int] = defaultdict(int)
+        for row in overflow_rows:
+            family = _pool_source_family(
+                row.get("source", ""),
+                row.get("source_platform", ""),
+            )
+            per_source[family] += 1
+        breakdown = ", ".join(
+            f"{src}:{cnt}" for src, cnt in sorted(per_source.items(), key=lambda kv: -kv[1])
+        )
+        logger.info(
+            "[diversity] trim_pool_source_overflow: suppressed=%d, by-source: %s",
             len(clean_bvids),
             breakdown or "(none)",
         )

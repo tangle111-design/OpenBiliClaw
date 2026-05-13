@@ -23,6 +23,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,8 @@ DY_BOOTSTRAP_SCOPE_LABELS: dict[str, str] = {
     "dy_like": "点赞",
     "dy_follow": "关注",
 }
+
+_DISCOVERY_CREATOR_SCOPE_PRIORITY = ("dy_follow", "dy_collect", "dy_like", "dy_post")
 
 
 def dy_bootstrap_videos_to_events(
@@ -214,6 +218,79 @@ def _merge_dy_result_payload(
     return merged, added
 
 
+def recent_dy_creator_sec_uids(
+    db: Database,
+    *,
+    limit: int = 20,
+    task_limit: int = 5,
+) -> tuple[str, ...]:
+    """Return creator sec_uid seeds from recent completed Douyin bootstrap tasks.
+
+    Direct search / hot can soft-return HTTP 200 with empty lists. Creator
+    timelines are currently the most reliable direct-cookie discovery
+    surface, so discovery can use authors seen in recent bootstrap signals
+    as a fallback seed list.
+    """
+    if limit <= 0 or task_limit <= 0:
+        return ()
+
+    rows = db.conn.execute(
+        """
+        SELECT result_json
+        FROM dy_tasks
+        WHERE status = 'completed' AND result_json IS NOT NULL
+        ORDER BY completed_at DESC, created_at DESC
+        LIMIT ?
+        """,
+        (task_limit,),
+    ).fetchall()
+
+    buckets: dict[str, list[str]] = {
+        scope: [] for scope in _DISCOVERY_CREATOR_SCOPE_PRIORITY
+    }
+    fallback: list[str] = []
+    for row in rows:
+        try:
+            payload = json.loads(str(row[0] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        videos = payload.get("videos")
+        if not isinstance(videos, list):
+            continue
+        for video in videos:
+            if not isinstance(video, dict):
+                continue
+            sec_uid = str(
+                video.get("creator_sec_uid") or video.get("author_sec_uid") or ""
+            ).strip()
+            if not sec_uid:
+                continue
+            scope = str(video.get("scope", "")).strip()
+            if scope in buckets:
+                buckets[scope].append(sec_uid)
+            else:
+                fallback.append(sec_uid)
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for scope in _DISCOVERY_CREATOR_SCOPE_PRIORITY:
+        for sec_uid in buckets[scope]:
+            if sec_uid in seen:
+                continue
+            seen.add(sec_uid)
+            result.append(sec_uid)
+            if len(result) >= limit:
+                return tuple(result)
+    for sec_uid in fallback:
+        if sec_uid in seen:
+            continue
+        seen.add(sec_uid)
+        result.append(sec_uid)
+        if len(result) >= limit:
+            break
+    return tuple(result)
+
+
 class DyTaskQueue:
     """Manages the dy_tasks table.
 
@@ -264,11 +341,7 @@ class DyTaskQueue:
         daily_budget: int = 100,
     ) -> str | None:
         """Enqueue a task and return its id, or None when budget exhausted."""
-        today = datetime.now(UTC).strftime("%Y-%m-%d")
-        count_today = self._db.conn.execute(
-            "SELECT COUNT(*) FROM dy_tasks WHERE type = ? AND created_at >= ?",
-            (task_type, today),
-        ).fetchone()[0]
+        count_today = self._budgeted_count_today(task_type)
 
         if count_today >= daily_budget:
             logger.info(
@@ -287,11 +360,62 @@ class DyTaskQueue:
         self._db.conn.commit()
         return task_id
 
+    def _budgeted_count_today(self, task_type: str) -> int:
+        """Count today's tasks that should consume the per-type daily budget."""
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        rows = self._db.conn.execute(
+            """
+            SELECT status, result_json
+            FROM dy_tasks
+            WHERE type = ? AND created_at >= ?
+            """,
+            (task_type, today),
+        ).fetchall()
+
+        count = 0
+        for row in rows:
+            status = str(row["status"] if hasattr(row, "keys") else row[0])
+            result_json = row["result_json"] if hasattr(row, "keys") else row[1]
+            if status == "failed" and _is_stale_pending_result(result_json):
+                continue
+            count += 1
+        return count
+
     def next_pending(self) -> dict[str, Any] | None:
         row = self._db.conn.execute(
             "SELECT * FROM dy_tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1"
         ).fetchone()
         return dict(row) if row else None
+
+    def expire_stale_pending(
+        self,
+        task_types: Iterable[str],
+        *,
+        older_than_seconds: float,
+        error: str = "stale_pending",
+    ) -> int:
+        """Fail pending tasks of selected types older than the given age."""
+        normalized_types = tuple(str(t).strip() for t in task_types if str(t).strip())
+        if not normalized_types:
+            return 0
+        cutoff_ts = datetime.now(UTC).timestamp() - max(0.0, float(older_than_seconds))
+        cutoff_text = datetime.fromtimestamp(cutoff_ts, UTC).strftime("%Y-%m-%d %H:%M:%S")
+        placeholders = ",".join("?" for _ in normalized_types)
+        result_payload = json.dumps({"error": error}, ensure_ascii=False)
+        cursor = self._db.conn.execute(
+            f"""
+            UPDATE dy_tasks
+            SET status = 'failed',
+                result_json = ?,
+                completed_at = CURRENT_TIMESTAMP
+            WHERE status = 'pending'
+              AND type IN ({placeholders})
+              AND created_at < ?
+            """,
+            (result_payload, *normalized_types, cutoff_text),
+        )
+        self._db.conn.commit()
+        return int(cursor.rowcount or 0)
 
     def get(self, task_id: str) -> dict[str, Any] | None:
         row = self._db.conn.execute(
@@ -363,3 +487,11 @@ class DyTaskQueue:
             (result, task_id),
         )
         self._db.conn.commit()
+
+
+def _is_stale_pending_result(result_json: Any) -> bool:
+    try:
+        payload = json.loads(str(result_json or "{}"))
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and payload.get("error") == "stale_pending"
