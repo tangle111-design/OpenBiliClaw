@@ -119,7 +119,7 @@ See the [Docker Deployment Guide](docs/docker-deployment.md).
 </details>
 
 <details>
-<summary>Advanced: multi-source login, Xiaohongshu CDP, and Douyin plugin path</summary>
+<summary>Advanced: multi-source login and plugin path</summary>
 
 OpenBiliClaw does not store your platform passwords or bypass login. It reuses the browser sessions you already control and only fetches content you can see.
 
@@ -129,7 +129,7 @@ OpenBiliClaw does not store your platform passwords or bypass login. It reuses t
 | **Xiaohongshu** | Log in normally at https://www.xiaohongshu.com in the same browser | Xiaohongshu discovery and detail fetches are unavailable |
 | **Douyin** | Log in normally at https://www.douyin.com in the same browser | `init --yes-douyin`, `fetch-douyin`, and `discover --source douyin` search / hot / feed may return 0 items |
 
-For Xiaohongshu, CDP-mode Chrome is strongly recommended because it reduces anti-scraping friction. Launch Chrome with a separate profile and `--remote-debugging-port=9222`, log in once, then set `[sources.browser] cdp_url = "http://localhost:9222"`. See the [config reference](docs/modules/config.md#sourcesbrowser).
+Xiaohongshu and Douyin currently use Chrome extension tasks, so you do not need to start an extra CDP debugging Chrome. `[sources.browser].cdp_url` remains available only for generic Web / custom webpage fetching.
 
 </details>
 
@@ -420,7 +420,7 @@ OpenBiliClaw/
 | [v0.3.19](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.19) | 2026-05-01 | `openbiliclaw init` now best-effort mixes Xiaohongshu saved / liked / explicit page-history signals into the first profile. The extension runs `bootstrap_profile` in the user's logged-in Xiaohongshu session; scrolling tasks open `/explore` in the foreground and click the page's own profile entry before using `partial` batches. The backend converts notes to normal `favorite / like / view` events without directly crawling Xiaohongshu. |
 | **[v0.3.18](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.18)** | 2026-04-30 | Promotes `franchise_key` to a first-class column on `content_cache`, populated directly by the LLM at evaluation time. Downstream curator dislike propagation and `/api/recommendations` IP dedup now read from the real column instead of the title heuristic that v0.3.17 briefly tried. The hardcoded alias list is gone. |
 | [v0.3.17](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.17) | 2026-04-30 | Fixes a recommendation pipeline IP over-generalisation bug ("5 Genshin clips in one popup"): adds a heuristic franchise extractor; `/api/recommendations` now caps each franchise at 2 per response window; disliking one Genshin video soft-down-weights all same-franchise candidates instead of just blocking that exact bvid |
-| [v0.3.16](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.16) | 2026-04-30 | README backend-install order reshuffled: one-liner / Docker / direct script come first, the unsigned desktop package is moved into a `<details>` block at the end · adds a "log into every source you want to use" pre-install section explaining why Xiaohongshu specifically requires being logged in in the same browser the extension is installed (CDP mode strongly recommended) |
+| [v0.3.16](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.16) | 2026-04-30 | README backend-install order reshuffled: one-liner / Docker / direct script come first, the unsigned desktop package is moved into a `<details>` block at the end · adds a "log into every source you want to use" pre-install section explaining why Xiaohongshu specifically requires being logged in in the same browser the extension is installed |
 | [v0.3.15](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.15) | 2026-04-30 | Round-up of Windows native-install pitfalls: CLI now forces stdout to UTF-8 on launch (no more `UnicodeEncodeError` on GBK consoles when emoji prints) · install.ps1's `python -c f"..."` rewritten as `print(a, b)` to dodge a PS 5.1 quoting bug · agent-install.md warns AI agents that `bash` on Windows often resolves to the WSL launcher · **fixes a registry bug where Ollama, registered only for embedding, was incorrectly used as a chat-completion fallback, causing `All providers failed (openai, ollama)` when the primary cloud LLM hit a transient error** |
 | [v0.3.14](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.14) | 2026-04-30 | Fixes a Windows GBK-locale bug where `/api/delight/pending-batch`, `/api/activity-feed`, etc. returned 500 on first hit: `MemoryLayer.load()/save()` and `bilibili.auth` cookie I/O now pin `encoding="utf-8"` instead of relying on the platform default. Includes a regression test that monkeypatches `builtins.open` to simulate Chinese Windows. |
 | [v0.3.13](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/backend-v0.3.13) | 2026-04-30 | Every install path now leads with "install the extension to auto-sync the cookie" instead of pushing the F12 dance: install.sh / install.ps1 status block, agent-install.md AI-agent contract, the CLI wizard's `_interactive_auth_setup`, docker-deployment.md, and openclaw-quickstart.md all updated. F12 demoted to a fallback. |

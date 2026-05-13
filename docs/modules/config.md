@@ -209,14 +209,16 @@ model    = "deepseek-v4-flash"
 
 ### `[sources.browser]`
 
-多源内容适配器（小红书、抖音、知乎、V2EX 等非 B 站源）使用的浏览器配置。与 `bilibili.browser` 独立 —— 后者控制 B 站登录 / 扫码用的 agent-browser CLI。
+通用 Web / 自定义网页源使用的浏览器配置。与 `bilibili.browser` 独立 —— 后者控制 B 站登录 / 扫码用的 agent-browser CLI。
+
+> 当前小红书和抖音稳定链路都走 Chrome 插件任务，不依赖 `[sources.browser].cdp_url`。这里的 CDP 配置主要用于没有专用插件 / API adapter 的网页源。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `cdp_url` | string | `""` | 预启动 Chrome 的 CDP 端点，例如 `"http://localhost:9222"`。设置后优先走 Playwright `connect_over_cdp` 复用你手动登录的会话；留空则回退到 agent-browser（无登录态） |
 | `headed` | bool | `false` | agent-browser 回退路径是否显示窗口 |
 
-> **推荐用 CDP 模式。** 小红书、抖音等站点对匿名请求限流严格，只有复用真实登录态才稳定工作。
+> **仅在通用 Web / 自定义网页源需要登录态时使用 CDP。** 普通 B 站 / 小红书 / 抖音使用路径不需要配置这里。
 >
 > 启动步骤：
 > 1. 安装 Playwright：`pip install 'openbiliclaw[browser]'`
@@ -226,7 +228,7 @@ model    = "deepseek-v4-flash"
 >      --remote-debugging-port=9222 \
 >      --user-data-dir="$HOME/.openbiliclaw-chrome"
 >    ```
-> 3. 在这个 Chrome 里手动登录目标站点（小红书、抖音等），profile 会记住，后续复用
+> 3. 在这个 Chrome 里手动登录目标网页源，profile 会记住，后续复用
 > 4. 在 `config.toml` 里填 `cdp_url = "http://localhost:9222"`
 >
 > `127.0.0.1` 与 `localhost` 并非总是等价：macOS 上 Chrome 常只绑定 IPv6 `::1:9222`，而 Python urllib 默认走 IPv4。用 `localhost` 最稳妥（`getaddrinfo` 会同时尝试两边）。
