@@ -189,6 +189,7 @@
       position: relative;
       padding: 88px 0;
       overflow: hidden;
+      scroll-margin-top: 84px;
     }
 
     .section.dark {
@@ -605,7 +606,7 @@
 
     .screens {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 18px;
       margin-top: 34px;
     }
@@ -620,7 +621,7 @@
 
     .screen-shot img {
       width: 100%;
-      height: 420px;
+      height: 520px;
       object-fit: cover;
       object-position: top center;
     }
@@ -792,6 +793,7 @@
 
       .section {
         padding: 64px 0;
+        scroll-margin-top: 124px;
       }
 
       .hero-inner {
@@ -1089,7 +1091,7 @@
           <h2>用户看到的是一个浏览器侧边栏。</h2>
           <p class="lead">复杂的理解、发现和推荐链路藏在本地后端里；日常使用只需要在插件里看推荐、看画像、聊天和反馈。</p>
         </div>
-        <div class="screens">
+        <div class="screens" aria-label="产品界面截图">
           <article class="screen-shot reveal">
             <img src="images/screenshot-recommend-feedback.png" alt="推荐卡片和反馈按钮截图" />
             <div>
@@ -1098,10 +1100,17 @@
             </div>
           </article>
           <article class="screen-shot reveal">
-            <img src="images/screenshot-profile-portrait.png" alt="用户心理画像截图" />
+            <img src="images/screenshot-profile-values.png" alt="价值偏好和兴趣方向画像截图" />
             <div>
-              <h3>分层心理画像</h3>
-              <p>人格画像、认知风格、价值偏好、兴趣结构和最近新记住的变化都可查看。</p>
+              <h3>长期价值画像</h3>
+              <p>它会把“你在内容里长期寻找什么”沉淀成价值偏好、内在驱动力和兴趣方向。</p>
+            </div>
+          </article>
+          <article class="screen-shot reveal">
+            <img src="images/screenshot-profile-style.png" alt="认知风格和内容口味画像截图" />
+            <div>
+              <h3>认知风格与内容口味</h3>
+              <p>画像不是一段玄学文字，而是能被查看、质疑和校准的结构化偏好。</p>
             </div>
           </article>
           <article class="screen-shot reveal">
