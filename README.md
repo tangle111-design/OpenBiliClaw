@@ -19,24 +19,10 @@
 
 ---
 
-## 📌 v0.3.70 重要更新（2026-05-16）
+## 📌 v0.3.71 重要更新（2026-05-16）
 
-- **🧩 Chrome 插件离线后端体验修复** —— `extension-v0.3.22` 在连接 `/api/runtime-stream` 之前会先做 `GET /api/health` 健康探针；只安装插件、尚未运行 `openbiliclaw start` 时，不再把浏览器层 WebSocket 连接失败计入 `chrome://extensions` 的「错误」徽标。
-- **⚪ 后端状态可见** —— 后端不可达时扩展工具栏图标会显示浅灰 `!` badge，WebSocket 首次连上后自动清除；popup 内仍保留启动后端提示。
-
-完整变更详见 [docs/changelog.md](docs/changelog.md)。
-
----
-
-## 📌 v0.3.69 重要更新（2026-05-12）
-
-- **🎵 抖音初始化画像信号** —— `openbiliclaw init --yes-douyin` 可通过浏览器扩展拉取发布 / 收藏 / 点赞 / 关注，并混入偏好分析与初始画像。
-- **▶ YouTube 初始化画像信号** —— `openbiliclaw init --yes-youtube` 可通过浏览器扩展拉取观看历史 / 订阅 / 点赞；`openbiliclaw import-youtube` 也支持 Google Takeout 离线导入。
-- **🎬 抖音内容发现** —— `openbiliclaw discover --source douyin` 的 search 走已登录浏览器后台 tab 插件签名桥，hot 走后台插件 `/hot/{sentence_id}` → related 链路，feed 走后台首页 `/aweme/v1/web/tab/feed/` 签名桥；`openbiliclaw discover-douyin` 可独立调试召回。
-- **⚖️ 可配置入池配比** —— `[scheduler.pool_source_shares]` 默认按 B 站 / 小红书 / 抖音 / YouTube = 8 / 1 / 1 / 1 保存比例；关闭的平台不占候选池 quota，init 和插件设置页都可按已有事件生成建议比例。
-- **🔎 抖音插件搜索 smoke** —— `openbiliclaw search-douyin -k 猫 -w 180` 走同一页面签名桥，单独验证搜索候选召回但不写推荐池。
-- **🔎 独立 smoke 命令** —— `openbiliclaw fetch-douyin` 单独验证抖音拉取链路，事件由 daemon 入库，不隐式重建画像。
-- **🧪 E2E 覆盖补强** —— 扩展 MAIN-world API harvester、后端 partial 合并去重、CLI init 对接均已补回归测试。
+- **🦊 Firefox 140+ 本地构建支持** —— `extension-v0.3.23` 新增 `manifest.firefox.json`，用 Firefox `sidebar_action` 承载同一套 popup UI；`npm run build:firefox` / `npm run package:firefox` 可生成 `dist-firefox/` 和 Firefox 专用 zip，manifest 已声明 AMO 所需的数据收集类别。
+- **📦 扩展打包更稳** —— Chrome / Firefox 打包脚本都会先删除同名旧 zip 再压缩，避免重复本地打包时把已经删除的旧文件残留进 release 资产。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
@@ -139,6 +125,29 @@
 2. 下载 `openbiliclaw-extension-v*.zip`
 3. 打开扩展管理页面（Chrome：`chrome://extensions/` · Edge：`edge://extensions/` · Brave：`brave://extensions/`），开启右上角「开发者模式」
 4. 将下载的 `.zip` 文件拖入页面安装
+
+<details>
+<summary>Firefox 用户：本地构建临时加载（Firefox 140+）</summary>
+
+Firefox 用 `sidebar_action` 而不是 Chrome 的 `sidePanel`，需要单独构建。Firefox manifest 会声明本地后端同步所需的数据收集类别。Release 里暂时只提供 Chrome 包，Firefox 走本地构建 + `about:debugging` 临时加载：
+
+```bash
+git clone https://github.com/whiteguo233/OpenBiliClaw.git
+cd OpenBiliClaw/extension
+npm install
+npm run build:firefox          # 产出 dist-firefox/
+# 或: npm run package:firefox   # 额外打成 openbiliclaw-extension-v*-firefox.zip
+```
+
+加载方式：
+
+1. 打开 `about:debugging#/runtime/this-firefox`
+2. 点「Load Temporary Add-on…」
+3. 选 `extension/dist-firefox/manifest.json`
+
+注意：Firefox 临时加载在浏览器重启后会失效；正式签名 / AMO 上架仍在规划中。
+
+</details>
 
 ### 2. 让 AI 助手部署后端
 

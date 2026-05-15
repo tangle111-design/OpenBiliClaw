@@ -4,11 +4,19 @@
 
 ---
 
+## v0.3.71: Firefox 扩展构建与打包补强（2026-05-16）
+
+- 浏览器扩展新增 Firefox 140+ 支持：新增 `manifest.firefox.json` 使用 `sidebar_action` 替代 Chrome 的 `sidePanel`，`npm run build:firefox` / `npm run package:firefox` 产出独立 `dist-firefox/` 和 `openbiliclaw-extension-v*-firefox.zip`；`openExtensionUi()` 增加 Chrome sidePanel -> Firefox sidebarAction -> tab 的三段降级。Firefox manifest 的 version 在构建时从 `manifest.json` 注入，并声明 AMO 所需 `data_collection_permissions`；Chrome / Firefox 打包前都会删除旧 zip，避免本地重复打包残留过期文件。Chrome / Edge / Brave 构建路径完全不变。
+- 浏览器插件版本提升到 v0.3.23，避免复用已发布的 `extension-v0.3.22` tag / release 资产语义。
+- README / README_EN 顶部 highlights callout 收敛为“只保留最新版本、≤4 条、≤1 句、CN/EN 同步”，完整历史继续放在 changelog，避免 README 顶部堆成迷你变更日志。
+
+---
+
 ## v0.3.70: 修复扩展未启动后端时 WebSocket 报错（2026-05-16）
 
 - 修复 [#7](https://github.com/whiteguo233/OpenBiliClaw/issues/7)：扩展 service worker 连接 `/api/runtime-stream` 之前先做一次 2 秒超时的 HTTP `GET /api/health` 健康探针，只有后端可达才 `new WebSocket(...)`。fresh-install 用户只装扩展、未启动 `openbiliclaw start` 时，`chrome://extensions` 不会再被浏览器层的 `WebSocket ... ERR_CONNECTION_REFUSED` 计入「错误」徽标；健康探针失败仍走 5s → 60s 指数退避兜底重连，后端起来后自动恢复。
 - 后端不可达时在扩展工具栏图标上打一个浅灰 `!` badge 作为可视提示，WebSocket 首次连上后自动清除；popup 内继续显示「后端还没开张，先运行 `openbiliclaw start`」。
-- Chrome 插件版本提升到 v0.3.22 并准备发布该修复。
+- 浏览器插件版本提升到 v0.3.22 并准备发布该修复。
 
 ---
 

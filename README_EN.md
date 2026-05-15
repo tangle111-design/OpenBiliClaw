@@ -17,24 +17,10 @@
 
 ---
 
-## 📌 v0.3.70 Highlights (2026-05-16)
+## 📌 v0.3.71 Highlights (2026-05-16)
 
-- **🧩 Chrome extension offline-backend fix** — `extension-v0.3.22` probes `GET /api/health` before connecting to `/api/runtime-stream`; installing the extension before running `openbiliclaw start` no longer lets browser-level WebSocket connection failures count toward the `chrome://extensions` error badge.
-- **⚪ Backend status is visible** — when the backend is unreachable, the extension toolbar icon shows a subtle gray `!` badge and clears it after the runtime WebSocket first connects; the popup still keeps the backend startup hint.
-
-Full changelog: [docs/changelog.md](docs/changelog.md).
-
----
-
-## 📌 v0.3.69 Highlights (2026-05-12)
-
-- **🎵 Douyin init-profile signals** — `openbiliclaw init --yes-douyin` can pull post / favorite / like / follow signals through the browser extension and feed them into preference analysis and the first soul profile.
-- **▶ YouTube init-profile signals** — `openbiliclaw init --yes-youtube` can pull watch history / subscriptions / likes through the browser extension; `openbiliclaw import-youtube` also supports Google Takeout offline imports.
-- **🎬 Douyin content discovery** — `openbiliclaw discover --source douyin` uses background logged-in browser plugin signing for search, `/hot/{sentence_id}` → related for hot, and `/aweme/v1/web/tab/feed/` for the home feed; `openbiliclaw discover-douyin` debugs recall standalone.
-- **⚖️ Configurable pool mix** — `[scheduler.pool_source_shares]` stores Bilibili / Xiaohongshu / Douyin / YouTube = 8 / 1 / 1 / 1 by default; disabled sources do not consume pool quota, and init / settings can suggest ratios from observed events.
-- **🔎 Douyin plugin search smoke** — `openbiliclaw search-douyin -k cat -w 180` uses the same page signing bridge to validate search recall without writing the recommendation pool.
-- **🔎 Standalone smoke command** — `openbiliclaw fetch-douyin` verifies the Douyin pull path without implicitly rebuilding the profile.
-- **🧪 E2E coverage tightened** — extension MAIN-world API harvester, backend partial merge/dedup, and CLI init integration now have regression tests.
+- **🦊 Firefox 140+ local build support** — `extension-v0.3.23` adds `manifest.firefox.json`, uses Firefox `sidebar_action` for the same popup UI, and `npm run build:firefox` / `npm run package:firefox` produce `dist-firefox/` plus a Firefox-specific zip. The Firefox manifest declares the data-collection categories required by AMO.
+- **📦 Safer extension packaging** — both Chrome and Firefox package scripts remove any existing same-name zip before compressing, so repeated local packaging cannot leave deleted stale files inside release assets.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -83,6 +69,29 @@ Built on Manifest V3, the extension works in any Chrome-compatible browser — *
 2. Download `openbiliclaw-extension-v*.zip`
 3. Open the extensions page (Chrome: `chrome://extensions/` · Edge: `edge://extensions/` · Brave: `brave://extensions/`), enable "Developer mode" in the top right
 4. Drag the downloaded `.zip` file into the page to install
+
+<details>
+<summary>Firefox users: build locally and sideload (Firefox 140+)</summary>
+
+Firefox uses `sidebar_action` instead of Chrome's `sidePanel`, so it needs a separate build. The Firefox manifest declares the data-collection categories needed for local backend sync. Releases ship only the Chrome zip for now; on Firefox you build locally and load the addon temporarily via `about:debugging`:
+
+```bash
+git clone https://github.com/whiteguo233/OpenBiliClaw.git
+cd OpenBiliClaw/extension
+npm install
+npm run build:firefox          # writes dist-firefox/
+# or: npm run package:firefox   # also produces openbiliclaw-extension-v*-firefox.zip
+```
+
+Then:
+
+1. Open `about:debugging#/runtime/this-firefox`
+2. Click "Load Temporary Add-on…"
+3. Pick `extension/dist-firefox/manifest.json`
+
+Caveat: temporary add-ons disappear on Firefox restart; signed AMO distribution is still on the roadmap.
+
+</details>
 
 ### 2. Ask an AI coding agent to deploy the backend
 

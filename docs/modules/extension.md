@@ -2,7 +2,7 @@
 
 ## 模块范围
 
-`extension/` 是 Chrome 插件子项目，负责：
+`extension/` 是浏览器插件子项目（Chrome / Edge / Brave 主构建，Firefox 独立构建），负责：
 
 - 在 B 站 / 小红书 / 抖音 / YouTube 等支持的站点采集行为事件（平台无关内核 + 平台适配器）
 - 通过 background service worker 缓冲并上报到本地后端
@@ -15,6 +15,7 @@
 | 8.1 行为采集 | ✅ | `collector.ts` + `service-worker.ts` 已接通真实事件链 |
 | 8.2 后端 API | ✅ | Python 侧 `/api/events`、`/api/health`、`/api/recommendations` 已可联调 |
 | 8.3 Side Panel | ✅ | 已切到 side panel 主入口，继续复用 `popup/` 页面承载推荐 / 画像 / 聊天三 tab；聊天改走后端 durable turn，Chrome 丢弃或切 tab 后可恢复 |
+| Firefox 140+ 支持 | ✅ | `manifest.firefox.json` 使用 `sidebar_action` 承载同一套 popup UI，`openExtensionUi()` 按 Chrome sidePanel -> Firefox sidebarAction -> tab 降级；Firefox manifest 在构建时注入主 manifest version，并声明 AMO 所需 `data_collection_permissions` |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
 | 设置页源策略控制 | ✅ | side panel 设置页可开关小红书 / 抖音 / YouTube discovery，编辑 B 站 / 小红书 / 抖音 / YouTube 候选池占比，并按已有事件向后端请求推荐比例 |
 | B 站 Cookie 自动同步 | ✅ | service worker 会读取 `SESSDATA` / `bili_jct` / `DedeUserID` 三件套并推送到本地后端；后端暂未启动时切到 1 分钟重试，成功后恢复 60 分钟兜底刷新；后端 runtime-stream 也可发 `bilibili_cookie_sync_requested` 让扩展立刻回传 |
@@ -37,7 +38,12 @@
 ```text
 extension/
 ├── manifest.json
+├── manifest.firefox.json
 ├── package.json
+├── scripts/
+│   ├── build.mjs
+│   ├── package.mjs
+│   └── package-firefox.mjs
 ├── popup/
 │   ├── popup.html
 │   ├── popup.js
@@ -111,8 +117,8 @@ extension/
 - 连接 `/api/runtime-stream` 之前会先 HTTP `GET /api/health`（2 秒超时）做一次健康探针，仅在后端可达时再 `new WebSocket(...)`。这样 fresh-install 用户先装扩展、后启动后端时，`chrome://extensions` 不会被浏览器层 WebSocket 失败计入「错误」徽标；健康探针失败仍走原有的 5s → 60s 指数退避兜底重连
 - 后端不可达时会在扩展工具栏图标上打一个浅灰 `!` badge 作为可视提示，WebSocket 首次连上后自动清除；popup 内仍会显示「后端还没开张，先运行 `openbiliclaw start`」
 - Cookie 监听器幂等注册，避免 onInstalled / onStartup / 冷启动重复挂载导致同一次登录触发多次 POST
-- 点击扩展图标时优先打开 side panel
-- 通知和认知提醒也会优先把用户带回插件 side panel 上下文
+- 点击扩展图标时优先打开 Chrome side panel；Firefox 构建会改用 `sidebar_action` 打开同一套 `popup/popup.html`
+- 通知和认知提醒也会优先把用户带回插件 side panel / sidebar 上下文
 - 在推荐通知之外，认知变化通知会打开带 `?tab=profile` 的插件页面，直接落到画像视图
 - 惊喜推荐通知现在会打开带 `?tab=recommend&delight=<bvid>` 的插件页面，落到对应的首屏惊喜卡，而不是只把人丢回通用推荐页
 
@@ -310,6 +316,7 @@ npm run build
 - 缓冲去重与强信号 flush
 - B 站 / 抖音 Cookie 自动同步的重试闹钟和幂等监听器
 - manifest 图标资源存在性
+- Firefox manifest 的 version 注入、`sidebar_action` 降级路径、AMO 数据收集类别声明和 Firefox zip 打包清理
 - popup 设置页字段与 `/api/config` schema 的基础对齐
 - popup API durable chat turn：`startChatTurn()`、`fetchChatTurn()`、`fetchChatTurns()` 会分别调用 `/api/chat/turns`、`/api/chat/turns/{turn_id}` 和列表接口
 - `dist/` 运行时脚本可被 Chrome 直接加载
@@ -321,6 +328,8 @@ npm run build
 - 发布 tag：`extension-vX.Y.Z`
 - Release 资产：`openbiliclaw-extension-vX.Y.Z.zip`
 - 下载入口：GitHub Releases 页面中查找最新的 `extension-v*` release
+- Chrome / Edge / Brave 打包脚本会先删除同名旧 zip，再重新压缩 `manifest.json`、`dist/`、`icons/`、`popup/`，避免重复打包带入残留文件
+- Firefox 140+ 当前走本地构建 / 临时加载：`npm run build:firefox` 生成 `dist-firefox/`，`npm run package:firefox` 生成 `openbiliclaw-extension-vX.Y.Z-firefox.zip`；Firefox 打包脚本同样会先删除同名旧 zip
 
 后端桌面包不再和插件共用同一个 release 语义；后端改由 `backend-v*` 通道单独发布。
 
