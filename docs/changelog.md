@@ -22,6 +22,7 @@
 
 ## v0.3.69: 抖音首页推荐流 discovery（2026-05-12）
 
+- Gemini provider 在 json_mode 下识别 reasoning-first 模型（`gemini-3.x` / `gemini-2.5-pro*`）并跳过 `thinking_budget=0` 优化，避免 `gemini-3.1-pro-preview` 等模型被 Google API 以 `400 INVALID_ARGUMENT` 拒绝；`gemini-2.5-flash` 的省钱通路保持原样。同时补全 pricing 别名（`gemini-3.1-pro-preview` / `gemini-3-pro-preview`），CLI / config / 文档统一改用真实模型 ID 并标注 Public Preview 需付费项目。
 - 兴趣探针新增本地 novelty guard：LLM 生成和 PreferenceAnalyzer seed 注入都会对照现有画像 domain / specifics、active/cooldown 猜测和近期 probe history 做规范化字符串 + 中文 bigram 去重，避免把已知画像细项换皮成新探针；active pool 多样性选择也会参考已有 active 体验轴。
 - probe 近期历史补齐持久化：`discovery_runtime_state` 现在保存 `probed_axes`，OpenClaw `next-probe` 成功返回后也会记录 domain / axis，连续调用不再重复拿同一条 active probe。
 - probe 显式反馈纳入历史治理：`/api/interest-probes/respond` 现在记录 `probe_feedback_history`，后续 LLM 生成、PreferenceAnalyzer seed、runtime push 和 OpenClaw `next-probe` 会避开 reject / chat_negative 明显重复的方向，并降低负向反馈体验轴的入池/推送优先级。
