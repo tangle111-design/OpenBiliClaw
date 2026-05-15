@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+from openbiliclaw.soul import speculator as speculator_module
 from openbiliclaw.soul.speculator import (
     CooldownEntry,
     InterestSpeculator,
@@ -39,6 +40,49 @@ def test_tokenize_filters_short():
     assert "a" not in tokens
     assert "好" not in tokens
     assert "hello" in tokens
+
+
+def test_probe_novelty_guard_matches_profile_specifics():
+    from openbiliclaw.soul.profile import (
+        InterestDomain,
+        InterestLayer,
+        InterestSpecific,
+        OnionProfile,
+    )
+
+    profile = OnionProfile(
+        interest=InterestLayer(
+            likes=[
+                InterestDomain(
+                    domain="AI",
+                    specifics=[
+                        InterestSpecific(name="ComfyUI工作流"),
+                        InterestSpecific(name="图像生成实战"),
+                    ],
+                )
+            ]
+        )
+    )
+    guard = speculator_module.ProbeNoveltyGuard.from_profile_and_state(
+        profile,
+        SpeculativeState(),
+    )
+
+    assert guard.is_duplicate_domain("AI") is True
+    assert guard.is_duplicate_domain("ComfyUI工作流拆解") is True
+    assert guard.filter_specifics(["ComfyUI工作流", "Stable Diffusion LoRA"]) == [
+        "Stable Diffusion LoRA"
+    ]
+
+
+def test_probe_novelty_guard_matches_recent_probe_history():
+    guard = speculator_module.ProbeNoveltyGuard.from_profile_and_state(
+        None,
+        SpeculativeState(),
+        probed_domains={"城市漫游"},
+    )
+
+    assert guard.is_duplicate_domain("城市漫游路线") is True
 
 
 # ---------------------------------------------------------------------------

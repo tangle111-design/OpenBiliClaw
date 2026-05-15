@@ -294,6 +294,95 @@ def _event_matches_specific(
     return _text_matches_keywords(event_text, specific.name)
 
 
+def _normalize_probe_term(value: Any) -> str:
+    """Normalize a probe term for local duplicate checks."""
+    return "".join(str(value or "").strip().lower().split())
+
+
+def _has_probe_term_overlap(candidate: str, existing: str) -> bool:
+    """Return True when two probe terms are clearly the same coverage.
+
+    This intentionally stays conservative: exact/substring matches catch
+    English and mixed terms, while Chinese bigram overlap catches obvious
+    phrase extensions such as "ComfyUI工作流" → "ComfyUI工作流拆解".
+    """
+    normalized_candidate = _normalize_probe_term(candidate)
+    normalized_existing = _normalize_probe_term(existing)
+    if not normalized_candidate or not normalized_existing:
+        return False
+    if (
+        normalized_candidate == normalized_existing
+        or normalized_candidate in normalized_existing
+        or normalized_existing in normalized_candidate
+    ):
+        return True
+
+    candidate_bigrams = _chinese_bigrams(normalized_candidate)
+    existing_bigrams = _chinese_bigrams(normalized_existing)
+    return len(candidate_bigrams) >= 4 and len(candidate_bigrams & existing_bigrams) >= 2
+
+
+@dataclass
+class ProbeNoveltyGuard:
+    """Local duplicate guard for speculative interest probes."""
+
+    exact_terms: set[str] = field(default_factory=set)
+    fuzzy_terms: set[str] = field(default_factory=set)
+
+    @classmethod
+    def from_profile_and_state(
+        cls,
+        profile: OnionProfile | None,
+        state: SpeculativeState,
+        *,
+        probed_domains: set[str] | None = None,
+    ) -> ProbeNoveltyGuard:
+        exact_terms: set[str] = set()
+        fuzzy_terms: set[str] = set()
+
+        def add_term(value: Any, *, exact: bool = True, fuzzy: bool = True) -> None:
+            raw = str(value or "").strip()
+            normalized = _normalize_probe_term(raw)
+            if not normalized:
+                return
+            if exact:
+                exact_terms.add(normalized)
+            if fuzzy:
+                fuzzy_terms.add(raw)
+
+        if profile is not None:
+            for domain in getattr(getattr(profile, "interest", None), "likes", []) or []:
+                add_term(getattr(domain, "domain", ""))
+                for specific in getattr(domain, "specifics", []) or []:
+                    add_term(getattr(specific, "name", ""))
+
+        for spec in state.active:
+            add_term(spec.domain)
+            for specific in spec.specifics:
+                add_term(specific.name)
+        for cooldown in state.cooldown:
+            add_term(cooldown.domain)
+        for domain in probed_domains or set():
+            add_term(domain)
+
+        return cls(exact_terms=exact_terms, fuzzy_terms=fuzzy_terms)
+
+    def is_duplicate_domain(self, domain: str) -> bool:
+        normalized = _normalize_probe_term(domain)
+        if not normalized:
+            return False
+        if normalized in self.exact_terms:
+            return True
+        return any(_has_probe_term_overlap(domain, term) for term in self.fuzzy_terms)
+
+    def filter_specifics(self, specifics: list[str]) -> list[str]:
+        return [
+            specific
+            for specific in specifics
+            if not self.is_duplicate_domain(specific)
+        ]
+
+
 def observe_events(
     events: list[dict[str, Any]],
     state: SpeculativeState,
