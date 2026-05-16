@@ -1820,7 +1820,7 @@ def test_init_guides_missing_runtime_config_interactively(
     #   5. "n" — skip module overrides
     #   6. "n" — skip xhs inclusion
     #   7. "n" — skip douyin inclusion
-    #   8. "n" — skip youtube inclusion
+    #   8+. "n" — skip any remaining optional source prompts
     wizard_input = (
         "\n".join(
             [
@@ -1828,6 +1828,7 @@ def test_init_guides_missing_runtime_config_interactively(
                 "gemini-key",
                 "",
                 "1",
+                "n",
                 "n",
                 "n",
                 "n",
