@@ -64,13 +64,15 @@ class OpenAIProvider(LLMProvider):
         max_tokens: int = 4096,
         json_mode: bool = False,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         # ``reasoning_effort`` is consumed by ``DeepSeekProvider``; the
         # base OpenAI provider accepts it for signature compatibility
         # but doesn't act on it (vanilla GPT-4o has no thinking knob).
         del reasoning_effort
+        effective_model = (model or "").strip() or self._model
         kwargs: dict[str, Any] = {
-            "model": self._model,
+            "model": effective_model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
@@ -295,6 +297,7 @@ class DeepSeekProvider(OpenAIProvider):
         max_tokens: int = 4096,
         json_mode: bool = False,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         # v0.3.51+: per-call ``reasoning_effort`` override. ``None`` =
         # use provider default (configured in config.toml). Empty
@@ -325,6 +328,7 @@ class DeepSeekProvider(OpenAIProvider):
                     temperature=temperature,
                     max_tokens=max_tokens,
                     json_mode=json_mode,
+                    model=model,
                 )
             except LLMResponseError:
                 if not effort:
@@ -334,6 +338,7 @@ class DeepSeekProvider(OpenAIProvider):
                         temperature=temperature,
                         max_tokens=max_tokens,
                         json_mode=json_mode,
+                        model=model,
                     )
                 # Max-effort reasoning occasionally burns through the entire
                 # output budget before the model emits any ``content``. Retry
@@ -350,6 +355,7 @@ class DeepSeekProvider(OpenAIProvider):
                     temperature=temperature,
                     max_tokens=max_tokens,
                     json_mode=json_mode,
+                    model=model,
                 )
         finally:
             self._reasoning_effort = previous_effort

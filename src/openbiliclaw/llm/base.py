@@ -87,6 +87,7 @@ class LLMProvider(ABC):
         max_tokens: int = 4096,
         json_mode: bool = False,
         reasoning_effort: str | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         """Send a chat completion request.
 
@@ -102,6 +103,9 @@ class LLMProvider(ABC):
                 ``""`` means "explicitly disable thinking for this
                 call" (used by structured tasks like discovery's
                 ``_evaluate_batch`` that don't benefit from reasoning).
+            model: Optional per-call model override. Empty/whitespace
+                values fall back to the provider's configured default
+                without mutating provider state.
 
         Returns:
             Standardized LLMResponse.

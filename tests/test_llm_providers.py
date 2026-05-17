@@ -53,6 +53,29 @@ async def test_openai_provider_normalizes_response(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+async def test_openai_provider_accepts_per_call_model_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OpenAIProvider(api_key="test-key", model="default-model")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("override-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="override-model",
+    )
+
+    assert response.content == "override-ok"
+    assert captured["model"] == "override-model"
+    assert provider._model == "default-model"
+
+
+@pytest.mark.asyncio
 async def test_openai_provider_retries_transient_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -162,6 +185,33 @@ async def test_claude_provider_normalizes_response(monkeypatch: pytest.MonkeyPat
         "completion_tokens": 8,
         "total_tokens": 20,
     }
+
+
+@pytest.mark.asyncio
+async def test_claude_provider_accepts_per_call_model_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ClaudeProvider(api_key="test-key", model="claude-default")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            model="claude-override",
+            content=[SimpleNamespace(text="ok")],
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+        )
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="claude-override",
+    )
+
+    assert response.content == "ok"
+    assert captured["model"] == "claude-override"
+    assert provider._model == "claude-default"
 
 
 @pytest.mark.asyncio
@@ -281,6 +331,30 @@ def test_deepseek_provider_defaults() -> None:
 
 
 @pytest.mark.asyncio
+async def test_deepseek_provider_accepts_per_call_model_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = DeepSeekProvider(api_key="test-key", model="deepseek-default")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("deepseek-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="deepseek-override",
+        reasoning_effort="",
+    )
+
+    assert response.content == "deepseek-ok"
+    assert captured["model"] == "deepseek-override"
+    assert provider._model == "deepseek-default"
+
+
+@pytest.mark.asyncio
 async def test_deepseek_provider_retries_empty_response_once_without_reasoning_effort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -329,6 +403,29 @@ def test_openai_provider_logs_http_400_response_body(
 def test_ollama_provider_defaults() -> None:
     provider = OllamaProvider(model="llama3")
     assert provider.name == "ollama"
+
+
+@pytest.mark.asyncio
+async def test_ollama_provider_accepts_per_call_model_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OllamaProvider(model="llama3")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("ollama-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="llama3.1",
+    )
+
+    assert response.content == "ollama-ok"
+    assert captured["model"] == "llama3.1"
+    assert provider._model == "llama3"
 
 
 def test_ollama_provider_native_root_strips_v1_suffix() -> None:
@@ -427,6 +524,29 @@ def test_openrouter_provider_defaults_and_headers() -> None:
     }
 
 
+@pytest.mark.asyncio
+async def test_openrouter_provider_inherits_per_call_model_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OpenRouterProvider(api_key="test-key", model="openai/default")
+    captured: dict[str, object] = {}
+
+    async def fake_request(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _openai_response("openrouter-ok")
+
+    monkeypatch.setattr(provider, "_request_with_retry", fake_request)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        model="anthropic/claude-sonnet-4.5",
+    )
+
+    assert response.content == "openrouter-ok"
+    assert captured["model"] == "anthropic/claude-sonnet-4.5"
+    assert provider._model == "openai/default"
+
+
 @pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
 def test_gemini_provider_defaults() -> None:
     provider = GeminiProvider(api_key="test-key")
@@ -480,6 +600,37 @@ async def test_gemini_provider_normalizes_response(
     assert config.thinking_config.thinking_budget == 0  # type: ignore[attr-defined]
     assert config.automatic_function_calling is not None  # type: ignore[attr-defined]
     assert config.automatic_function_calling.disable is True  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not gemini_sdk_available(), reason="google-genai is not installed")
+async def test_gemini_provider_accepts_per_call_model_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = GeminiProvider(api_key="test-key", model="gemini-2.5-flash")
+    captured: dict[str, object] = {}
+
+    async def fake_generate_content(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            text='{"ok": true}',
+            model_version="gemini-3.1-pro-preview",
+            usage_metadata=None,
+        )
+
+    monkeypatch.setattr(provider._client.aio.models, "generate_content", fake_generate_content)
+
+    response = await provider.complete(
+        [{"role": "user", "content": "hi"}],
+        json_mode=True,
+        model="gemini-3.1-pro-preview",
+    )
+
+    assert response.content == '{"ok": true}'
+    assert captured["model"] == "gemini-3.1-pro-preview"
+    assert provider._model == "gemini-2.5-flash"
+    config = captured["config"]
+    assert config.thinking_config is None  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
