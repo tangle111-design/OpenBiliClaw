@@ -166,7 +166,7 @@ CPU 即可跑（~100-200ms/次），跨 Mac / Win / Linux 一致。
 | `[llm.recommendation]` | 朋友式解释生成，影响最终用户体感 | 平衡型，例如 Claude Haiku / GPT-4o-mini |
 | `[llm.evaluation]` | 池子打分、相关度评估，高频后台调用 | 廉价模型 |
 
-运行时路由（v0.3.74+）：
+运行时路由（v0.3.75+）：
 
 - `LLMService` 不再用 caller 第一段朴素判断模块，而是内置 caller bucket。例：`soul.*` → soul，`discovery.search/explore/trending/related.*`、`yt_search.*`、`sources.xhs.*` → discovery，`recommendation.delight_score`、`recommendation.evaluate_batch`、`discovery.evaluate*`、`eval.*` → evaluation，其他 `recommendation.*` → recommendation。
 - `provider` 非空时走 `LLMRegistry.complete_provider(provider, ...)` 精确调用该 provider，不走 fallback 链；该 provider 被 rate-limit 或返回错误时会直接报错，避免用户指定贵模型给画像却被静默改用默认便宜模型。

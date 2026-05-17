@@ -17,12 +17,12 @@
 
 ---
 
-## 📌 v0.3.74 Highlights (2026-05-17)
+## 📌 v0.3.75 Highlights (2026-05-18)
 
-- **🧯 Config saves no longer hang** — `/api/config` validates before writing and rolls back failed hot reloads; post-reload speculator ticks now run in the background, and extension saves have a 60s timeout fallback.
+- **🧯 Config saves no longer wait on slow work** — post-reload speculator ticks now run in the background, and extension saves have a 60s timeout fallback.
 - **🎛️ Per-module LLM overrides now take effect** — `[llm.soul]` / `[llm.discovery]` / `[llm.recommendation]` / `[llm.evaluation]` route by caller bucket and can set provider/model per call.
-- **🧷 Settings no longer erase config** — masked keys and non-empty model/base URL/header/reasoning fields are preserved; only explicit reset can clear allowlisted API keys.
-- **🧩 Unified MiMo / non-OpenAI JSON tolerance** — recommendation, discovery, delight, awareness, and insight share structured-output parsing for wrappers, fenced JSON, JSONL, and schema echo.
+- **🧭 Override routing is explicit** — override provider errors and rate limits surface directly instead of silently spilling back to the default provider; mistyped providers log once then fall back.
+- **🧷 Model overrides do not mutate defaults** — per-call `model=` stays scoped to that request, so one soul / discovery call cannot change later default routing.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -434,7 +434,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.74: Config deadlock recovery (2026-05-17)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md), with packages on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases).
+Latest: **v0.3.75: Config save effectiveness and LLM routing fixes (2026-05-18)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md), with packages on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases).
 
 ## 🗺️ Roadmap
 

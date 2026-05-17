@@ -19,12 +19,12 @@
 
 ---
 
-## 📌 v0.3.74 重要更新（2026-05-17）
+## 📌 v0.3.75 重要更新（2026-05-18）
 
-- **🧯 配置保存不再卡死** —— `/api/config` 先校验再写盘，热重载失败自动回滚；热重载后的 speculator tick 已后台化，插件保存设置也有 60s 超时兜底。
+- **🧯 配置保存不再卡慢** —— `/api/config` 热重载后的 speculator tick 已后台化，插件保存设置也有 60s 超时兜底。
 - **🎛️ 分模块 LLM 覆盖真正生效** —— `[llm.soul]` / `[llm.discovery]` / `[llm.recommendation]` / `[llm.evaluation]` 现在按 caller bucket 路由，并支持每次调用单独指定 provider/model。
-- **🧷 设置页不再擦配置** —— masked key、非空 model/base_url/header/reasoning 字段会被保留，只有显式 reset 才会清空允许列表里的 API Key。
-- **🧩 MiMo / 非 OpenAI JSON 容错统一** —— recommendation、discovery、delight、awareness 和 insight 共用结构化输出解析，兼容 object wrapper、fenced JSON、JSONL 和 schema echo。
+- **🧭 路由覆盖更可预期** —— override provider 报错或限流时直接暴露错误，不会偷偷 spill 回默认 provider；拼错 provider 只 INFO 一次后降级。
+- **🧷 模型覆盖不污染默认值** —— 单次 `model=` 覆盖不会写回 provider 实例，避免一次 soul / discovery 调用影响后续默认链。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
@@ -497,7 +497,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.74: Config deadlock recovery（2026-05-17）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)，发布包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)。
+最新版本：**v0.3.75: 配置保存生效与 LLM 路由修复（2026-05-18）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)，发布包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)。
 
 ## 🗺️ 后续规划
 
