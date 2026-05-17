@@ -4429,6 +4429,13 @@ function bindSettings() {
         const tone = result.restart_required ? "warning" : result.reloaded ? "success" : "warning";
         showToast(result.message || "配置已保存。", tone);
       } catch (err) {
+        if (err?.name === "AbortError") {
+          showToast(
+            "后端处理超时，保存请求可能已写入；热重载可能仍在后台进行。请稍后刷新设置确认。",
+            "warning",
+          );
+          return;
+        }
         if (renderStructuredConfigError(err)) {
           return;
         }

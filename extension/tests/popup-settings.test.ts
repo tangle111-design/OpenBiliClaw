@@ -123,6 +123,27 @@ test("settings save renders structured config validation errors inline", () => {
   assert.match(saveBlock, /renderStructuredConfigError\(err\)/);
 });
 
+test("settings save renders timeout warning before structured or generic errors", () => {
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const saveBlock =
+    popupJs.match(/saveBtn\.addEventListener\("click"[\s\S]*?\n  \}\);/)?.[0] ?? "";
+
+  const abortIndex = saveBlock.indexOf('err?.name === "AbortError"');
+  const structuredIndex = saveBlock.indexOf("renderStructuredConfigError(err)");
+  const genericIndex = saveBlock.indexOf("保存失败");
+  const successIndex = saveBlock.indexOf("applyRuntimeConfig(result.config)");
+
+  assert.notEqual(abortIndex, -1, "save handler should special-case AbortError");
+  assert.match(saveBlock, /后端处理超时[\s\S]*保存请求可能已写入[\s\S]*后台/);
+  assert.match(saveBlock, /showToast\([\s\S]*"warning"[\s\S]*\)/);
+  assert.ok(abortIndex < structuredIndex, "AbortError should be handled before structured errors");
+  assert.ok(abortIndex < genericIndex, "AbortError should not fall through to generic error toast");
+  assert.ok(abortIndex > successIndex, "AbortError branch should wrap the updateConfig call");
+  assert.match(saveBlock, /return;/);
+  assert.match(saveBlock, /finally[\s\S]*saveBtn\.disabled = false/);
+  assert.match(saveBlock, /finally[\s\S]*setSaveButtonMode/);
+});
+
 test("settings page wires offline cache and degraded-mode banners", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
