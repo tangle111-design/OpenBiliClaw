@@ -271,6 +271,8 @@ class OpenAIProvider(LLMProvider):
 
     @staticmethod
     def _json_object_response_format_rejected(exc: LLMProviderError) -> bool:
+        # The field path "response_format.type" is lowercase in all known
+        # OpenAI-protocol implementations, so .lower() + literal match is safe.
         message = str(exc).lower()
         return "response_format.type" in message and "json_schema" in message and "text" in message
 
