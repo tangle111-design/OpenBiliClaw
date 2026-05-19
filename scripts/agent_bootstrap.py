@@ -60,6 +60,8 @@ DEFAULT_HEALTH_PATH = "/api/health"
 HEALTH_TIMEOUT_SECONDS = 90
 HEALTH_POLL_INTERVAL = 2.0
 LOCAL_NO_PROXY_HOSTS = ("localhost", "127.0.0.1", "::1")
+DOCKER_CONTAINER_NAME = "openbiliclaw-backend"
+DOCKER_RUNTIME_ROOT = "/app/runtime"
 
 SUPPORTED_PROVIDERS = ("openai", "claude", "gemini", "deepseek", "ollama", "openrouter")
 REMOTE_PROVIDERS = ("openai", "claude", "gemini", "deepseek", "openrouter")
@@ -1732,6 +1734,98 @@ def docker_compose_up(project_dir: Path) -> None:
     run_streaming([docker, "compose", "up", "-d", "--build"], cwd=project_dir)
 
 
+def build_docker_runtime_sync_commands(project_dir: Path) -> list[list[str]]:
+    """Return docker commands that copy confirmed host config into runtime volume."""
+
+    commands = [
+        [
+            "docker",
+            "exec",
+            DOCKER_CONTAINER_NAME,
+            "mkdir",
+            "-p",
+            f"{DOCKER_RUNTIME_ROOT}/data",
+        ],
+        [
+            "docker",
+            "cp",
+            str(project_dir / "config.toml"),
+            f"{DOCKER_CONTAINER_NAME}:{DOCKER_RUNTIME_ROOT}/config.toml",
+        ],
+    ]
+    cookie_file = project_dir / "data" / "bilibili_cookie.json"
+    if cookie_file.exists():
+        commands.append(
+            [
+                "docker",
+                "cp",
+                str(cookie_file),
+                f"{DOCKER_CONTAINER_NAME}:{DOCKER_RUNTIME_ROOT}/data/bilibili_cookie.json",
+            ]
+        )
+    return commands
+
+
+def sync_docker_runtime_config(project_dir: Path) -> None:
+    """Copy bootstrap-written config into the running Docker runtime volume."""
+
+    for command in build_docker_runtime_sync_commands(project_dir):
+        run_streaming(command, cwd=project_dir)
+
+
+def build_docker_missing_secrets_command() -> list[str]:
+    """Return command that inspects secrets inside the backend container."""
+
+    script = r"""
+import json
+import tomllib
+from pathlib import Path
+
+config_path = Path("/app/runtime/config.toml")
+cookie_path = Path("/app/runtime/data/bilibili_cookie.json")
+data = tomllib.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+llm = data.get("llm", {})
+provider = str(llm.get("default_provider", "") or "").strip() or "openai"
+remote = {"openai", "claude", "gemini", "deepseek", "openrouter"}
+provider_cfg = llm.get(provider, {})
+api_key = str(provider_cfg.get("api_key", "") or "").strip()
+bilibili = data.get("bilibili", {})
+cookie_inline = str(bilibili.get("cookie", "") or "").strip()
+cookie_on_disk = False
+if cookie_path.exists():
+    try:
+        cookie_on_disk = bool(str(json.loads(cookie_path.read_text(encoding="utf-8")).get("cookie", "")).strip())
+    except json.JSONDecodeError:
+        cookie_on_disk = False
+missing = []
+if provider in remote and not api_key:
+    missing.append(f"llm.{provider}.api_key")
+if not (cookie_inline or cookie_on_disk):
+    missing.append("bilibili.cookie")
+print(json.dumps({
+    "provider": provider,
+    "missing": missing,
+    "has_cookie_inline": bool(cookie_inline),
+    "has_cookie_file": cookie_on_disk,
+}))
+""".strip()
+    return ["docker", "exec", DOCKER_CONTAINER_NAME, "python", "-c", script]
+
+
+def detect_docker_missing_secrets(_project_dir: Path) -> dict[str, Any]:
+    """Return missing secrets from the running Docker runtime config."""
+
+    proc = subprocess.run(
+        build_docker_missing_secrets_command(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or "docker secret detection failed")
+    return json.loads(proc.stdout)
+
+
 # ---------------------------------------------------------------------------
 # Health check
 
@@ -2050,8 +2144,17 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     healthy = wait_for_health(args.host, args.port)
-    final_status = detect_missing_secrets(project_dir)
     if healthy:
+        status_detector: Callable[[Path], dict[str, Any]] = detect_missing_secrets
+        if mode == "docker":
+            try:
+                sync_docker_runtime_config(project_dir)
+            except RuntimeError as exc:
+                emit(BootstrapResult("error", str(exc), {"step": "docker_config_sync"}))
+                return 4
+            status_detector = detect_docker_missing_secrets
+
+        final_status = status_detector(project_dir)
         if args.wait_for_extension_cookie and final_status["missing"] == ["bilibili.cookie"]:
             emit(
                 BootstrapResult(
@@ -2063,8 +2166,8 @@ def run(args: argparse.Namespace) -> int:
                     },
                 )
             )
-            if wait_for_cookie_sync(project_dir):
-                final_status = detect_missing_secrets(project_dir)
+            if wait_for_cookie_sync(project_dir, detector=status_detector):
+                final_status = status_detector(project_dir)
                 emit(BootstrapResult("ok", "extension_cookie_synced", final_status))
             else:
                 emit(
@@ -2164,6 +2267,7 @@ def run(args: argparse.Namespace) -> int:
 
         return 0
 
+    final_status = detect_missing_secrets(project_dir)
     init_decisions = detect_init_decisions(
         project_dir,
         args,

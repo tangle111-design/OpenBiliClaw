@@ -191,6 +191,36 @@ def test_wait_for_cookie_sync_times_out(tmp_path: Path) -> None:
     )
 
 
+def test_docker_runtime_config_copy_commands(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (tmp_path / "config.toml").write_text("[llm]\n", encoding="utf-8")
+    (data_dir / "bilibili_cookie.json").write_text('{"cookie":"x"}', encoding="utf-8")
+
+    commands = bootstrap.build_docker_runtime_sync_commands(tmp_path)
+
+    assert [
+        "docker",
+        "cp",
+        str(tmp_path / "config.toml"),
+        "openbiliclaw-backend:/app/runtime/config.toml",
+    ] in commands
+    assert [
+        "docker",
+        "cp",
+        str(data_dir / "bilibili_cookie.json"),
+        "openbiliclaw-backend:/app/runtime/data/bilibili_cookie.json",
+    ] in commands
+
+
+def test_docker_secret_detector_command_reads_runtime_config() -> None:
+    command = bootstrap.build_docker_missing_secrets_command()
+
+    assert command[:3] == ["docker", "exec", "openbiliclaw-backend"]
+    assert "/app/runtime/config.toml" in " ".join(command)
+    assert "/app/runtime/data/bilibili_cookie.json" in " ".join(command)
+
+
 def test_build_init_command_appends_explicit_source_flags_for_docker(tmp_path: Path) -> None:
     command = bootstrap.build_init_command(
         "docker", tmp_path, "--yes-xhs", "--yes-douyin", "--no-youtube"
