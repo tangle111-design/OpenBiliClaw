@@ -184,6 +184,41 @@ def _parse_batch_evaluation_payload(raw: str) -> list[dict[str, Any]] | None:
     return [dict(item) for item in payload]
 
 
+def _content_result_keys(content: DiscoveredContent) -> set[str]:
+    """Stable keys that may identify a content item in batched LLM results."""
+    return {
+        key
+        for key in {
+            str(getattr(content, "bvid", "") or "").strip(),
+            str(getattr(content, "content_id", "") or "").strip(),
+        }
+        if key
+    }
+
+
+def _batch_results_by_content_key(
+    payload: list[dict[str, Any]],
+    batch: list[DiscoveredContent],
+) -> dict[str, dict[str, Any]] | None:
+    """Return payload entries keyed by content ID when the LLM supplied IDs."""
+    valid_keys: set[str] = set()
+    for content in batch:
+        valid_keys.update(_content_result_keys(content))
+
+    matched: dict[str, dict[str, Any]] = {}
+    saw_identifier = False
+    for item in payload:
+        raw_key = str(item.get("bvid") or item.get("content_id") or "").strip()
+        if not raw_key:
+            continue
+        saw_identifier = True
+        if raw_key not in valid_keys:
+            continue
+        matched[raw_key] = item
+
+    return matched if saw_identifier else None
+
+
 @dataclass
 class DiscoveredContent:
     """A piece of content discovered by the engine."""
@@ -1084,6 +1119,8 @@ class ContentDiscoveryEngine:
         profile_data = build_profile_summary(profile)
         content_items = [
             {
+                "bvid": c.bvid,
+                "content_id": c.content_id or c.bvid,
                 "title": c.title,
                 "up_name": c.up_name,
                 "description": (c.description or "")[:200],
@@ -1154,12 +1191,35 @@ class ContentDiscoveryEngine:
                 for c in batch
             ]
 
+        payload_by_id = _batch_results_by_content_key(payload, batch)
+        if payload_by_id is None and len(payload) != len(batch):
+            logger.warning(
+                "Batch evaluation result count mismatch without IDs (%d results for %d items), "
+                "falling back to single eval",
+                len(payload),
+                len(batch),
+            )
+            return [
+                await self.evaluate_content(c, profile, source_context=source_context)
+                for c in batch
+            ]
+
         results: list[float] = []
         for i, content in enumerate(batch):
-            if i >= len(payload):
+            if payload_by_id is None:
+                raw_item = payload[i] if i < len(payload) else None
+            else:
+                raw_item = next(
+                    (
+                        payload_by_id[key]
+                        for key in _content_result_keys(content)
+                        if key in payload_by_id
+                    ),
+                    None,
+                )
+            if raw_item is None:
                 results.append(0.0)
                 continue
-            raw_item = payload[i]
             if not isinstance(raw_item, dict):
                 results.append(0.0)
                 continue

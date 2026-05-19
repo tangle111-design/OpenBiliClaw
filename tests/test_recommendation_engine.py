@@ -1788,6 +1788,119 @@ async def test_precompute_batch_accepts_items_wrapper_without_single_fallback(
 
 
 @pytest.mark.asyncio
+async def test_precompute_batch_matches_expressions_by_bvid_when_response_reorders() -> None:
+    class _ReorderedExpressionLLM:
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> LLMResponse:
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "bvid": "BV_EXPR_C",
+                            "expression": "C 视频自己的推荐文案。",
+                            "topic_label": "C 主题",
+                        },
+                        {
+                            "bvid": "BV_EXPR_B",
+                            "expression": "B 视频自己的推荐文案。",
+                            "topic_label": "B 主题",
+                        },
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        items = [
+            DiscoveredContent(bvid="BV_EXPR_A", title="A 视频"),
+            DiscoveredContent(bvid="BV_EXPR_B", title="B 视频"),
+            DiscoveredContent(bvid="BV_EXPR_C", title="C 视频"),
+        ]
+        _seed_pool(db, items, precomputed=False)
+        engine = RecommendationEngine(llm=_ReorderedExpressionLLM(), database=db)
+
+        completed = await engine._precompute_batch(items, _build_profile())
+
+        rows = {row["bvid"]: dict(row) for row in db.get_cached_content(limit=10)}
+        assert completed == 2
+        assert rows["BV_EXPR_A"]["pool_expression"] == ""
+        assert rows["BV_EXPR_B"]["pool_expression"] == "B 视频自己的推荐文案。"
+        assert rows["BV_EXPR_C"]["pool_expression"] == "C 视频自己的推荐文案。"
+
+
+@pytest.mark.asyncio
+async def test_classify_batch_matches_results_by_bvid_when_response_reorders() -> None:
+    class _ReorderedClassificationLLM:
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> LLMResponse:
+            return LLMResponse(
+                content=json.dumps(
+                    [
+                        {
+                            "bvid": "BV_CLASS_B",
+                            "score": 0.82,
+                            "reason": "B 视频自己的判断。",
+                            "topic_group": "B 类",
+                            "style_key": "deep_dive",
+                        },
+                        {
+                            "bvid": "BV_CLASS_A",
+                            "score": 0.61,
+                            "reason": "A 视频自己的判断。",
+                            "topic_group": "A 类",
+                            "style_key": "story_doc",
+                        },
+                    ],
+                    ensure_ascii=False,
+                ),
+                provider="test",
+                model="dummy",
+                usage={},
+            )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        batch = [
+            DiscoveredContent(bvid="BV_CLASS_A", title="A 视频"),
+            DiscoveredContent(bvid="BV_CLASS_B", title="B 视频"),
+        ]
+        engine = RecommendationEngine(llm=_ReorderedClassificationLLM(), database=db)
+
+        await engine._classify_batch(batch, _build_profile())
+
+        assert batch[0].relevance_score == 0.61
+        assert batch[0].relevance_reason == "A 视频自己的判断。"
+        assert batch[0].topic_group == "A 类"
+        assert batch[1].relevance_score == 0.82
+        assert batch[1].relevance_reason == "B 视频自己的判断。"
+        assert batch[1].topic_group == "B 类"
+
+
+@pytest.mark.asyncio
 async def test_generate_expression_accepts_echoed_schema_before_final_fenced_object(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

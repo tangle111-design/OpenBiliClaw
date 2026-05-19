@@ -4,6 +4,13 @@
 
 ---
 
+## v0.3.81: 推荐理由错位修复（2026-05-19）
+
+- 批量推荐文案、discovery batch 评估和源无关内容分类现在都携带并按 `bvid/content_id` 绑定 LLM 结果；provider 乱序、漏项或返回部分数组时不再把推荐理由 / 评估理由写到错误视频。
+- 后端包版本提升到 v0.3.81，准备发布 `backend-v0.3.81`。
+
+---
+
 ## v0.3.80: Docker 部署体验补强（2026-05-19）
 
 - 后台 `AccountSyncService` 首次同步账号行为并完成 preference 分析后，如果 soul 画像层为空（典型场景：Docker 部署未跑 init），会自动触发 `build_initial_profile([])` 生成初始画像；每进程生命周期最多尝试一次，失败不影响后续同步。
