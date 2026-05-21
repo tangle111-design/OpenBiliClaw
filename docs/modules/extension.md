@@ -346,7 +346,7 @@ npm run build
 - Chrome / Edge / Brave 打包脚本会先删除同名旧 zip，再重新压缩 `manifest.json`、`dist/`、`icons/`、`popup/`，避免重复打包带入残留文件
 - `extension-v*` GitHub Actions release workflow 会同时运行 Chrome / Firefox 两条打包脚本并上传两个 zip；Firefox 140+ 也可本地构建 / 临时加载：`npm run build:firefox` 生成 `dist-firefox/`，`npm run package:firefox` 生成 `openbiliclaw-extension-vX.Y.Z-firefox.zip`；Firefox 打包脚本同样会先删除同名旧 zip
 
-后端桌面包不再和插件共用同一个 release 语义；后端改由 `backend-v*` 通道单独发布。
+后端桌面包不走 GitHub Release 分发；后端源码更新只通过 `backend-v*` tag 标记，浏览器插件的 GitHub Release 保持为唯一下载包通道。
 
 ## 手动联调
 

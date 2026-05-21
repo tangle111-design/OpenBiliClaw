@@ -77,3 +77,20 @@ def test_cli_module_docs_show_current_init_llm_menu() -> None:
     assert "1) 跟随你刚才选的 LLM" not in doc
     assert "跟随主 provider（默认）" not in doc
     assert "User picked OpenAI 官方 (option 2 in agent-install.md)" not in bootstrap
+
+
+def test_backend_tag_workflow_does_not_publish_backend_packages() -> None:
+    workflow = _read(".github/workflows/release-backend.yml")
+    docs_index = _read("docs/index.md")
+    extension_doc = _read("docs/modules/extension.md")
+
+    assert "backend-v*" in workflow
+    assert "Validate Backend Source Tag" in workflow
+    assert "Verify backend version matches source tag" in workflow
+    assert "softprops/action-gh-release" not in workflow
+    assert "upload-artifact" not in workflow
+    assert "Build backend release archive" not in workflow
+    assert "Publish backend release" not in workflow
+
+    assert "后端源码更新看 `backend-v*` tag，不发布后端桌面包" in docs_index
+    assert "后端桌面包不走 GitHub Release 分发" in extension_doc

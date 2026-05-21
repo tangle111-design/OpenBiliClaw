@@ -520,7 +520,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.88 / extension v0.3.38: 移动端 Web 主入口与 fallback 默认关闭（2026-05-21）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)，发布包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)。
+最新版本：**v0.3.88 / extension v0.3.38: 移动端 Web 主入口与 fallback 默认关闭（2026-05-21）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
 
 ## 🗺️ 后续规划
 

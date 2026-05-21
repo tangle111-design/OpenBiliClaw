@@ -16,7 +16,7 @@
 - 移动 Web 画像页补齐与插件一致的画像细节：MBTI 显示可信度，使用场景显示“模式”，内容口味把 `long/slow` 等 raw 值本地化为中文标签，认知更新卡片保留后端 `context_line` 与 `source_label`。
 - 移动 Web 对话页对齐插件主聊天会话：读取和提交都使用 `session=popup&scope=chat`，聊天回复完成后会刷新画像和活动流；消息 overlay 内的兴趣探测动作改为「喜欢 / 不喜欢 / 多聊聊」，惊喜推荐动作补齐「喜欢」，聊天输入框固定在底部并以两行高度起步，保留更多历史上下文可视空间。
 - 新增移动 Web 原生重设计 spec，明确 `/m/` 与浏览器插件在推荐、画像、对话、消息和 delight 工作流上的功能对齐范围，以及手机端独立信息架构。
-- 后端源码版本记录为 v0.3.88，准备发布 `backend-v0.3.88` source tag；浏览器插件版本仍为 extension v0.3.38。
+- 后端源码版本记录为 v0.3.88，并通过 `backend-v0.3.88` source tag 标记；不发布 backend GitHub Release / 桌面包，远端 `backend-v*` workflow 改为只校验 tag 与 `pyproject.toml` 版本一致。浏览器插件版本仍为 extension v0.3.38。
 
 ---
 

@@ -457,7 +457,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.88 / extension v0.3.38: Mobile Web as a primary surface and fallback off by default (2026-05-21)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md), with packages on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases).
+Latest: **v0.3.88 / extension v0.3.38: Mobile Web as a primary surface and fallback off by default (2026-05-21)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
 
 ## 🗺️ Roadmap
 
