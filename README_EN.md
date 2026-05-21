@@ -134,7 +134,7 @@ Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/do
 
 The agent will clone the repo, install dependencies, start the backend with the LAN-accessible default bind (`0.0.0.0:8420`), run a health check, and ask a few questions with defaults. If unsure, pick the default. Xiaohongshu, Douyin, and YouTube signals are used in the initial profile only when you explicitly opt in.
 
-If the backend runs on another machine in your LAN, start it with `openbiliclaw start --host 0.0.0.0 --port 8420`, then set the extension's "Backend host" field to that machine's LAN IP, for example `192.168.1.100`.
+If the backend runs on another machine in your LAN, set the extension's "Backend host" field to that machine's LAN IP, for example `192.168.1.100`.
 
 ### 3. Log in to content platforms in the same browser
 
@@ -144,21 +144,17 @@ At minimum, log in to [Bilibili](https://www.bilibili.com). OpenBiliClaw uses it
 
 Mobile Web is now one of the primary ways to use OpenBiliClaw. It is for checking recommendations, reading your profile, chatting with the agent, and handling interest probes or delight candidates from a phone. It only calls your local backend API; it does not sync cookies, crawl pages, or log in to platforms.
 
-If your phone and backend are on the same LAN:
+The backend listens on `0.0.0.0` (all interfaces) by default, so phones on the same LAN can reach it immediately. Just start normally:
 
 ```bash
-openbiliclaw start --host 0.0.0.0 --port 8420
+openbiliclaw start
 ```
 
-Then open this on your phone:
+Then click the phone icon in the extension header and scan the QR code — the extension auto-detects your computer's LAN IP, so the QR code just works. You can also type `http://<your-LAN-IP>:8420/m/` in your phone's browser manually.
 
-```text
-http://<your-computer-LAN-IP>:8420/m/
-```
+> During `openbiliclaw init`, you'll be asked whether to allow LAN access (default Y). If you chose N or want to change it later, edit `[api].host` in `config.toml` (`0.0.0.0` = LAN-reachable, `127.0.0.1` = local only).
 
 The app has three bottom tabs: Recommendations, Profile, and Chat. Recommendations support reshuffle, load more, like, not interested, comments, and contextual chat. Profile shows the core profile, interests, and cognition updates. Chat shares the main chat history with the extension.
-
-You can also click the phone icon in the extension header and scan the QR code for the current backend's `/m/` URL. If the extension is still configured with `127.0.0.1`, the QR panel reads the backend health response and shows the detected LAN IP automatically.
 
 <details>
 <summary>No AI agent: run the one-line installer yourself</summary>
