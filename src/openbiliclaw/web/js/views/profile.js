@@ -9,6 +9,9 @@ import {
   normalizeMbtiDimensions,
   normalizeCognitionUpdateCard,
   buildNextCognitionHistoryState,
+  getContextPatternRows,
+  getMbtiDisplayState,
+  getProfileStyleDisplay,
   formatRelativeTimestamp,
 } from "../view-models.js";
 import { state, patchState } from "../state.js";
@@ -99,12 +102,13 @@ function render() {
   const surfHtml = [];
   if (p.cognitive_style.length) surfHtml.push(chipList(p.cognitive_style));
   if (p.style) {
+    const styleDisplay = getProfileStyleDisplay(p.style);
     const prefs = [
       ["preferred_duration", "\u559C\u6B22\u65F6\u957F"],
       ["preferred_pace", "\u559C\u6B22\u8282\u594F"],
     ];
     for (const [key, label] of prefs) {
-      if (p.style[key]) surfHtml.push(`<div style="font-size:12px;margin-top:4px">${esc(label)}: <strong>${esc(p.style[key])}</strong></div>`);
+      if (styleDisplay?.[key]) surfHtml.push(`<div style="font-size:12px;margin-top:4px">${esc(label)}: <strong>${esc(styleDisplay[key])}</strong></div>`);
     }
     const bars = [
       ["quality_sensitivity", "\u8D28\u91CF\u654F\u611F\u5EA6"],
@@ -112,21 +116,18 @@ function render() {
       ["depth_preference", "\u6DF1\u5EA6\u504F\u597D"],
     ];
     for (const [key, label] of bars) {
-      if (typeof p.style[key] === "number") {
-        const pct = Math.round(p.style[key] * 100);
+      if (typeof styleDisplay?.[key] === "number") {
+        const pct = Math.round(styleDisplay[key] * 100);
         surfHtml.push(`<div style="font-size:12px;margin-top:6px">${esc(label)} <span style="color:var(--text-muted)">${pct}%</span>
           <div class="interest-bar"><div class="interest-bar-fill" style="width:${pct}%"></div></div></div>`);
       }
     }
   }
   if (p.context) {
-    const patterns = [];
-    if (p.context.weekday_patterns) patterns.push(["weekday", p.context.weekday_patterns]);
-    if (p.context.weekend_patterns) patterns.push(["weekend", p.context.weekend_patterns]);
-    if (p.context.time_of_day_patterns) patterns.push(["time", p.context.time_of_day_patterns]);
+    const patterns = getContextPatternRows(p.context);
     if (patterns.length) {
-      surfHtml.push(`<div class="context-patterns" style="margin-top:8px">${patterns.map(([k, v]) =>
-        `<div><div class="context-pattern-label">${esc(k)}</div><div style="font-size:12px">${esc(v)}</div></div>`
+      surfHtml.push(`<div class="context-patterns" style="margin-top:8px">${patterns.map((row) =>
+        `<div><div class="context-pattern-label">${esc(row.label)}</div><div style="font-size:12px">${esc(row.value)}</div></div>`
       ).join("")}</div>`);
     }
   }
@@ -195,8 +196,9 @@ function render() {
 
 // ── MBTI ─────────────────────────────────────────────────────
 function renderMBTI(mbti) {
-  if (!mbti?.type) return "";
-  const dims = normalizeMbtiDimensions(mbti);
+  const display = getMbtiDisplayState(mbti);
+  if (!display.type) return "";
+  const dims = display.dimensions.length ? display.dimensions : normalizeMbtiDimensions(mbti);
   let dimsHtml = "";
   for (const d of dims) {
     const pct = Math.round((d.score ?? 0.5) * 100);
@@ -207,7 +209,7 @@ function renderMBTI(mbti) {
         <span style="width:28px;font-size:11px">${esc(d.right)}</span>
       </div>`;
   }
-  return `<div class="mbti-type">${esc(mbti.type)}</div>${dimsHtml ? `<div class="mbti-dims">${dimsHtml}</div>` : ""}`;
+  return `<div class="mbti-type">${esc(display.type)}${display.confidence_label ? `<span style="font-size:11px;font-weight:500;color:var(--text-muted);margin-left:8px">${esc(display.confidence_label)}</span>` : ""}</div>${dimsHtml ? `<div class="mbti-dims">${dimsHtml}</div>` : ""}`;
 }
 
 // ── Interest Tree ────────────────────────────────────────────
@@ -298,6 +300,7 @@ function renderCognitionCard(raw, idx) {
       <div class="cognition-date">${esc(formatRelativeTimestamp(c.created_at) || c.created_at)}</div>
       <div class="cognition-summary">${esc(c.summary)}</div>
       <div style="font-size:11px;color:var(--text-muted)">${esc(c.contextLine)}</div>
+      ${c.sourceLabel ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(c.sourceLabel)}</div>` : ""}
       ${c.expandable ? `<div class="cognition-expand-hint">${isExpanded ? "\u6536\u8D77" : esc(c.expandLabel)}</div>` : ""}
       ${c.expandable ? `<div class="cognition-detail">
         ${c.impact ? `<div><strong>\u5F71\u54CD:</strong> ${esc(c.impact)}</div>` : ""}

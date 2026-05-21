@@ -11,6 +11,8 @@
 - 浏览器插件设置页「模型」tab 增加 LLM fallback 与 embedding fallback 两个开关，并更新文案说明 embedding 与 LLM 独立配置。
 - 移动 Web 新增轻量 view-model 适配层，推荐页池状态会读取 `/api/runtime-status` 的 `pool_available_count` / `last_replenished_count` / `recent_pool_topics`，画像页 MBTI 可渲染后端返回的 `{EI: {pole, strength}}` 对象形态；对话页兼容 `/api/chat/turns` 返回的 `reply` 字段，不再因字段形态不一致空白或漏显回复。
 - 移动 Web 资源噪声收敛：根路径 `/favicon.ico` 现在复用 PWA 图标返回 PNG；推荐页封面会过滤直接 403 的小红书 CDN URL、把 B 站 `http` / protocol-relative 封面升到 HTTPS，并用 `no-referrer` 加载外链图片，避免浏览器控制台残留 favicon / hotlink 错误。
+- 移动 Web 推荐页的惊喜推荐动作对齐浏览器插件：按钮改为「看看 / 喜欢 / 不感兴趣 / 聊一聊」，移除仅移动端存在的「稍后」，并把「喜欢」写入 `/api/delight/respond` 的 `like` 反馈。
+- 移动 Web 画像页补齐与插件一致的画像细节：MBTI 显示可信度，使用场景显示“模式”，内容口味把 `long/slow` 等 raw 值本地化为中文标签，认知更新卡片保留后端 `context_line` 与 `source_label`。
 - 新增移动 Web 原生重设计 spec，明确 `/m/` 与浏览器插件在推荐、画像、对话、消息和 delight 工作流上的功能对齐范围，以及手机端独立信息架构。
 
 ---

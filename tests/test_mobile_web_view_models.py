@@ -89,6 +89,7 @@ class TestMobileWebViewModels:
               "getDelightUiState", "getDelightActionState",
               "buildFeedbackPayload", "validateCommentInput", "getCommentSubmitUiState",
               "normalizeProfileSummary", "normalizeCognitionUpdateCard",
+              "getMbtiDisplayState", "getProfileStyleDisplay", "getContextPatternRows",
               "buildNextCognitionHistoryState",
               "normalizeActivityFeed", "getActivityCardState",
               "getPoolStatusSummary", "normalizeRuntimeStatus", "mergeRuntimeStatusEvent",
@@ -147,15 +148,20 @@ class TestMobileWebViewModels:
             assert.equal(reject.uiState, "rejected");
             assert.equal(reject.permanent, true);
 
+            const like = getDelightActionState("like");
+            assert.equal(like.apiResponse, "like");
+            assert.equal(like.uiState, "liked");
+            assert.equal(like.permanent, true);
+
             const chat = getDelightActionState("chat");
             assert.equal(chat.apiResponse, null);
             assert.equal(chat.uiState, "chatting");
             assert.equal(chat.permanent, false);
 
-            const later = getDelightActionState("later");
-            assert.equal(later.apiResponse, null);
-            assert.equal(later.uiState, "pending");
-            assert.equal(later.permanent, false);
+            const unknown = getDelightActionState("unknown");
+            assert.equal(unknown.apiResponse, null);
+            assert.equal(unknown.uiState, "pending");
+            assert.equal(unknown.permanent, false);
         """))
 
     def test_delight_ui_state(self) -> None:
@@ -171,6 +177,10 @@ class TestMobileWebViewModels:
             const viewed = getDelightUiState({ bvid: "BV1", state: "viewed", delight_score: 0.7 });
             assert.equal(viewed.handled, true);
             assert.equal(viewed.response_tone, "success");
+
+            const liked = getDelightUiState({ bvid: "BV1", state: "liked", delight_score: 0.7 });
+            assert.equal(liked.handled, true);
+            assert.equal(liked.response_tone, "success");
 
             const empty = getDelightUiState({});
             assert.equal(empty.visible, false);
@@ -264,6 +274,72 @@ class TestMobileWebViewModels:
             assert.equal(full.exploration_openness, 0.7);
             assert.deepEqual(full.favorite_up_users, ["UP1"]);
             assert.equal(full.speculative_interests[0].domain, "cooking");
+        """))
+
+    def test_profile_display_helpers_preserve_plugin_semantics(self) -> None:
+        _assert_js(dedent("""
+            import assert from "node:assert/strict";
+            import {
+              getContextPatternRows,
+              getMbtiDisplayState,
+              getProfileStyleDisplay,
+            } from "./src/openbiliclaw/web/js/view-models.js";
+
+            const mbti = getMbtiDisplayState({
+              type: "INTJ",
+              confidence: 0.82,
+              dimensions: { EI: { pole: "I", strength: 0.74 } },
+            });
+            assert.equal(mbti.type, "INTJ");
+            assert.equal(mbti.confidence_label, "可信度 82%");
+            assert.equal(mbti.dimensions[0].left, "E");
+
+            const style = getProfileStyleDisplay({
+              preferred_duration: "long",
+              preferred_pace: "slow",
+              quality_sensitivity: 0.92,
+            });
+            assert.equal(style.preferred_duration, "长视频");
+            assert.equal(style.preferred_pace, "慢节奏");
+            assert.equal(style.quality_sensitivity, 0.92);
+
+            const rows = getContextPatternRows({
+              weekday_patterns: "工作日晚上更常看深度内容",
+              session_type: "研究型长会话",
+            });
+            assert.deepEqual(
+              rows.map((row) => [row.key, row.label, row.value]),
+              [
+                ["weekday", "工作日", "工作日晚上更常看深度内容"],
+                ["session", "模式", "研究型长会话"],
+              ],
+            );
+        """))
+
+    def test_cognition_card_normalization_is_idempotent(self) -> None:
+        _assert_js(dedent("""
+            import assert from "node:assert/strict";
+            import { normalizeCognitionUpdateCard } from "./src/openbiliclaw/web/js/view-models.js";
+
+            const first = normalizeCognitionUpdateCard({
+              summary: "更明确偏好因果链",
+              context_line: "基于最近几条国际局势视频",
+              source: "feedback",
+              source_label: "推荐反馈",
+              expand_hint: "expandable",
+              impact: "推荐表达会更强调结构。",
+              reasoning: "连续停留在解释链条完整的视频上。",
+              evidence: "观看了两条复盘内容。",
+            });
+            assert.equal(first.contextLine, "基于最近几条国际局势视频");
+            assert.equal(first.source, "feedback");
+            assert.equal(first.sourceLabel, "推荐反馈");
+
+            const second = normalizeCognitionUpdateCard(first);
+            assert.equal(second.contextLine, "基于最近几条国际局势视频");
+            assert.equal(second.source, "feedback");
+            assert.equal(second.sourceLabel, "推荐反馈");
+            assert.equal(second.expandable, true);
         """))
 
     def test_format_relative_timestamp(self) -> None:
