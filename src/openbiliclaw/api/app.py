@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from openbiliclaw.api.models import (
     ActivityFeedItemOut,
@@ -389,6 +389,7 @@ def create_app(
             or path == "/api/health"
             or path == "/api/runtime-status"
             or (path == "/api/config" and method in {"GET", "PUT"})
+            or path.startswith("/m")
         )
         if allowed:
             return await call_next(request)
@@ -4192,5 +4193,22 @@ def create_app(
                 _purged,
                 _existing_self_info.get("nickname", ""),
             )
+
+    # ── Mobile Web UI ───────────────────────────────────────────
+    from pathlib import Path as _Path
+
+    from fastapi.staticfiles import StaticFiles as _StaticFiles
+
+    _web_dir = _Path(__file__).resolve().parent.parent / "web"
+    if _web_dir.is_dir():
+        _favicon_path = _web_dir / "icon-192.png"
+
+        @app.get("/favicon.ico", include_in_schema=False)
+        def _favicon() -> FileResponse:
+            if not _favicon_path.is_file():
+                raise HTTPException(status_code=404, detail="favicon not found")
+            return FileResponse(_favicon_path, media_type="image/png")
+
+        app.mount("/m", _StaticFiles(directory=_web_dir, html=True), name="mobile-web")
 
     return app

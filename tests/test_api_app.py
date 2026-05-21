@@ -625,6 +625,18 @@ class TestBackendAPI:
         assert response.status_code == 200
         assert response.json() == {"status": "ok", "service": "openbiliclaw-api"}
 
+    def test_favicon_endpoint_serves_mobile_web_icon(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.get("/favicon.ico")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("image/png")
+        assert response.content
+
     def test_health_endpoint_reports_profile_ready_when_available(self) -> None:
         from fastapi.testclient import TestClient
 
