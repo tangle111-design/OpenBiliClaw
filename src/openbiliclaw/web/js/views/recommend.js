@@ -219,9 +219,9 @@ function renderDelightTray() {
     actions.className = "delight-actions";
     const btns = [
       { label: "\u770B\u770B", action: "view" },
+      { label: "\u559C\u6B22", action: "like" },
       { label: "\u4E0D\u611F\u5174\u8DA3", action: "reject" },
       { label: "\u804A\u4E00\u804A", action: "chat" },
-      { label: "\u7A0D\u540E", action: "later" },
     ];
     for (const b of btns) {
       const btn = document.createElement("button");
@@ -267,17 +267,7 @@ async function handleDelightAction(d, action) {
     return;
   }
 
-  if (action === "later") {
-    // Advance without responding
-    const next = state.delightCurrentIndex + 1;
-    if (next < state.activeDelights.length) {
-      patchState({ delightCurrentIndex: next });
-    }
-    render();
-    return;
-  }
-
-  // "view" or "reject" — call API with correct token
+  // "view" / "like" / "reject" — call API with correct token
   if (apiResponse) {
     try {
       await respondToDelight(d.bvid, apiResponse, d.title);

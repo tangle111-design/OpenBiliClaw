@@ -33,17 +33,17 @@
    - "换一批" 按钮（reshuffle）
    - "加载更多"（append）
    - 推荐池状态显示（数量、最近补充、当前话题）
-   - Delight 惊喜推荐 banner（队列浏览 ‹/›）
+   - Delight 惊喜推荐 banner（队列浏览 ‹/›），动作与插件对齐为「看看 / 喜欢 / 不感兴趣 / 聊一聊」
 
 2. **画像页**
    - 人格素描段落
-   - Core 层：核心特质、需求、MBTI
+   - Core 层：核心特质、需求、MBTI（含可信度）
    - Values 层：价值观
    - Interest 层：兴趣领域树（喜欢/不喜欢）
    - Role 层：生活阶段
-   - Surface 层：认知风格、探索开放度
+   - Surface 层：认知风格、内容口味中文标签、使用场景（含模式）、探索开放度
    - Speculate 层：推测性兴趣（确认/拒绝交互）
-   - 认知更新历史（分页加载）
+   - 认知更新历史（分页加载，保留上下文与来源标签）
    - 活跃洞察 & 意识笔记
 
 3. **对话页**
@@ -167,6 +167,8 @@ if web_dir.is_dir():
 移动端会在 `view-models.js` 中做最小字段适配：
 - 推荐池状态读取 `/api/runtime-status` 的 `pool_available_count`、`last_replenished_count`、`recent_pool_topics`，再映射成推荐页三枚 chip 使用的 `pool_size`、`recent_replenish`、`current_topic`。
 - MBTI 维度兼容后端对象形态（如 `EI: { pole: "I", strength: 0.8 }`）和旧数组形态，统一映射为 `{ left, right, score }` 后再渲染。
+- MBTI 会保留后端 `confidence` 显示为“可信度”；内容口味将 `long/slow` 等 raw 枚举映射为“长视频 / 慢节奏”等中文标签；使用场景会显示 `session_type` 为“模式”。
+- 认知更新卡片会保留后端 `context_line` 与 `source_label`，即使前端已做过一次 normalize 后再次渲染，也不回退成泛化上下文。
 - 对话 turn 兼容 `response` 和后端当前返回的 `reply` 字段，统一映射成聊天气泡使用的 `response`。
 - 封面图会在渲染前归一化：B 站 `http` / protocol-relative 地址升级为 HTTPS，小红书 `*.xhscdn.com` 这类直接 403 的热链地址不渲染，外链图片统一使用 `referrerpolicy="no-referrer"`，避免 localhost 页面触发热链拦截。
 

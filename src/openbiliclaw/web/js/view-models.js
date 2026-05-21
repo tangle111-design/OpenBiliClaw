@@ -195,6 +195,13 @@ export function getDelightUiState(delight, { highlightBvid = "" } = {}) {
       response_message: normalized.response_message || "已打开，阿B 会把这次点击当成强信号。",
     };
   }
+  if (normalized.state === "liked") {
+    return {
+      visible: true, highlighted: highlight, handled: true,
+      score_label: scoreLabel, response_tone: "success",
+      response_message: normalized.response_message || "好，这类多来点。",
+    };
+  }
   if (normalized.state === "rejected") {
     return {
       visible: true, highlighted: highlight, handled: true,
@@ -224,12 +231,12 @@ export function getDelightActionState(action) {
   switch (action) {
     case "view":
       return { apiResponse: "view", uiState: "viewed", permanent: true };
+    case "like":
+      return { apiResponse: "like", uiState: "liked", permanent: true };
     case "reject":
       return { apiResponse: "dislike", uiState: "rejected", permanent: true };
     case "chat":
       return { apiResponse: null, uiState: "chatting", permanent: false };
-    case "later":
-      return { apiResponse: null, uiState: "pending", permanent: false };
     default:
       return { apiResponse: null, uiState: "pending", permanent: false };
   }
@@ -473,19 +480,30 @@ export function normalizeCognitionUpdateCard(item) {
   const impact = normalizeText(item?.impact);
   const reasoning = normalizeText(item?.reasoning);
   const evidence = normalizeText(item?.evidence);
+  const contextLine =
+    normalizeText(item?.context_line) ||
+    normalizeText(item?.contextLine) ||
+    fallbackContextLine;
+  const explicitExpandHint =
+    normalizeText(item?.expand_hint) ||
+    normalizeText(item?.expandHint);
   const expandHint = (() => {
-    const explicit = normalizeText(item?.expand_hint);
-    if (explicit === "expandable" || explicit === "summary_only") return explicit;
+    if (explicitExpandHint === "expandable" || explicitExpandHint === "summary_only") {
+      return explicitExpandHint;
+    }
+    if (typeof item?.expandable === "boolean") {
+      return item.expandable ? "expandable" : "summary_only";
+    }
     return impact || reasoning || evidence ? "expandable" : "summary_only";
   })();
   return {
     summary: normalizeText(item?.summary),
-    contextLine: normalizeText(item?.context_line) || fallbackContextLine,
+    contextLine,
     impact, reasoning, evidence,
     source: normalizeText(item?.source),
-    sourceLabel: normalizeText(item?.source_label),
+    sourceLabel: normalizeText(item?.source_label) || normalizeText(item?.sourceLabel),
     expandHint,
-    expandLabel: expandHint === "expandable" ? "展开" : "仅结论",
+    expandLabel: normalizeText(item?.expandLabel) || (expandHint === "expandable" ? "展开" : "仅结论"),
     created_at: normalizeText(item?.created_at),
     expandable: expandHint === "expandable",
   };
@@ -544,6 +562,19 @@ function normalizeMBTI(raw) {
   return { type: normalizeText(raw.type), dimensions: dims, confidence: Number(raw.confidence ?? 0) };
 }
 
+export function getMbtiDisplayState(mbti) {
+  const normalized = normalizeMBTI(mbti);
+  if (!normalized?.type) {
+    return { type: "", confidence_label: "", dimensions: [] };
+  }
+  const confidence = clamp01(normalized.confidence, 0);
+  return {
+    ...normalized,
+    confidence_label: confidence > 0 ? `可信度 ${Math.round(confidence * 100)}%` : "",
+    dimensions: normalizeMbtiDimensions(normalized),
+  };
+}
+
 function normalizeInterestDomains(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -570,6 +601,33 @@ function normalizeStyle(raw) {
   };
 }
 
+const DURATION_LABELS = {
+  short: "短视频",
+  medium: "中等",
+  long: "长视频",
+};
+
+const PACE_LABELS = {
+  fast: "快节奏",
+  moderate: "适中",
+  slow: "慢节奏",
+};
+
+function mappedLabel(map, value) {
+  const text = normalizeText(value);
+  return map[text] || text;
+}
+
+export function getProfileStyleDisplay(style) {
+  const normalized = normalizeStyle(style);
+  if (!normalized) return null;
+  return {
+    ...normalized,
+    preferred_duration: mappedLabel(DURATION_LABELS, normalized.preferred_duration),
+    preferred_pace: mappedLabel(PACE_LABELS, normalized.preferred_pace),
+  };
+}
+
 function normalizeContext(raw) {
   if (!raw) return null;
   return {
@@ -578,6 +636,17 @@ function normalizeContext(raw) {
     time_of_day_patterns: normalizeText(raw.time_of_day_patterns),
     session_type: normalizeText(raw.session_type),
   };
+}
+
+export function getContextPatternRows(context) {
+  const normalized = normalizeContext(context);
+  if (!normalized) return [];
+  return [
+    { key: "weekday", label: "工作日", value: normalized.weekday_patterns },
+    { key: "weekend", label: "周末", value: normalized.weekend_patterns },
+    { key: "time", label: "时段", value: normalized.time_of_day_patterns },
+    { key: "session", label: "模式", value: normalized.session_type },
+  ].filter((row) => row.value);
 }
 
 export function normalizeProfileSummary(summary) {
