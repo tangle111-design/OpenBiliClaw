@@ -644,8 +644,10 @@ export function initRecommendView(root) {
   if (!loaded) {
     loaded = true;
     initPullRefresh();
+    loadData();
   }
-  loadData();
+  // Tab switch back: don't refetch — just re-render with existing state.
+  // Pull-to-refresh or WebSocket events handle live updates.
 }
 
 export function onStreamEvent(payload) {
