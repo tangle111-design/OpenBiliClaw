@@ -1392,11 +1392,15 @@ body {
 /* ── Card Feedback Actions ────────────────────────────────── */
 .card-feedback-actions {
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   gap: 6px;
   padding: 8px 12px 10px;
 }
 
 .card-feedback-actions .btn {
+  flex: 1 1 0;
+  min-width: 0;
   font-size: 12px;
   min-height: 38px;
   padding: 6px 4px;
