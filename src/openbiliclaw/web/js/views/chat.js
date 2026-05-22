@@ -459,6 +459,8 @@ async function loadNotifications() {
     delightMsgs = delightData;
     updateBadgeCount();
   } catch { /* ignore */ }
+  // Re-render if overlay is visible so first-click shows real data
+  if (overlayOpen) renderOverlay();
 }
 
 // ── Public API ───────────────────────────────────────────────
