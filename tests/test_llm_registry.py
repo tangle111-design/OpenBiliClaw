@@ -1134,12 +1134,12 @@ async def test_ollama_with_explicit_chat_model_is_chat_capable() -> None:
     didn't accidentally exclude every Ollama from chat.)
     """
     cfg = Config(
-            llm=LLMConfig(
-                default_provider="openai",
-                fallback_enabled=True,
-                fallback_provider="ollama",
-                openai=LLMProviderConfig(api_key="openai-key"),
-                ollama=LLMProviderConfig(
+        llm=LLMConfig(
+            default_provider="openai",
+            fallback_enabled=True,
+            fallback_provider="ollama",
+            openai=LLMProviderConfig(api_key="openai-key"),
+            ollama=LLMProviderConfig(
                 api_key="ollama",
                 model="llama3",  # ← explicit chat model
                 base_url="http://localhost:11434/v1",

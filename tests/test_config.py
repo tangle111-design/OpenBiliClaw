@@ -1036,6 +1036,7 @@ def test_save_config_round_trips_embedding_credentials(tmp_path: Path) -> None:
     config.llm.embedding.base_url = "https://embed.example.com/v1"
     config.llm.embedding.similarity_threshold = 0.91
     config.llm.embedding.fallback_enabled = True
+    config.llm.embedding.fallback_provider = "openai_compatible"
 
     save_config(config, config_path)
     loaded = load_config(config_path)
@@ -1046,6 +1047,7 @@ def test_save_config_round_trips_embedding_credentials(tmp_path: Path) -> None:
     assert loaded.llm.embedding.base_url == "https://embed.example.com/v1"
     assert loaded.llm.embedding.similarity_threshold == 0.91
     assert loaded.llm.embedding.fallback_enabled is True
+    assert loaded.llm.embedding.fallback_provider == "openai_compatible"
 
 
 def test_load_config_accepts_legacy_embedding_section_without_api_key(

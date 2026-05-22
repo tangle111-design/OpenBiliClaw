@@ -1725,21 +1725,43 @@
       const llm = config.llm || {};
       const provider = llm.default_provider || llm.provider;
       setSelect("llmProvider", provider);
-      setSelect("llmFallbackProvider", llm.fallback_provider || "");
+      const fallbackProvider = llm.fallback_provider || "";
+      setSelect("llmFallbackProvider", fallbackProvider);
       setSelect("llmAuthMode", llm.openai?.auth_mode || "api_key");
       if (provider) {
         setInput("llmModel", llm[provider]?.model);
         setInput("llmApiKey", llm[provider]?.api_key);
         setInput("llmBaseUrl", llm[provider]?.base_url);
       }
+      if (fallbackProvider) {
+        setSelect("llmFallbackAuthMode", llm[fallbackProvider]?.auth_mode || "api_key");
+        setInput("llmFallbackModel", llm[fallbackProvider]?.model);
+        setInput("llmFallbackApiKey", llm[fallbackProvider]?.api_key);
+        setInput("llmFallbackBaseUrl", llm[fallbackProvider]?.base_url);
+      } else {
+        setSelect("llmFallbackAuthMode", "api_key");
+        setInput("llmFallbackModel", "");
+        setInput("llmFallbackApiKey", "");
+        setInput("llmFallbackBaseUrl", "");
+      }
       setInput("openrouterReferer", llm.openrouter?.http_referer);
       setInput("openrouterTitle", llm.openrouter?.x_title);
       setSelect("embeddingProvider", llm.embedding?.provider || "");
-      setSelect("embeddingFallbackProvider", llm.embedding?.fallback_provider || "");
+      const embeddingFallbackProvider = llm.embedding?.fallback_provider || "";
+      setSelect("embeddingFallbackProvider", embeddingFallbackProvider);
       setInput("embeddingModel", llm.embedding?.model);
       setInput("embeddingApiKey", llm.embedding?.api_key);
       setInput("embeddingBaseUrl", llm.embedding?.base_url);
       setInput("embeddingSimilarity", llm.embedding?.similarity_threshold);
+      if (embeddingFallbackProvider) {
+        setInput("embeddingFallbackModel", llm[embeddingFallbackProvider]?.model);
+        setInput("embeddingFallbackApiKey", llm[embeddingFallbackProvider]?.api_key);
+        setInput("embeddingFallbackBaseUrl", llm[embeddingFallbackProvider]?.base_url);
+      } else {
+        setInput("embeddingFallbackModel", "");
+        setInput("embeddingFallbackApiKey", "");
+        setInput("embeddingFallbackBaseUrl", "");
+      }
       setSelect("moduleSoulProvider", llm.soul?.provider || "");
       setInput("moduleSoulModel", llm.soul?.model);
       setSelect("moduleDiscoveryProvider", llm.discovery?.provider || "");
@@ -1998,14 +2020,24 @@
 
     function buildConfigUpdate() {
       const provider = $("#llmProvider").value;
+      const fallbackProvider = getInput("llmFallbackProvider");
       const llmProviderConfig = { model: getInput("llmModel") };
       if (provider === "openai") llmProviderConfig.auth_mode = getInput("llmAuthMode") || "api_key";
       if (getInput("llmApiKey")) llmProviderConfig.api_key = getInput("llmApiKey");
       if (getInput("llmBaseUrl")) llmProviderConfig.base_url = getInput("llmBaseUrl");
+      const llmFallbackConfig = { model: getInput("llmFallbackModel") };
+      if (fallbackProvider === "openai") llmFallbackConfig.auth_mode = getInput("llmFallbackAuthMode") || "api_key";
+      if (getInput("llmFallbackApiKey")) llmFallbackConfig.api_key = getInput("llmFallbackApiKey");
+      if (getInput("llmFallbackBaseUrl")) llmFallbackConfig.base_url = getInput("llmFallbackBaseUrl");
       const logPath = splitLogPath(getInput("logPath"), state.config?.logging);
+      const embeddingFallbackProvider = getInput("embeddingFallbackProvider");
+      const embeddingFallbackConfig = { model: getInput("embeddingFallbackModel") };
+      if (getInput("embeddingFallbackApiKey")) embeddingFallbackConfig.api_key = getInput("embeddingFallbackApiKey");
+      if (getInput("embeddingFallbackBaseUrl")) embeddingFallbackConfig.base_url = getInput("embeddingFallbackBaseUrl");
       const embedding = {
         provider: $("#embeddingProvider").value,
-        fallback_provider: getInput("embeddingFallbackProvider"),
+        fallback_enabled: Boolean(embeddingFallbackProvider),
+        fallback_provider: embeddingFallbackProvider,
         model: getInput("embeddingModel"),
         similarity_threshold: getFloatInput("embeddingSimilarity", 0.82)
       };
@@ -2015,7 +2047,8 @@
       const llm = {
         ...(state.config?.llm || {}),
         default_provider: provider,
-        fallback_provider: getInput("llmFallbackProvider"),
+        fallback_enabled: Boolean(fallbackProvider),
+        fallback_provider: fallbackProvider,
         [provider]: { ...(state.config?.llm?.[provider] || {}), ...llmProviderConfig },
         embedding: { ...(state.config?.llm?.embedding || {}), ...embedding },
         soul: { ...(state.config?.llm?.soul || {}), provider: getInput("moduleSoulProvider"), model: getInput("moduleSoulModel") },
@@ -2023,6 +2056,18 @@
         recommendation: { ...(state.config?.llm?.recommendation || {}), provider: getInput("moduleRecommendationProvider"), model: getInput("moduleRecommendationModel") },
         evaluation: { ...(state.config?.llm?.evaluation || {}), provider: getInput("moduleEvaluationProvider"), model: getInput("moduleEvaluationModel") }
       };
+      if (fallbackProvider && fallbackProvider !== provider) {
+        llm[fallbackProvider] = {
+          ...(state.config?.llm?.[fallbackProvider] || {}),
+          ...llmFallbackConfig
+        };
+      }
+      if (embeddingFallbackProvider) {
+        llm[embeddingFallbackProvider] = {
+          ...(llm[embeddingFallbackProvider] || state.config?.llm?.[embeddingFallbackProvider] || {}),
+          ...embeddingFallbackConfig
+        };
+      }
       if (getInput("openrouterReferer") || getInput("openrouterTitle")) {
         llm.openrouter = {
           ...(llm.openrouter || {}),
@@ -2129,6 +2174,21 @@
       tab.addEventListener("click", () => setActiveSettingsPanel(tab.dataset.settingsTab));
     });
 
+    function setActiveModelSettingsPanel(groupName = "llm", panelName = "default") {
+      document.querySelectorAll(`[data-model-settings-tab][data-model-settings-group="${groupName}"]`).forEach((tab) => {
+        const isActive = tab.dataset.modelSettingsTab === panelName;
+        tab.classList.toggle("is-active", isActive);
+        tab.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      document.querySelectorAll(`[data-model-settings-panel][data-model-settings-group="${groupName}"]`).forEach((panel) => {
+        panel.hidden = panel.dataset.modelSettingsPanel !== panelName;
+      });
+    }
+
+    document.querySelectorAll("[data-model-settings-tab]").forEach((tab) => {
+      tab.addEventListener("click", () => setActiveModelSettingsPanel(tab.dataset.modelSettingsGroup, tab.dataset.modelSettingsTab));
+    });
+
     function startChatPlaceholderRotation() {
       const input = $("#chatInput");
       if (!input || chatPlaceholderTimer) return;
@@ -2191,6 +2251,8 @@
     safeBind("#messageChatBackBtn", "click", returnToMessages);
     safeBind("#messageChatForm", "submit", (event) => { event.preventDefault(); const input = $("#messageChatInput"); const text = input?.value?.trim() || ""; if (!text) return; input.value = ""; sendChat(text, { contextPrefix: state.messageChatPrompt }); });
     safeBind("#llmProvider", "change", () => applyConfig({ ...(state.config || {}), llm: { ...(state.config?.llm || {}), default_provider: $("#llmProvider")?.value || "" } }));
+    safeBind("#llmFallbackProvider", "change", () => applyConfig({ ...(state.config || {}), llm: { ...(state.config?.llm || {}), fallback_provider: $("#llmFallbackProvider")?.value || "" } }));
+    safeBind("#embeddingFallbackProvider", "change", () => applyConfig({ ...(state.config || {}), llm: { ...(state.config?.llm || {}), embedding: { ...(state.config?.llm?.embedding || {}), fallback_provider: $("#embeddingFallbackProvider")?.value || "" } } }));
     safeBind("#suggestSharesBtn", "click", async () => {
       const result = await requestJson(ENDPOINTS.sourceShareSuggestion, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled_sources: { bilibili: $("#bilibiliEnabled").value === "on", xiaohongshu: $("#xhsEnabled").value === "on", douyin: $("#douyinEnabled").value === "on", youtube: $("#youtubeEnabled").value === "on" }, configured_shares: buildConfigUpdate().scheduler.pool_source_shares }) });
       const shares = result?.pool_source_shares || result?.shares || result?.suggested_shares;
