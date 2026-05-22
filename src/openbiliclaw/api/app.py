@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO, cast
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from openbiliclaw.api.models import (
     ActivityFeedItemOut,
@@ -2398,7 +2398,7 @@ def create_app(
             return "neutral"
         try:
             response = await asyncio.wait_for(
-                llm.complete_structured_task(
+                llm.complete_with_core_memory(
                     system_instruction=(
                         "任务：判断用户对一个兴趣方向的态度。\n\n"
                         "规则：\n"
@@ -2412,6 +2412,7 @@ def create_app(
                     user_input=f"方向：{domain}\n用户：{user_message}",
                     max_tokens=8,
                     temperature=0.0,
+                    json_mode=False,
                     caller="api.sentiment",
                 ),
                 timeout=15,
@@ -4571,9 +4572,7 @@ def create_app(
         app.mount("/web", _StaticFiles(directory=_desktop_dir, html=True), name="desktop-web")
 
         @app.get("/", include_in_schema=False)
-        def _root_redirect():
-            from fastapi.responses import RedirectResponse as _Redirect
-
-            return _Redirect(url="/web", status_code=302)
+        def _root_redirect() -> RedirectResponse:
+            return RedirectResponse(url="/web", status_code=302)
 
     return app
