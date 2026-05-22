@@ -158,7 +158,7 @@ _INIT_POOL_TARGET_COUNT = 15
 _INIT_BILIBILI_HISTORY_LIMIT = 300
 _INIT_BILIBILI_FAVORITE_LIMIT = 300
 _INIT_BILIBILI_FOLLOW_LIMIT = 100
-_INIT_BOOTSTRAP_MAX_ITEMS_PER_SCOPE = 100
+_INIT_BOOTSTRAP_MAX_ITEMS_PER_SCOPE = 300
 _DEFAULT_XHS_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_DY_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_YT_BOOTSTRAP_WAIT_SECONDS = 240.0
@@ -2099,7 +2099,7 @@ def _enqueue_xhs_bootstrap_task(*, force: bool = False) -> str | None:
     extension picks the task off the queue and runs it in parallel
     with the rest of init.
 
-    Defaults: ``max_scroll_rounds=15`` and ``max_items_per_scope=100``.
+    Defaults: ``max_scroll_rounds=15`` and ``max_items_per_scope=300``.
     Both can be overridden via env vars
     ``OPENBILICLAW_XHS_BOOTSTRAP_SCROLL_ROUNDS`` and
     ``OPENBILICLAW_XHS_BOOTSTRAP_MAX_ITEMS``.
@@ -2300,7 +2300,7 @@ def _enqueue_dy_bootstrap_task() -> str | None:
     ``event_format.build_event`` contract, so the cross-source
     analysis remains uniform downstream.
 
-    Defaults: ``max_scroll_rounds=15`` and ``max_items_per_scope=100``.
+    Defaults: ``max_scroll_rounds=15`` and ``max_items_per_scope=300``.
     Both can be overridden via env vars
     ``OPENBILICLAW_DY_BOOTSTRAP_SCROLL_ROUNDS`` and
     ``OPENBILICLAW_DY_BOOTSTRAP_MAX_ITEMS``.
@@ -2459,7 +2459,7 @@ def _collect_dy_bootstrap_events(
 def _enqueue_yt_bootstrap_task() -> str | None:
     """Enqueue a YouTube bootstrap_profile task for the browser extension.
 
-    Defaults: ``max_scroll_rounds=10`` and ``max_items_per_scope=100``.
+    Defaults: ``max_scroll_rounds=10`` and ``max_items_per_scope=300``.
     Both can be overridden via env vars
     ``OPENBILICLAW_YT_BOOTSTRAP_SCROLL_ROUNDS`` and
     ``OPENBILICLAW_YT_BOOTSTRAP_MAX_ITEMS``.

@@ -3073,7 +3073,7 @@ def test_enqueue_xhs_bootstrap_task_uses_env_overrides(
     assert captured["payload"]["scopes"] == ["saved", "liked", "xhs_history"]
 
 
-def test_enqueue_xhs_bootstrap_task_defaults_to_100_items_per_scope(
+def test_enqueue_xhs_bootstrap_task_defaults_to_300_items_per_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from openbiliclaw.cli import _enqueue_xhs_bootstrap_task
@@ -3098,7 +3098,7 @@ def test_enqueue_xhs_bootstrap_task_defaults_to_100_items_per_scope(
     monkeypatch.setattr("openbiliclaw.sources.xhs_tasks.XhsTaskQueue", FakeQueue)
 
     assert _enqueue_xhs_bootstrap_task(force=True) == "task-default"
-    assert captured["payload"]["max_items_per_scope"] == 100
+    assert captured["payload"]["max_items_per_scope"] == 300
 
 
 def test_enqueue_xhs_bootstrap_task_reuses_recent_task_by_default(
@@ -4122,7 +4122,7 @@ def test_enqueue_dy_bootstrap_task_uses_env_overrides(
     ]
 
 
-def test_enqueue_dy_bootstrap_task_defaults_to_100_items_per_scope(
+def test_enqueue_dy_bootstrap_task_defaults_to_300_items_per_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from openbiliclaw.cli import _enqueue_dy_bootstrap_task
@@ -4147,7 +4147,7 @@ def test_enqueue_dy_bootstrap_task_defaults_to_100_items_per_scope(
     monkeypatch.setattr("openbiliclaw.sources.dy_tasks.DyTaskQueue", FakeQueue)
 
     assert _enqueue_dy_bootstrap_task() == "dy-task-default"
-    assert captured["payload"]["max_items_per_scope"] == 100
+    assert captured["payload"]["max_items_per_scope"] == 300
 
 
 def test_enqueue_dy_bootstrap_task_reuses_recent_task_by_default(
@@ -4214,7 +4214,7 @@ def test_enqueue_yt_bootstrap_task_reuses_recent_task_by_default(
     assert _enqueue_yt_bootstrap_task() == "recent-yt-task-id"
 
 
-def test_enqueue_yt_bootstrap_task_defaults_to_100_items_per_scope(
+def test_enqueue_yt_bootstrap_task_defaults_to_300_items_per_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from openbiliclaw.cli import _enqueue_yt_bootstrap_task
@@ -4239,7 +4239,7 @@ def test_enqueue_yt_bootstrap_task_defaults_to_100_items_per_scope(
     monkeypatch.setattr("openbiliclaw.sources.yt_tasks.YtTaskQueue", FakeQueue)
 
     assert _enqueue_yt_bootstrap_task() == "yt-task-default"
-    assert captured["payload"]["max_items_per_scope"] == 100
+    assert captured["payload"]["max_items_per_scope"] == 300
 
 
 def test_collect_dy_bootstrap_events_returns_skipped_for_no_task_id() -> None:

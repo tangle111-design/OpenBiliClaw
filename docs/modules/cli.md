@@ -306,7 +306,7 @@ $ openbiliclaw profile
 
 安装渠道里的首选路径是 `scripts/agent_bootstrap.py` 自动运行 init：Bash / PowerShell / Docker / AI agent 安装会先确认 LLM、embedding、B 站 Cookie 和各来源 opt-in，再触发本命令。直接执行 `openbiliclaw init` 仍保留为高级手动 fallback 和重复初始化入口。
 
-默认初始化信号上限：B 站观看历史最多 300 条、收藏最多 300 条、关注 UP 最多 100 人；小红书 / 抖音 / YouTube 的 `bootstrap_profile` 每个 scope 默认最多 100 条。交互式 `init` 会让用户确认 B 站收藏 / 关注上限，收藏回车使用 300、关注回车使用 100；脚本化场景可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，传 `0` 表示跳过对应信号。
+默认初始化信号上限：B 站观看历史最多 300 条、收藏最多 300 条、关注 UP 最多 100 人；小红书 / 抖音 / YouTube 的 `bootstrap_profile` 每个 scope 默认最多 300 条。交互式 `init` 会让用户确认 B 站收藏 / 关注上限，收藏回车使用 300、关注回车使用 100；脚本化场景可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，传 `0` 表示跳过对应信号。
 
 ```bash
 $ openbiliclaw init
