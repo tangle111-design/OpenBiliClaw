@@ -2429,6 +2429,7 @@ const DELIGHT_PERSIST_FIELDS = [
   "response_message",
   "expanded",
   "composer_open",
+  "turns",
 ];
 
 function persistDelightLocalState(bvid, updates) {
@@ -2508,9 +2509,26 @@ function applyTurnToDelight(turn) {
   if (!turn || turn.scope !== "delight" || !turn.subject_id) return;
   const idx = state.activeDelights.findIndex((item) => item?.bvid === turn.subject_id);
   if (idx < 0) return;
+
+  // Maintain per-delight turns array
+  const existing = state.activeDelights[idx];
+  const prevTurns = Array.isArray(existing.turns) ? existing.turns : [];
+  const turnEntry = {
+    turn_id: turn.turn_id,
+    message: turn.message || "",
+    reply: turn.reply || "",
+    status: turn.status || "pending",
+    error: turn.error || "",
+  };
+  const turnIdx = prevTurns.findIndex((t) => t.turn_id === turn.turn_id);
+  const updatedTurns = turnIdx >= 0
+    ? prevTurns.map((t, i) => i === turnIdx ? turnEntry : t)
+    : [...prevTurns, turnEntry];
+
   const updates = {
     chat_turn_id: turn.turn_id,
     expanded: true,
+    turns: updatedTurns,
   };
   if (turn.status === "completed") {
     Object.assign(updates, {
@@ -2907,7 +2925,32 @@ function renderDelightSlot() {
       body.append(response);
     }
 
-    if (delight.chat_reply) {
+    // Multi-turn chat bubbles (turns is the authority; chat_reply is compat)
+    const turns = Array.isArray(delight.turns) ? delight.turns : [];
+    if (turns.length > 0) {
+      const bubbleArea = document.createElement("div");
+      bubbleArea.className = "delight-chat-turns";
+      for (const t of turns) {
+        const userBubble = document.createElement("div");
+        userBubble.className = "delight-turn-bubble is-user";
+        userBubble.textContent = t.message;
+        bubbleArea.append(userBubble);
+        const aiBubble = document.createElement("div");
+        if (t.status === "pending") {
+          aiBubble.className = "delight-turn-bubble is-assistant is-thinking";
+          aiBubble.textContent = "阿B 正在品你这句话…";
+        } else if (t.status === "failed") {
+          aiBubble.className = "delight-turn-bubble is-assistant is-error";
+          aiBubble.textContent = t.error || "这句还没发出去，稍后再试。";
+        } else {
+          aiBubble.className = "delight-turn-bubble is-assistant";
+          aiBubble.textContent = t.reply || "";
+        }
+        bubbleArea.append(aiBubble);
+      }
+      body.append(bubbleArea);
+    } else if (delight.chat_reply) {
+      // Fallback: show single chat_reply for backward compat
       const reply = document.createElement("p");
       reply.className = "delight-banner-chat-reply";
       reply.textContent = delight.chat_reply;
@@ -3022,6 +3065,8 @@ function renderDelightSlot() {
           }
           submit.disabled = true;
           const turnId = createClientTurnId("delight");
+          // Optimistically append to turns array
+          const prevTurns = Array.isArray(delight.turns) ? delight.turns : [];
           updateDelightHead({
             state: "chatting",
             response_message: "阿B 正在品你这句话。",
@@ -3029,6 +3074,7 @@ function renderDelightSlot() {
             chat_draft: draft,
             composer_open: false,
             expanded: true,
+            turns: [...prevTurns, { turn_id: turnId, message: draft, reply: "", status: "pending", error: "" }],
           });
           renderDelightSlot();
           status.replaceChildren();
@@ -4291,8 +4337,7 @@ function bindSettings() {
     // LLM
     providerSelect.value = cfg.llm?.default_provider || "openai";
     showProviderFields(providerSelect.value);
-    const cfgLlmFallback = document.getElementById("cfgLlmFallbackEnabled");
-    if (cfgLlmFallback) cfgLlmFallback.checked = cfg.llm?.fallback_enabled === true;
+    setVal("cfgLlmFallbackProvider", cfg.llm?.fallback_provider);
 
     setVal("cfgOpenaiAuthMode", cfg.llm?.openai?.auth_mode || "api_key");
     setVal("cfgOpenaiKey", cfg.llm?.openai?.api_key);
@@ -4330,10 +4375,7 @@ function bindSettings() {
     // Embedding (v0.3.32+ — owns its own api_key/base_url)
     const embProvider = document.getElementById("cfgEmbeddingProvider");
     if (embProvider) embProvider.value = cfg.llm?.embedding?.provider || "";
-    const embeddingFallback = document.getElementById("cfgEmbeddingFallbackEnabled");
-    if (embeddingFallback) {
-      embeddingFallback.checked = cfg.llm?.embedding?.fallback_enabled === true;
-    }
+    setVal("cfgEmbeddingFallbackProvider", cfg.llm?.embedding?.fallback_provider);
     setVal("cfgEmbeddingApiKey", cfg.llm?.embedding?.api_key);
     setVal("cfgEmbeddingBaseUrl", cfg.llm?.embedding?.base_url);
     setVal("cfgEmbeddingModel", cfg.llm?.embedding?.model);
@@ -4432,12 +4474,15 @@ function bindSettings() {
 
   function collectForm() {
     const logPath = splitLogPath(getVal("cfgLogPath"), state.runtimeConfig?.logging);
+    const llmFallbackProvider = getVal("cfgLlmFallbackProvider");
+    const embeddingFallbackProvider = getVal("cfgEmbeddingFallbackProvider");
     return {
       language: getVal("cfgLanguage"),
       data_dir: getVal("cfgDataDir"),
       llm: {
         default_provider: providerSelect.value,
-        fallback_enabled: checked("cfgLlmFallbackEnabled"),
+        fallback_enabled: Boolean(llmFallbackProvider),
+        fallback_provider: llmFallbackProvider,
         openai: {
           auth_mode: getVal("cfgOpenaiAuthMode") || "api_key",
           api_key: getVal("cfgOpenaiKey"),
@@ -4480,7 +4525,8 @@ function bindSettings() {
           base_url: getVal("cfgEmbeddingBaseUrl"),
           model: getVal("cfgEmbeddingModel"),
           similarity_threshold: getFloat("cfgEmbeddingSimilarity", 0.82),
-          fallback_enabled: checked("cfgEmbeddingFallbackEnabled"),
+          fallback_enabled: Boolean(embeddingFallbackProvider),
+          fallback_provider: embeddingFallbackProvider,
         },
         soul: {
           provider: getVal("cfgModuleSoulProvider"),

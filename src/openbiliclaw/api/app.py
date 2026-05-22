@@ -460,6 +460,22 @@ def _image_cache_save(url: str, data: bytes, content_type: str) -> None:
         path.write_bytes(data)
 
 
+def _image_cache_response(url: str) -> FileResponse | None:
+    cached = _image_cache_lookup(url)
+    if not cached:
+        return None
+    cache_path, cache_ct = cached
+    return FileResponse(
+        cache_path,
+        media_type=cache_ct,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Content-Type-Options": "nosniff",
+            "X-Image-Cache": "hit",
+        },
+    )
+
+
 def _image_cache_cleanup() -> int:
     """Remove cached images older than _IMAGE_CACHE_MAX_AGE_DAYS. Returns count removed."""
     import time
@@ -467,13 +483,11 @@ def _image_cache_cleanup() -> int:
     cache_dir = _image_cache_dir()
     cutoff = time.time() - _IMAGE_CACHE_MAX_AGE_DAYS * 86400
     removed = 0
-    try:
+    with suppress(Exception):
         for f in cache_dir.iterdir():
             if f.is_file() and f.stat().st_mtime < cutoff:
                 f.unlink(missing_ok=True)
                 removed += 1
-    except Exception:
-        pass
     return removed
 
 
@@ -1005,21 +1019,19 @@ def create_app(
                     spool = await _read_image_proxy_body(response)
                 finally:
                     await response.aclose()
-        except (httpx.TimeoutException, httpx.HTTPError, HTTPException):
-            # Upstream failed — try serving from cache.
-            cached = _image_cache_lookup(url)
-            if cached:
-                cache_path, cache_ct = cached
-                return FileResponse(
-                    cache_path,
-                    media_type=cache_ct,
-                    headers={
-                        "Cache-Control": "public, max-age=86400",
-                        "X-Content-Type-Options": "nosniff",
-                        "X-Image-Cache": "hit",
-                    },
-                )
-            raise HTTPException(status_code=502, detail="Upstream request failed") from None
+        except httpx.TimeoutException as exc:
+            # Network-level upstream failures may use a cached copy.
+            if cached := _image_cache_response(url):
+                return cached
+            raise HTTPException(status_code=504, detail="Upstream request timed out") from exc
+        except httpx.HTTPError as exc:
+            if cached := _image_cache_response(url):
+                return cached
+            raise HTTPException(status_code=502, detail="Upstream request failed") from exc
+        except HTTPException as exc:
+            if exc.status_code >= 500 and (cached := _image_cache_response(url)):
+                return cached
+            raise
 
         # Cache the successfully fetched image.
         spool.seek(0)
@@ -1260,10 +1272,10 @@ def create_app(
                 expression=str(item.expression),
                 topic_label=str(item.topic_label),
                 presented=bool(item.presented),
+                feedback_type=str(getattr(item, "feedback_type", "") or ""),
                 content_id=str(getattr(item.content, "content_id", "") or item.content.bvid),
                 content_url=str(getattr(item.content, "content_url", "") or ""),
                 source_platform=str(getattr(item.content, "source_platform", "") or "bilibili"),
-                feedback_type=str(getattr(item, "feedback_type", "") or ""),
                 pool_status=str(getattr(item.content, "pool_status", "") or "") or None,
             )
             for item in items
@@ -3964,6 +3976,7 @@ def create_app(
             llm=LLMConfigOut(
                 default_provider=cfg.llm.default_provider,
                 fallback_enabled=cfg.llm.fallback_enabled,
+                fallback_provider=cfg.llm.fallback_provider,
                 openai=_provider_out(cfg.llm.openai),
                 claude=_provider_out(cfg.llm.claude),
                 gemini=_provider_out(cfg.llm.gemini),
@@ -3978,6 +3991,7 @@ def create_app(
                     base_url=cfg.llm.embedding.base_url,
                     similarity_threshold=cfg.llm.embedding.similarity_threshold,
                     fallback_enabled=cfg.llm.embedding.fallback_enabled,
+                    fallback_provider=cfg.llm.embedding.fallback_provider,
                 ),
                 soul=ModuleLLMConfigOut(
                     provider=cfg.llm.soul.provider,
@@ -4159,6 +4173,8 @@ def create_app(
                 cfg.llm.default_provider = str(llm_data["default_provider"])
             if "fallback_enabled" in llm_data:
                 cfg.llm.fallback_enabled = _as_bool(llm_data["fallback_enabled"])
+            if "fallback_provider" in llm_data:
+                cfg.llm.fallback_provider = str(llm_data["fallback_provider"]).strip()
             for provider_name in (
                 "openai",
                 "claude",
@@ -4229,6 +4245,8 @@ def create_app(
                     cfg.llm.embedding.similarity_threshold = float(emb["similarity_threshold"])
                 if "fallback_enabled" in emb:
                     cfg.llm.embedding.fallback_enabled = _as_bool(emb["fallback_enabled"])
+                if "fallback_provider" in emb:
+                    cfg.llm.embedding.fallback_provider = str(emb["fallback_provider"]).strip()
             for module_name in ("soul", "discovery", "recommendation", "evaluation"):
                 if module_name in llm_data and isinstance(llm_data[module_name], dict):
                     mod_cfg = getattr(cfg.llm, module_name)

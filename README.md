@@ -19,15 +19,12 @@
 
 ---
 
-## 📌 v0.3.88 / extension v0.3.42 重要更新（2026-05-21）
+## 📌 v0.3.89 / extension v0.3.44 重要更新（2026-05-22）
 
-- **📱 移动端 Web 成为主入口之一** —— 同局域网手机访问 `/m/` 可看推荐、画像、聊一聊、消息和惊喜推荐；插件顶部手机图标可直接弹出扫码入口。
-- **📶 二维码自动改用局域网 IP** —— 插件后端仍是 `127.0.0.1` / `localhost` 时，会读取 `/api/health.lan_ip`，优先显示 `192.168.x.x` / `10.x.x.x` / `172.16-31.x.x` 这类手机可访问地址。
-- **🖼️ 封面图改走本地代理** —— 移动端 Web 和插件 side panel 的推荐、惊喜推荐、消息封面统一经 `/api/image-proxy` 加载，后端做 CDN 白名单、redirect 和 10MB 大小校验，失败时保留占位区域。
-- **✨ 手机惊喜推荐样式刷新** —— 移动端推荐页现在用真实 compact banner 展示惊喜推荐，推荐原因围绕左侧头图排版，动作与插件保持一致。
-- **🚫 LLM fallback 默认关闭** —— `[llm].fallback_enabled` 默认 `false`，请求失败直接暴露而非静默切 provider。
-- **🚫 Embedding fallback 默认关闭** —— `[llm.embedding].fallback_enabled` 默认 `false`，不再借用 chat-side 凭据或切换 embedding provider。
-- **🔌 Embedding 完全独立** —— embedding provider 留空即禁用，不再跟随 `[llm].default_provider`；两套配置彻底解耦。
+- **💬 惊喜推荐原地聊** —— 移动端 Web 和插件的「聊一聊」现在都在惊喜推荐卡片内展开 composer，不再把你丢到对话 tab。
+- **🧵 多轮历史不串线** —— 每条惊喜推荐都有自己的多轮气泡历史，左右切换候选、side panel reload 或 pending 回复完成后都能按内容恢复。
+- **🔁 durable chat 对齐** —— 惊喜推荐内聊统一走 `/api/chat/turns` 的 `scope=delight`，pending / completed / failed 状态都在局部 UI 中就地更新。
+- **📱 iOS 输入不缩放** —— 内联 composer 输入框保持 16px 字号，避免 iOS Safari focus 时自动放大页面。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
@@ -546,7 +543,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.88 / extension v0.3.42: 局域网二维码与封面代理合并发布（2026-05-21）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
+最新版本：**v0.3.89 / extension v0.3.44: 惊喜推荐内联多轮聊天（2026-05-22）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
 
 ## 🗺️ 后续规划
 

@@ -4,7 +4,7 @@
 
 ---
 
-## Unreleased: 独立 Web UI 与推荐反馈语义（2026-05-20）
+## Unreleased: 独立 Web UI 与推荐反馈语义（2026-05-22）
 
 - `openbiliclaw start` 同端口托管独立 Web UI：`GET /` 302 跳转到 `/web`，`GET /web` / `/web/` 返回 `src/openbiliclaw/web/index.html` 桌面推荐首页，`GET /m/` 返回 `src/openbiliclaw/web/m/` 手机端 Web；`serve-api` 默认保持 API-only，显式传 `--with-web` 才挂载这些页面。
 - `/api/recommendations` 默认过滤已经反馈 / 忽略的内容，保留 `recommendations` 历史记录用于画像学习与审计，但不再把已消费条目返回给活跃推荐流；响应在有值时暴露可选 `feedback_type` / `pool_status` 供前端兜底。
@@ -12,6 +12,21 @@
 - activity feed 反馈文案改为显式处理 `like` / `dislike` / `comment`，其中只有 `comment` 展示“写了一句反馈”；`dismiss` 和未知类型不会被渲染成反馈活动。
 
 ---
+## v0.3.89 / extension v0.3.44: 惊喜推荐内联多轮聊天（2026-05-22）
+
+- 浏览器插件版本提升到 extension v0.3.44，准备发布 `extension-v0.3.44`；后端源码版本仍为 v0.3.89，不发布新的后端 tag。
+- 移动 Web 惊喜推荐的「聊一聊」不再切到对话 tab，而是在当前惊喜卡片内展开 16px textarea composer，提交后就地显示用户气泡、AI thinking、完成回复或失败提示。
+- 移动 Web 和插件的惊喜推荐内聊统一走 durable `/api/chat/turns`，按 `scope=delight` + `subject_id` 归并历史；pending turn 会轮询恢复，reload 后可重新 hydrate。
+- 插件惊喜推荐卡片从单个 `chat_reply` 升级为 per-delight `turns` 多轮气泡，`chat_reply` 仅保留为兼容 last reply；切换候选和 side panel reload 不再覆盖旧回合。
+- Discovery / recommendation 的批量内容评估统一透传近期 negative exemplars：B 站、抖音、YouTube 策略和 OpenClaw bootstrap 都会把共享 database 传给内部 evaluator；推荐层的未分类池子补评估也会带上 `negative_examples`，让短期话术避让与长期 `disliked_topics` 一起生效。
+- 补充移动端回归测试，锁定 delight inline chat 复用 `session=popup` 契约、`chatted` 状态继续保留「聊一聊」入口，同时 viewed/liked/rejected 等永久处理态不泄漏通用动作按钮。
+
+## v0.3.89 / extension v0.3.43: 显式 fallback 与限流降噪发布（2026-05-22）
+
+- 后端源码版本提升到 v0.3.89，准备发布 `backend-v0.3.89`；浏览器插件版本提升到 extension v0.3.43，准备发布 `extension-v0.3.43`。
+- LLM provider 限流 / cooldown 时，discovery eval batch 和 recommendation copy batch 不再退回逐条 LLM 调用，避免一次 Gemini 429 放大成整批 traceback；XHS / 抖音 / YouTube task claim 改用短生命周期 SQLite 连接，修复并发 `/next-task` poll 的嵌套事务错误；`httpx` / `httpcore` 文件日志默认降到 WARNING。
+- 插件设置页将 LLM / embedding fallback 从“自动尝试其它 provider”改成显式“备选 Provider”下拉框；`fallback_provider = ""` 时完全不 fallback，非空时只尝试这一个备选 provider。
+- `/api/image-proxy` 不再把 redirect 白名单失败、非图片 Content-Type、超过 10MB 和超时统一折叠成 502；校验类错误保留 403 / 400 / 413，网络超时返回 504，缓存回退只用于上游网络失败或 5xx 类错误。
 
 ## v0.3.88 / extension v0.3.42: 局域网二维码与封面代理合并发布（2026-05-21）
 

@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from openbiliclaw.llm.json_utils import extract_llm_json_list, extract_llm_json_object
+from openbiliclaw.llm.service import is_llm_rate_limit_error
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
 
 if TYPE_CHECKING:
@@ -1007,6 +1008,16 @@ class RecommendationEngine:
             }
             for c in batch
         ]
+        # Fetch recent negative exemplars so Rule 11 pattern-matching
+        # applies equally to non-bilibili pool items (e.g. xiaohongshu).
+        negative_examples: list[dict[str, object]] | None = None
+        try:
+            from openbiliclaw.soul.negative_exemplars import recent_negative_exemplars
+
+            negative_examples = recent_negative_exemplars(self._database) or None
+        except Exception:
+            logger.debug("classify_batch: negative_exemplars unavailable", exc_info=True)
+
         # Determine the dominant platform for prompt context
         platform = (batch[0].source_platform or "bilibili") if batch else "bilibili"
         messages = build_batch_content_evaluation_prompt(
@@ -1014,6 +1025,7 @@ class RecommendationEngine:
             content_items=content_items,
             source_context=batch[0].source_strategy if batch else "",
             source_platform=platform,
+            negative_examples=negative_examples,
         )
 
         response = await self._llm.complete_structured_task(
@@ -1294,7 +1306,15 @@ class RecommendationEngine:
             )
             if payload is None:
                 raise ValueError("Expected expression JSON array or compatible wrapper.")
-        except Exception:
+        except Exception as exc:
+            if is_llm_rate_limit_error(exc):
+                logger.warning(
+                    "Batch expression generation skipped single-item fallback for %d items "
+                    "because the LLM provider is rate-limited or cooling down: %s",
+                    len(batch),
+                    exc,
+                )
+                return 0
             logger.warning(
                 "Batch expression generation failed for %d items, falling back to single",
                 len(batch),

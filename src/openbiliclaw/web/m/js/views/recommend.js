@@ -14,6 +14,9 @@ import {
   markDelightSent,
   reportClick,
   submitFeedback,
+  startChatTurn,
+  fetchChatTurn,
+  fetchChatTurns,
 } from "../api.js";
 import { state, patchState } from "../state.js";
 import {
@@ -35,6 +38,7 @@ import {
   normalizeSourcePlatform,
   getSourceLabel,
   formatRelativeTimestamp,
+  getMobileChatSession,
 } from "../view-models.js";
 
 let $root = null;
@@ -79,8 +83,8 @@ function render() {
   frag.appendChild(delightSlot);
   renderInto(delightSlot, renderDelightTray);
 
-  // Recommendation cards
-  const recs = state.recommendations;
+  // Recommendation cards — hide disliked items
+  const recs = state.recommendations.filter((r) => feedbackDone.get(r.id) !== "dislike" && r.feedback_type !== "dislike");
   if (recs.length === 0 && !loading) {
     const hint = getReadyRecommendationHint(state.runtimeStatus);
     const empty = document.createElement("div");
@@ -224,6 +228,102 @@ async function loadMoreActivity() {
   } catch { /* ignore */ }
 }
 
+// ── Delight Inline Chat Helpers ──────────────────────────────
+const DELIGHT_POLL_INTERVAL_MS = 1200;
+const DELIGHT_POLL_DEADLINE_MS = 180_000;
+const activeDelightPolls = new Map(); // turnId -> timeoutId
+
+function createClientTurnId(prefix = "turn") {
+  const random = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+  return `${prefix}-${String(random).replace(/[^a-zA-Z0-9_-]/g, "")}`;
+}
+
+function pollDelightTurn(turnId, bvid) {
+  if (!turnId || activeDelightPolls.has(turnId)) return;
+  const startedAt = Date.now();
+
+  async function tick() {
+    try {
+      const turn = await fetchChatTurn(turnId);
+      if (turn.status === "completed" || turn.status === "failed") {
+        activeDelightPolls.delete(turnId);
+        applyTurnResult(bvid, turnId, turn);
+        return;
+      }
+    } catch { /* retry until deadline */ }
+    if (Date.now() - startedAt > DELIGHT_POLL_DEADLINE_MS) {
+      activeDelightPolls.delete(turnId);
+      return;
+    }
+    activeDelightPolls.set(turnId, setTimeout(tick, DELIGHT_POLL_INTERVAL_MS));
+  }
+
+  activeDelightPolls.set(turnId, 0);
+  void tick();
+}
+
+/** Update a specific turn in a delight's turns array after polling completes. */
+function applyTurnResult(bvid, turnId, turn) {
+  const updated = state.activeDelights.map((item) => {
+    const norm = normalizeDelightCandidate(item);
+    if (norm.bvid !== bvid) return item;
+    const turns = (norm.turns || []).map((t) => {
+      if (t.turn_id !== turnId) return t;
+      return { ...t, reply: turn.reply || "", status: turn.status, error: turn.error || "" };
+    });
+    const lastCompleted = turn.status === "completed";
+    return {
+      ...item,
+      turns,
+      state: lastCompleted ? "chatted" : (turn.status === "failed" ? norm.state : "chatting"),
+      response_message: lastCompleted ? "这句已经记下，后面会更会试探。" : (turn.status === "failed" ? "这句还没发出去，稍后再试。" : norm.response_message),
+      chat_reply: lastCompleted ? (turn.reply || "") : norm.chat_reply,
+    };
+  });
+  patchState({ activeDelights: updated });
+  rerenderDelightOnly();
+}
+
+/** Send a chat message for a delight inline chat turn. */
+async function sendDelightChat(d, message) {
+  const turnId = createClientTurnId("delight");
+  const userTurn = { turn_id: turnId, message, reply: "", status: "pending", error: "" };
+
+  // Optimistically append user+pending turn
+  const updated = state.activeDelights.map((item) => {
+    const norm = normalizeDelightCandidate(item);
+    if (norm.bvid !== d.bvid) return item;
+    return {
+      ...item,
+      turns: [...norm.turns, userTurn],
+      draft: "",
+      state: "chatting",
+      response_message: "阿B 正在品你这句话。",
+      chat_turn_id: turnId,
+    };
+  });
+  patchState({ activeDelights: updated });
+  rerenderDelightOnly();
+
+  try {
+    const turn = await startChatTurn({
+      turnId,
+      ...getMobileChatSession("delight"),
+      subjectId: d.bvid,
+      subjectTitle: d.title,
+      message,
+    });
+    if (turn.status === "completed" || turn.status === "failed") {
+      applyTurnResult(d.bvid, turnId, turn);
+    } else {
+      pollDelightTurn(turnId, d.bvid);
+    }
+  } catch {
+    // Mark the turn as failed locally
+    applyTurnResult(d.bvid, turnId, { reply: "", status: "failed", error: "网络错误" });
+  }
+}
+
 // ── Delight Tray ─────────────────────────────────────────────
 function renderDelightTray() {
   const delights = state.activeDelights;
@@ -282,6 +382,7 @@ function renderDelightTray() {
     tray.innerHTML += `<div class="delight-result-state" data-tone="${esc(uiState.response_tone)}">${esc(uiState.response_message)}</div>`;
   } else {
     // Action buttons
+    const isChatState = d.state === "chatted" || d.state === "chatting";
     const actions = document.createElement("div");
     actions.className = "delight-actions";
     const btns = [
@@ -295,9 +396,83 @@ function renderDelightTray() {
       btn.className = `btn ${b.action === "view" ? "btn-brand" : "btn-outline"}`;
       btn.textContent = b.label;
       btn.addEventListener("click", () => handleDelightAction(d, b.action));
+      if (isChatState && (b.action === "like" || b.action === "reject")) {
+        btn.disabled = true;
+      }
       actions.appendChild(btn);
     }
     tray.appendChild(actions);
+  }
+
+  // ── Chat bubbles (turns history) ────────────────────────────
+  const turns = d.turns || [];
+  if (turns.length > 0) {
+    const bubbleArea = document.createElement("div");
+    bubbleArea.className = "delight-chat-area";
+    for (const t of turns) {
+      // User bubble
+      const userBubble = document.createElement("div");
+      userBubble.className = "delight-chat-bubble user";
+      userBubble.textContent = t.message;
+      bubbleArea.appendChild(userBubble);
+      // AI bubble
+      const aiBubble = document.createElement("div");
+      if (t.status === "pending") {
+        aiBubble.className = "delight-chat-bubble assistant thinking";
+        aiBubble.textContent = "阿B 正在品你这句话…";
+      } else if (t.status === "failed") {
+        aiBubble.className = "delight-chat-bubble assistant error";
+        aiBubble.textContent = t.error || "这句还没发出去，稍后再试。";
+      } else {
+        aiBubble.className = "delight-chat-bubble assistant";
+        aiBubble.textContent = t.reply || "";
+      }
+      bubbleArea.appendChild(aiBubble);
+    }
+    tray.appendChild(bubbleArea);
+  }
+
+  // ── Inline composer ─────────────────────────────────────────
+  if (d.composer_open) {
+    const composer = document.createElement("div");
+    composer.className = "delight-composer";
+
+    const input = document.createElement("textarea");
+    input.className = "delight-composer-input";
+    input.rows = 2;
+    input.placeholder = "\u804A\u804A\u8FD9\u6761\u63A8\u8350\u2026";
+    input.value = d.draft || "";
+    input.addEventListener("input", () => {
+      // Save draft in-place without re-rendering
+      const cur = state.activeDelights[state.delightCurrentIndex];
+      if (cur && normalizeDelightCandidate(cur).bvid === d.bvid) {
+        cur.draft = input.value;
+      }
+    });
+
+    const sendBtn = document.createElement("button");
+    sendBtn.className = "btn btn-brand delight-composer-send";
+    sendBtn.textContent = "\u53D1\u51FA\u53BB";
+    sendBtn.addEventListener("click", () => {
+      const text = input.value.trim();
+      if (!text) { input.focus(); return; }
+      sendDelightChat(d, text);
+    });
+
+    // Allow Enter to send (Shift+Enter for newline)
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendBtn.click();
+      }
+    });
+
+    composer.appendChild(input);
+    composer.appendChild(sendBtn);
+    tray.appendChild(composer);
+
+    // Focus the textarea after DOM insertion
+    requestAnimationFrame(() => input.focus());
   }
 
   tray.querySelector("#delight-later")?.addEventListener("click", () => {
@@ -335,12 +510,16 @@ async function handleDelightAction(d, action) {
   const { apiResponse, uiState, permanent } = getDelightActionState(action);
 
   if (action === "chat") {
-    const { startContextualChat } = await import("./chat.js");
-    startContextualChat({
-      scope: "delight",
-      subjectId: d.bvid,
-      subjectTitle: d.title,
+    // Toggle inline composer on the delight — never navigate to chat tab.
+    const updated = state.activeDelights.map((item) => {
+      const norm = normalizeDelightCandidate(item);
+      if (norm.bvid === d.bvid) {
+        return { ...item, composer_open: !norm.composer_open };
+      }
+      return item;
     });
+    patchState({ activeDelights: updated });
+    rerenderDelightOnly();
     return;
   }
 
@@ -579,14 +758,33 @@ async function handleReshuffle() {
 async function handleAppend() {
   if (loading) return;
   loading = true;
-  render();
+
+  // Disable the button inline instead of full re-render.
+  const loadMoreRow = $root.querySelector(".load-more-row");
+  const appendBtnEl = loadMoreRow?.querySelector("button");
+  if (appendBtnEl) { appendBtnEl.disabled = true; appendBtnEl.textContent = "\u52A0\u8F7D\u4E2D\u2026"; }
+
   try {
     const existing = state.recommendations.map((i) => i.bvid).filter(Boolean);
     const result = await appendRecommendations(existing);
-    patchState({ recommendations: [...state.recommendations, ...(result.items || []).map(normalizeRecommendation).filter((item) => !isFeedbackedRecommendation(item))] });
+    const newItems = (result.items || []).map(normalizeRecommendation).filter((item) => !isFeedbackedRecommendation(item));
+    patchState({ recommendations: [...state.recommendations, ...newItems] });
+
+    // Append new cards before the load-more row without rebuilding existing ones.
+    if (loadMoreRow) {
+      for (const item of newItems) {
+        $root.insertBefore(renderCard(item), loadMoreRow);
+      }
+    }
   } catch { /* ignore */ }
+
   loading = false;
-  render();
+  // Restore button state.
+  if (appendBtnEl) {
+    appendBtnEl.disabled = false;
+    const headerState = getMobileRecommendationHeaderState();
+    appendBtnEl.textContent = headerState.secondaryActionLabel;
+  }
 }
 
 // ── Pull-to-Refresh ──────────────────────────────────────────
@@ -620,13 +818,72 @@ function initPullRefresh() {
   }, { passive: true });
 }
 
+// ── Delight Chat Hydration ───────────────────────────────────
+/** Fetch durable delight turns and backfill into each delight's turns array. */
+async function hydrateDelightTurns() {
+  try {
+    const payload = await fetchChatTurns({ ...getMobileChatSession("delight"), limit: 200 });
+    const items = payload.items || [];
+    if (items.length === 0) return;
+
+    // Group turns by subject_id (bvid)
+    const byBvid = new Map();
+    for (const turn of items) {
+      if (!turn.subject_id) continue;
+      let arr = byBvid.get(turn.subject_id);
+      if (!arr) { arr = []; byBvid.set(turn.subject_id, arr); }
+      arr.push({
+        turn_id: turn.turn_id,
+        message: turn.message || "",
+        reply: turn.reply || "",
+        status: turn.status || "pending",
+        error: turn.error || "",
+      });
+    }
+
+    // Merge into existing delights
+    let changed = false;
+    const updated = state.activeDelights.map((item) => {
+      const norm = normalizeDelightCandidate(item);
+      const serverTurns = byBvid.get(norm.bvid);
+      if (!serverTurns) return item;
+      changed = true;
+      // Merge: keep local turns that aren't on server yet, then overlay server data
+      const localIds = new Set((norm.turns || []).map((t) => t.turn_id));
+      const merged = serverTurns.map((st) => {
+        const local = (norm.turns || []).find((t) => t.turn_id === st.turn_id);
+        return local ? { ...local, ...st } : st;
+      });
+      // Append any local-only turns (optimistic sends not yet on server)
+      for (const lt of (norm.turns || [])) {
+        if (!serverTurns.some((st) => st.turn_id === lt.turn_id)) merged.push(lt);
+      }
+      const lastTurn = merged[merged.length - 1];
+      const lastReply = lastTurn?.status === "completed" ? lastTurn.reply : norm.chat_reply;
+      return { ...item, turns: merged, chat_reply: lastReply || norm.chat_reply };
+    });
+
+    if (changed) {
+      patchState({ activeDelights: updated });
+      rerenderDelightOnly();
+    }
+
+    // Resume polling for any pending turns
+    for (const turn of items) {
+      if (turn.status === "pending" && turn.subject_id) {
+        pollDelightTurn(turn.turn_id, turn.subject_id);
+      }
+    }
+  } catch { /* best-effort hydration */ }
+}
+
 // ── Load ─────────────────────────────────────────────────────
 async function loadData() {
   loading = true;
   render();
   try {
     const [recs, status, delights, activity] = await Promise.all([
-      fetchRecommendations(),
+      reshuffleRecommendations().then((r) => r.items || []).catch(() => fetchRecommendations()),
       fetchRuntimeStatus().catch(() => null),
       fetchDelightBatch().catch(() => []),
       fetchActivityFeed({ limit: 5 }).catch(() => null),
@@ -648,6 +905,8 @@ async function loadData() {
   } catch { /* ignore */ }
   loading = false;
   render();
+  // Hydrate durable delight chat turns after initial render
+  hydrateDelightTurns();
 }
 
 // ── Public API ───────────────────────────────────────────────

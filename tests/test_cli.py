@@ -2146,7 +2146,7 @@ def test_init_guides_missing_runtime_config_interactively(
     #   1. menu choice: "gemini"
     #   2. API key
     #   3. model (accept default)
-    #   4. embedding choice "1" (follow primary)
+    #   4. embedding choice "3" (disable embedding; avoids host-dependent Ollama prompts)
     #   5. "n" — skip module overrides
     #   6. "y" — allow LAN access
     #   7-8. "" — accept Bili favorite/follow init limits
@@ -2157,7 +2157,7 @@ def test_init_guides_missing_runtime_config_interactively(
                 "gemini",
                 "gemini-key",
                 "",
-                "1",
+                    "3",
                 "n",
                 "y",
                 "",
@@ -2281,6 +2281,7 @@ def test_init_reports_when_history_is_empty(
             return []
 
     _ignore_runtime_config_error(monkeypatch)
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: False, raising=False)
     monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
     monkeypatch.setattr(cli_module, "_build_auth_manager", lambda: FakeAuthManager(), raising=False)
     monkeypatch.setattr(
@@ -2394,6 +2395,7 @@ def test_init_runs_history_preference_profile_and_discovery(
         {"count_pool_candidates": lambda self: 0},
     )()
     _ignore_runtime_config_error(monkeypatch)
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: False, raising=False)
     monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
     monkeypatch.setattr(cli_module, "_build_auth_manager", lambda: FakeAuthManager(), raising=False)
     monkeypatch.setattr(
@@ -2463,8 +2465,19 @@ def test_init_caps_bilibili_favorites_and_following_at_300(
             users = [
                 SimpleNamespace(uname=f"关注用户 {idx}", sign=f"签名 {idx}")
                 for idx in range(start, min(start + page_size, 350))
-            ]
+                ]
             return users
+
+    class FakeAuthManager:
+        async def get_status(self) -> AuthStatus:
+            return AuthStatus(
+                has_cookie=True,
+                authenticated=True,
+                cookie_path=tmp_path / "bilibili_cookie.json",
+                username="alice",
+                user_id=10086,
+                message="Cookie 验证成功。",
+            )
 
     class FakeMemoryManager:
         def __init__(self) -> None:
@@ -2503,7 +2516,9 @@ def test_init_caps_bilibili_favorites_and_following_at_300(
         return 0
 
     _ignore_runtime_config_error(monkeypatch)
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: False, raising=False)
     monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(cli_module, "_build_auth_manager", lambda: FakeAuthManager())
     monkeypatch.setattr(cli_module, "_build_bilibili_client", lambda: FakeBilibiliClient())
     monkeypatch.setattr(cli_module, "_build_memory_manager", lambda: fake_memory)
     monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: fake_soul)
@@ -2560,6 +2575,17 @@ def test_init_accepts_custom_bilibili_favorites_and_following_limits(
                 for idx in range(start, min(start + page_size, 5))
             ]
 
+    class FakeAuthManager:
+        async def get_status(self) -> AuthStatus:
+            return AuthStatus(
+                has_cookie=True,
+                authenticated=True,
+                cookie_path=tmp_path / "bilibili_cookie.json",
+                username="alice",
+                user_id=10086,
+                message="Cookie 验证成功。",
+            )
+
     class FakeMemoryManager:
         def __init__(self) -> None:
             self.events: list[dict[str, object]] = []
@@ -2595,7 +2621,9 @@ def test_init_accepts_custom_bilibili_favorites_and_following_limits(
         return 0
 
     _ignore_runtime_config_error(monkeypatch)
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: False, raising=False)
     monkeypatch.setattr(cli_module, "_require_runtime_config", lambda: None)
+    monkeypatch.setattr(cli_module, "_build_auth_manager", lambda: FakeAuthManager())
     monkeypatch.setattr(cli_module, "_build_bilibili_client", lambda: FakeBilibiliClient())
     monkeypatch.setattr(cli_module, "_build_memory_manager", lambda: fake_memory)
     monkeypatch.setattr(cli_module, "_build_soul_engine", lambda: fake_soul)
