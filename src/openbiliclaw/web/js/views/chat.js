@@ -301,7 +301,11 @@ function renderOverlay() {
   const closeBtn = document.createElement("button");
   closeBtn.className = "messages-close";
   closeBtn.textContent = "\u2715";
-  closeBtn.addEventListener("click", toggleMessages);
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    overlayOpen = false;
+    renderOverlay();
+  });
   header.appendChild(closeBtn);
   panel.appendChild(header);
 
