@@ -252,8 +252,10 @@ class AvoidanceNoveltyGuard:
             if str(item.get("response", "")).lower() not in DENYING_AVOIDANCE_RESPONSES:
                 continue
             add_term(item.get("domain", ""))
-            for specific in item.get("specifics", []) or []:
-                add_term(specific)
+            raw_specifics = item.get("specifics", [])
+            if isinstance(raw_specifics, list):
+                for specific in raw_specifics:
+                    add_term(specific)
 
         return cls(exact_terms=exact_terms, fuzzy_terms=fuzzy_terms)
 
@@ -344,13 +346,13 @@ def expire_stale_avoidances(
     state.active = remaining
 
     valid_cooldown: list[AvoidanceCooldownEntry] = []
-    for item in state.cooldown:
+    for cooldown in state.cooldown:
         try:
-            cooldown_until = datetime.fromisoformat(item.cooldown_until)
+            cooldown_until = datetime.fromisoformat(cooldown.cooldown_until)
         except (TypeError, ValueError):
             continue
         if now <= cooldown_until:
-            valid_cooldown.append(item)
+            valid_cooldown.append(cooldown)
     state.cooldown = valid_cooldown
     return rejected, state
 
@@ -490,7 +492,7 @@ class AvoidanceSpeculator:
     def __init__(
         self,
         *,
-        llm_service: object | None,
+        llm_service: Any | None,
         data_dir: Path | None,
         generation_interval_minutes: int = 10,
         default_ttl_days: int = 3,
@@ -654,6 +656,10 @@ class AvoidanceSpeculator:
     ) -> AvoidanceState:
         from openbiliclaw.llm.prompts import build_avoidance_generation_prompt
 
+        llm_service = self._llm_service
+        if llm_service is None:
+            return state
+
         slots = self._max_active - sum(1 for item in state.active if item.status == "active")
         if slots <= 0:
             return state
@@ -682,7 +688,7 @@ class AvoidanceSpeculator:
         )
 
         try:
-            response = await self._llm_service.complete_structured_task(
+            response = await llm_service.complete_structured_task(
                 system_instruction=messages[0]["content"],
                 user_input=messages[1]["content"],
                 max_tokens=DEFAULT_STRUCTURED_MAX_TOKENS,
