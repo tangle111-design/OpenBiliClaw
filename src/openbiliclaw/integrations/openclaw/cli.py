@@ -171,12 +171,12 @@ async def _run_command(args: argparse.Namespace, adapter: Any) -> dict[str, obje
         elif args.command == "next-avoidance-probe":
             result = await adapter.get_next_avoidance_probe()
         elif args.command == "respond-avoidance-probe":
-            request = AvoidanceProbeFeedbackRequest(
+            avoidance_request = AvoidanceProbeFeedbackRequest(
                 domain=args.domain,
                 response=args.response,
                 message=args.message,
             )
-            result = await adapter.respond_avoidance_probe(request)
+            result = await adapter.respond_avoidance_probe(avoidance_request)
         else:  # pragma: no cover - argparse guarantees command validity
             raise AdapterValidationError(f"Unsupported command: {args.command}")
     except AdapterValidationError as exc:

@@ -51,9 +51,9 @@ def merge_new_dislikes_into_preference(
 
 async def purge_pool_for_new_dislikes(
     *,
-    database: object | None,
-    embedding_service: object | None,
-    llm_service: object | None,
+    database: Any | None,
+    embedding_service: Any | None,
+    llm_service: Any | None,
     newly_added: Sequence[str],
     all_dislikes: Sequence[str],
 ) -> list[str]:
@@ -111,9 +111,9 @@ async def purge_pool_for_new_dislikes(
 async def apply_new_dislikes(
     *,
     memory: MemoryManager,
-    database: object | None,
-    embedding_service: object | None,
-    llm_service: object | None,
+    database: Any | None,
+    embedding_service: Any | None,
+    llm_service: Any | None,
     topics: Sequence[str],
 ) -> list[str]:
     """Add disliked topics, sync profile files, and purge matching pool content."""
