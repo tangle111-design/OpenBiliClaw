@@ -40,6 +40,7 @@ import {
   getSourceLabel,
   formatRelativeTimestamp,
   getMobileChatSession,
+  shouldAutoAppendRecommendations,
 } from "../view-models.js";
 
 let $root = null;
@@ -58,6 +59,9 @@ const warmingImages = new Map();
 let autoAppendObserver = null;
 let scrollPreheatObserver = null;
 let autoAppendExhausted = false;
+let autoAppendUserArmed = false;
+let autoAppendTouchY = null;
+let autoAppendIntentInitialized = false;
 const RECOMMENDATION_ITEMS_REFRESH_DEBOUNCE_MS = 1000;
 let recommendationItemsRefreshTimer = null;
 let recommendationItemsRefreshInFlight = false;
@@ -687,7 +691,13 @@ function observeAutoAppendSentinel() {
 
   autoAppendObserver = new IntersectionObserver((entries) => {
     if (!entries.some((entry) => entry.isIntersecting)) return;
-    if (loading || autoAppendExhausted || state.activeTab !== "recommend") return;
+    if (!shouldAutoAppendRecommendations({
+      loading,
+      autoAppendExhausted,
+      activeTab: state.activeTab,
+      userArmed: autoAppendUserArmed,
+    })) return;
+    autoAppendUserArmed = false;
     handleAppend();
   }, {
     root: document.getElementById("app"),
@@ -695,6 +705,45 @@ function observeAutoAppendSentinel() {
     threshold: 0,
   });
   autoAppendObserver.observe(loadMoreRow);
+}
+
+function resetAutoAppendIntent() {
+  autoAppendUserArmed = false;
+  autoAppendTouchY = null;
+}
+
+function armAutoAppendIntent() {
+  if (state.activeTab !== "recommend") return;
+  autoAppendUserArmed = true;
+}
+
+function initAutoAppendIntent() {
+  if (autoAppendIntentInitialized) return;
+  const container = document.getElementById("app");
+  if (!container) return;
+  autoAppendIntentInitialized = true;
+
+  container.addEventListener("wheel", (event) => {
+    if (event.deltaY > 0) armAutoAppendIntent();
+  }, { passive: true });
+
+  container.addEventListener("touchstart", (event) => {
+    autoAppendTouchY = event.touches?.[0]?.clientY ?? null;
+  }, { passive: true });
+
+  container.addEventListener("touchmove", (event) => {
+    const y = event.touches?.[0]?.clientY ?? null;
+    if (autoAppendTouchY !== null && y !== null && autoAppendTouchY - y > 12) {
+      armAutoAppendIntent();
+    }
+    autoAppendTouchY = y;
+  }, { passive: true });
+
+  window.addEventListener("keydown", (event) => {
+    if (["ArrowDown", "PageDown", "End", " "].includes(event.key)) {
+      armAutoAppendIntent();
+    }
+  }, { passive: true });
 }
 
 // ── Recommendation Card ──────────────────────────────────────
@@ -872,6 +921,7 @@ function renderFeedbackSheet() {
 async function handleReshuffle() {
   if (loading) return;
   loading = true;
+  resetAutoAppendIntent();
   render();
   try {
     const result = await reshuffleRecommendations();
@@ -1033,6 +1083,7 @@ async function loadData() {
     ]);
     const normalizedRecs = recs.map(normalizeRecommendation);
     autoAppendExhausted = false;
+    resetAutoAppendIntent();
     // Restore feedback state from backend so it survives page refresh.
     rememberRecommendationFeedback(normalizedRecs);
     patchState({
@@ -1071,6 +1122,7 @@ async function runScheduledRecommendationItemsRefresh() {
     const normalizedRecs = recs.map(normalizeRecommendation);
     rememberRecommendationFeedback(normalizedRecs);
     autoAppendExhausted = false;
+    resetAutoAppendIntent();
     patchState({ recommendations: normalizedRecs });
     render();
   } catch { /* best-effort live refresh */ }
@@ -1089,6 +1141,7 @@ export function initRecommendView(root) {
   if (!loaded) {
     loaded = true;
     initPullRefresh();
+    initAutoAppendIntent();
     loadData();
   }
   // Tab switch back: don't refetch — just re-render with existing state.

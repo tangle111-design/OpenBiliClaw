@@ -97,6 +97,20 @@ export function getRecommendationImageLoadingAttrs(
   return { loading: "lazy", fetchPriority: "auto" };
 }
 
+export function shouldAutoAppendRecommendations({
+  loading = false,
+  autoAppendExhausted = false,
+  activeTab = "recommend",
+  userArmed = false,
+} = {}) {
+  return Boolean(
+    userArmed &&
+      !loading &&
+      !autoAppendExhausted &&
+      activeTab === "recommend",
+  );
+}
+
 // ── Source Platform ──────────────────────────────────────────
 
 const SOURCE_LABEL_MAP = {

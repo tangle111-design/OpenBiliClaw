@@ -22,6 +22,7 @@ import {
   mergeDelightCandidate,
   normalizeActivityFeed,
   normalizeProfileSummary,
+  shouldAutoLoadRecommendations,
   shouldFetchProfileSummary,
   shouldSubmitChatOnEnter,
   validateCommentInput,
@@ -191,6 +192,9 @@ async function setProxyImageSrc(image, coverUrl) {
 }
 
 let recommendationLoadCheckTimer = null;
+let recommendationAutoLoadUserArmed = false;
+let recommendationAutoLoadTouchY = null;
+let recommendationAutoLoadIntentInitialized = false;
 let runtimeStreamClient = null;
 const CHAT_SESSION = "popup";
 const CHAT_POLL_INTERVAL_MS = 1200;
@@ -298,6 +302,64 @@ function queueRecommendationLoadCheck() {
     recommendationLoadCheckTimer = null;
     maybeLoadMoreRecommendations();
   }, 0);
+}
+
+function resetRecommendationAutoLoadIntent() {
+  recommendationAutoLoadUserArmed = false;
+  recommendationAutoLoadTouchY = null;
+}
+
+function armRecommendationAutoLoadIntent() {
+  if (state.activeTab === "recommend") {
+    recommendationAutoLoadUserArmed = true;
+  }
+}
+
+function initRecommendationAutoLoadIntent() {
+  if (recommendationAutoLoadIntentInitialized) {
+    return;
+  }
+  recommendationAutoLoadIntentInitialized = true;
+
+  if (elements.content instanceof HTMLElement) {
+    elements.content.addEventListener(
+      "wheel",
+      (event) => {
+        if (event.deltaY > 0) {
+          armRecommendationAutoLoadIntent();
+        }
+      },
+      { passive: true },
+    );
+    elements.content.addEventListener(
+      "touchstart",
+      (event) => {
+        recommendationAutoLoadTouchY = event.touches?.[0]?.clientY ?? null;
+      },
+      { passive: true },
+    );
+    elements.content.addEventListener(
+      "touchmove",
+      (event) => {
+        const nextY = event.touches?.[0]?.clientY ?? null;
+        if (
+          recommendationAutoLoadTouchY !== null &&
+          nextY !== null &&
+          recommendationAutoLoadTouchY - nextY > 12
+        ) {
+          armRecommendationAutoLoadIntent();
+        }
+        recommendationAutoLoadTouchY = nextY;
+      },
+      { passive: true },
+    );
+  }
+
+  window.addEventListener("keydown", (event) => {
+    if (["ArrowDown", "PageDown", "End", " "].includes(event.key)) {
+      armRecommendationAutoLoadIntent();
+    }
+  });
 }
 
 function setActiveTab(tabName) {
@@ -3583,17 +3645,21 @@ async function loadMoreRecommendations() {
 
 function maybeLoadMoreRecommendations() {
   if (
-    state.activeTab !== "recommend" ||
     !(elements.content instanceof HTMLElement) ||
     elements.viewRecommend.hidden ||
-    state.loadingMore ||
-    !state.hasMoreRecommendations
+    !shouldAutoLoadRecommendations({
+      activeTab: state.activeTab,
+      loadingMore: state.loadingMore,
+      hasMoreRecommendations: state.hasMoreRecommendations,
+      userArmed: recommendationAutoLoadUserArmed,
+    })
   ) {
     return;
   }
 
   const remaining = elements.content.scrollHeight - elements.content.scrollTop - elements.content.clientHeight;
   if (remaining <= 96) {
+    recommendationAutoLoadUserArmed = false;
     void loadMoreRecommendations();
   }
 }
@@ -3887,6 +3953,7 @@ async function initializeRecommendations() {
   await loadActivityFeed();
 
   if (recommendationResult.status === "fulfilled") {
+    resetRecommendationAutoLoadIntent();
     state.recommendations = recommendationResult.value;
     state.loadingMore = false;
     state.hasMoreRecommendations = state.recommendations.length >= 10;
@@ -3921,6 +3988,7 @@ async function handleManualRefresh() {
       setHint("先执行 openbiliclaw init，再回来刷新。", "error");
       return;
     }
+    resetRecommendationAutoLoadIntent();
     state.recommendations = result.items;
     state.loadingMore = false;
     state.hasMoreRecommendations = result.items.length >= 10;
@@ -4843,6 +4911,7 @@ async function initializePopup() {
   state.delightHighlightBvid = params.get("delight")?.trim() || "";
   bindTabs();
   bindProfileHistoryLoading();
+  initRecommendationAutoLoadIntent();
   bindRefreshButton();
   bindActivityToggle();
   bindChat();

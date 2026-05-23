@@ -110,6 +110,7 @@ class TestMobileWebViewModels:
               "getPoolStatusSummary", "normalizeRuntimeStatus", "mergeRuntimeStatusEvent",
               "getReadyRecommendationHint",
               "getRecommendationCoverPreloadUrls", "getRecommendationImageLoadingAttrs",
+              "shouldAutoAppendRecommendations",
               "formatRelativeTimestamp",
               "normalizeSourcePlatform", "getSourceLabel",
               "normalizeCoverUrl", "getCoverImageAttrs",
@@ -205,6 +206,64 @@ class TestMobileWebViewModels:
         assert "observeAutoAppendSentinel" in recommend_js
         assert ".load-more-row" in recommend_js
         assert "handleAppend();" in recommend_js
+        assert "shouldAutoAppendRecommendations" in recommend_js
+        assert "autoAppendUserArmed" in recommend_js
+
+    def test_mobile_auto_append_requires_user_scroll_intent(self) -> None:
+        _assert_js(
+            dedent("""
+            import assert from "node:assert/strict";
+            import {
+              shouldAutoAppendRecommendations,
+            } from "./src/openbiliclaw/web/js/view-models.js";
+
+            assert.equal(
+              shouldAutoAppendRecommendations({
+                loading: false,
+                autoAppendExhausted: false,
+                activeTab: "recommend",
+                userArmed: false,
+              }),
+              false,
+            );
+            assert.equal(
+              shouldAutoAppendRecommendations({
+                loading: false,
+                autoAppendExhausted: false,
+                activeTab: "recommend",
+                userArmed: true,
+              }),
+              true,
+            );
+            assert.equal(
+              shouldAutoAppendRecommendations({
+                loading: true,
+                autoAppendExhausted: false,
+                activeTab: "recommend",
+                userArmed: true,
+              }),
+              false,
+            );
+            assert.equal(
+              shouldAutoAppendRecommendations({
+                loading: false,
+                autoAppendExhausted: true,
+                activeTab: "recommend",
+                userArmed: true,
+              }),
+              false,
+            );
+            assert.equal(
+              shouldAutoAppendRecommendations({
+                loading: false,
+                autoAppendExhausted: false,
+                activeTab: "profile",
+                userArmed: true,
+              }),
+              false,
+            );
+        """)
+        )
 
     def test_normalize_recommendation_defaults(self) -> None:
         _assert_js(
