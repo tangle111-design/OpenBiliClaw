@@ -8,9 +8,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from openbiliclaw.llm.json_utils import DEFAULT_STRUCTURED_MAX_TOKENS, parse_llm_json_tolerant
 from openbiliclaw.soul.speculator import (
     _build_event_text,
+    _has_probe_term_overlap,
+    _normalize_entry_load,
+    _normalize_experience_mode,
+    _normalize_probe_term,
     _text_matches_keywords,
+    build_probe_axis,
+    normalize_probe_feedback_history,
 )
 
 if TYPE_CHECKING:
@@ -19,6 +26,10 @@ if TYPE_CHECKING:
     from openbiliclaw.soul.profile import OnionProfile
 
 logger = logging.getLogger(__name__)
+
+
+DENYING_AVOIDANCE_RESPONSES = {"reject", "chat_negative"}
+CONFIRMING_AVOIDANCE_RESPONSES = {"confirm", "chat_positive"}
 
 
 @dataclass
@@ -184,6 +195,77 @@ class AvoidanceTickResult:
     observed_matches: int = 0
 
 
+@dataclass
+class AvoidanceNoveltyGuard:
+    """Local duplicate guard for speculative avoidance probes."""
+
+    exact_terms: set[str] = field(default_factory=set)
+    fuzzy_terms: set[str] = field(default_factory=set)
+
+    @classmethod
+    def from_profile_and_state(
+        cls,
+        profile: OnionProfile | None,
+        state: AvoidanceState,
+        *,
+        probed_domains: set[str] | None = None,
+        feedback_history: object | None = None,
+    ) -> AvoidanceNoveltyGuard:
+        exact_terms: set[str] = set()
+        fuzzy_terms: set[str] = set()
+
+        def add_term(value: object, *, fuzzy: bool = True) -> None:
+            text = str(value or "").strip()
+            normalized = _normalize_probe_term(text)
+            if not normalized:
+                return
+            exact_terms.add(normalized)
+            if fuzzy:
+                fuzzy_terms.add(text)
+
+        if profile is not None:
+            interest = getattr(profile, "interest", None)
+            for item in getattr(interest, "dislikes", []) or []:
+                add_term(getattr(item, "domain", ""))
+                for specific in getattr(item, "specifics", []) or []:
+                    add_term(getattr(specific, "name", ""))
+            for item in getattr(interest, "likes", []) or []:
+                weight = float(getattr(item, "weight", 0.0) or 0.0)
+                if weight < 0.7:
+                    continue
+                add_term(getattr(item, "domain", ""))
+                for specific in getattr(item, "specifics", []) or []:
+                    add_term(getattr(specific, "name", ""))
+            preferences = getattr(profile, "preferences", None)
+            for item in getattr(preferences, "disliked_topics", []) or []:
+                add_term(item)
+
+        for item in state.active:
+            add_term(item.domain)
+            for specific in item.specifics:
+                add_term(specific.name)
+        for item in state.cooldown:
+            add_term(item.domain)
+        for item in probed_domains or set():
+            add_term(item)
+        for item in normalize_probe_feedback_history(feedback_history):
+            if str(item.get("response", "")).lower() not in DENYING_AVOIDANCE_RESPONSES:
+                continue
+            add_term(item.get("domain", ""))
+            for specific in item.get("specifics", []) or []:
+                add_term(specific)
+
+        return cls(exact_terms=exact_terms, fuzzy_terms=fuzzy_terms)
+
+    def is_duplicate_domain(self, domain: str) -> bool:
+        normalized = _normalize_probe_term(domain)
+        if not normalized:
+            return True
+        if normalized in self.exact_terms:
+            return True
+        return any(_has_probe_term_overlap(domain, term) for term in self.fuzzy_terms)
+
+
 def load_avoidance_state(data_dir: Path) -> AvoidanceState:
     """Load avoidance state from disk."""
     path = data_dir / "memory" / "avoidance_state.json"
@@ -207,7 +289,9 @@ def save_avoidance_state(data_dir: Path, state: AvoidanceState) -> None:
         json.dump(state.to_dict(), file, ensure_ascii=False, indent=2)
 
 
-def promote_ready_avoidances(state: AvoidanceState) -> tuple[list[SpeculativeAvoidance], AvoidanceState]:
+def promote_ready_avoidances(
+    state: AvoidanceState,
+) -> tuple[list[SpeculativeAvoidance], AvoidanceState]:
     """Extract avoidance candidates that are ready for external writeback."""
     promoted: list[SpeculativeAvoidance] = []
     remaining: list[SpeculativeAvoidance] = []
@@ -314,6 +398,92 @@ def observe_avoidance_events(
     return state, match_count
 
 
+def _denied_avoidance_domains(feedback_history: object) -> list[str]:
+    return [
+        str(item.get("domain", ""))
+        for item in normalize_probe_feedback_history(feedback_history)
+        if str(item.get("response", "")).lower() in DENYING_AVOIDANCE_RESPONSES
+        and str(item.get("domain", "")).strip()
+    ]
+
+
+def _denied_avoidance_axes(feedback_history: object) -> set[str]:
+    return {
+        str(item.get("axis", "")).strip()
+        for item in normalize_probe_feedback_history(feedback_history)
+        if str(item.get("response", "")).lower() in DENYING_AVOIDANCE_RESPONSES
+        and str(item.get("axis", "")).strip()
+    }
+
+
+def choose_next_avoidance_candidate(
+    avoidances: list[Any],
+    *,
+    probed_domains: set[str] | None = None,
+    probed_axes: set[str] | None = None,
+    feedback_history: object | None = None,
+) -> Any | None:
+    """Choose the next avoidance probe to surface."""
+    recent_domains = probed_domains or set()
+    recent_axes = probed_axes or set()
+    denied_domains = _denied_avoidance_domains(feedback_history)
+    denied_axes = _denied_avoidance_axes(feedback_history)
+    candidates: list[Any] = []
+    for item in avoidances:
+        domain = str(getattr(item, "domain", "")).strip().lower()
+        if not domain or domain in recent_domains:
+            continue
+        if any(_has_probe_term_overlap(domain, denied) for denied in denied_domains):
+            continue
+        candidates.append(item)
+    if not candidates:
+        return None
+
+    min_confirmation = min(int(getattr(item, "confirmation_count", 0) or 0) for item in candidates)
+    same_pressure = [
+        item
+        for item in candidates
+        if int(getattr(item, "confirmation_count", 0) or 0) == min_confirmation
+    ]
+    fresh_axis = [
+        item
+        for item in same_pressure
+        if (
+            axis := build_probe_axis(
+                experience_mode=getattr(item, "experience_mode", ""),
+                entry_load=getattr(item, "entry_load", ""),
+            )
+        )
+        and axis not in recent_axes
+    ]
+    pool = fresh_axis or same_pressure
+    return max(
+        pool,
+        key=lambda item: (
+            build_probe_axis(
+                experience_mode=getattr(item, "experience_mode", ""),
+                entry_load=getattr(item, "entry_load", ""),
+            )
+            not in denied_axes,
+            float(getattr(item, "weight", 0.0) or 0.0),
+            float(getattr(item, "confidence", 0.0) or 0.0),
+        ),
+    )
+
+
+def _parse_avoidance_generation_response(content: str) -> list[dict[str, Any]]:
+    """Extract avoidance candidates from an LLM response."""
+    data = parse_llm_json_tolerant(content)
+    if isinstance(data, dict):
+        avoidances = data.get("avoidances", [])
+        if isinstance(avoidances, list):
+            return [item for item in avoidances if isinstance(item, dict)]
+        return []
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    return []
+
+
 class AvoidanceSpeculator:
     """IO boundary for speculative avoidance lifecycle state."""
 
@@ -372,6 +542,15 @@ class AvoidanceSpeculator:
         promoted, state = promote_ready_avoidances(state)
         result.promoted = promoted
 
+        if self._should_generate(state, now):
+            pre_active_domains = {item.domain for item in state.active if item.status == "active"}
+            state = await self._generate(profile, state, now, feedback_history=feedback_history)
+            result.generated = [
+                item
+                for item in state.active
+                if item.status == "active" and item.domain not in pre_active_domains
+            ]
+
         self._save_state(state)
         return result
 
@@ -381,4 +560,142 @@ class AvoidanceSpeculator:
         *,
         feedback_history: object | None = None,
     ) -> AvoidanceTickResult:
-        return await self.tick(profile, feedback_history=feedback_history)
+        now = datetime.now()
+        state = self._load_state()
+        result = AvoidanceTickResult()
+
+        rejected, state = expire_stale_avoidances(state, now, self._cooldown_days)
+        result.rejected = rejected
+        promoted, state = promote_ready_avoidances(state)
+        result.promoted = promoted
+
+        active_count = sum(1 for item in state.active if item.status == "active")
+        if active_count < self._max_active and self._llm_service is not None:
+            pre_active_domains = {item.domain for item in state.active if item.status == "active"}
+            state = await self._generate(profile, state, now, feedback_history=feedback_history)
+            result.generated = [
+                item
+                for item in state.active
+                if item.status == "active" and item.domain not in pre_active_domains
+            ]
+
+        self._save_state(state)
+        return result
+
+    def _should_generate(self, state: AvoidanceState, now: datetime) -> bool:
+        if self._llm_service is None:
+            return False
+        if sum(1 for item in state.active if item.status == "active") >= self._max_active:
+            return False
+        if not state.last_generation_at:
+            return True
+        try:
+            last = datetime.fromisoformat(state.last_generation_at)
+        except (TypeError, ValueError):
+            return True
+        return now - last >= timedelta(minutes=self._generation_interval_minutes)
+
+    async def _generate(
+        self,
+        profile: OnionProfile,
+        state: AvoidanceState,
+        now: datetime,
+        *,
+        feedback_history: object | None = None,
+    ) -> AvoidanceState:
+        from openbiliclaw.llm.prompts import build_avoidance_generation_prompt
+
+        slots = self._max_active - sum(1 for item in state.active if item.status == "active")
+        if slots <= 0:
+            return state
+
+        to_context = getattr(profile, "to_llm_context", None)
+        profile_summary: dict[str, object] = to_context() if callable(to_context) else {}
+
+        interest = getattr(profile, "interest", None)
+        confirmed_dislikes = [
+            str(getattr(item, "domain", "")).strip()
+            for item in getattr(interest, "dislikes", []) or []
+            if str(getattr(item, "domain", "")).strip()
+        ]
+        confirmed_likes = [
+            str(getattr(item, "domain", "")).strip()
+            for item in getattr(interest, "likes", []) or []
+            if str(getattr(item, "domain", "")).strip()
+        ]
+        messages = build_avoidance_generation_prompt(
+            profile_summary=profile_summary,
+            existing_avoidances=[item.domain for item in state.active],
+            cooldown_domains=[item.domain for item in state.cooldown],
+            confirmed_dislikes=confirmed_dislikes,
+            confirmed_likes=confirmed_likes,
+            count=min(max(slots * 2, 5), 7),
+        )
+
+        try:
+            response = await self._llm_service.complete_structured_task(
+                system_instruction=messages[0]["content"],
+                user_input=messages[1]["content"],
+                max_tokens=DEFAULT_STRUCTURED_MAX_TOKENS,
+                caller="soul.avoidance_speculate",
+            )
+            raw = _parse_avoidance_generation_response(response.content)
+        except Exception:
+            logger.warning("Avoidance generation failed", exc_info=True)
+            return state
+
+        guard = AvoidanceNoveltyGuard.from_profile_and_state(
+            profile,
+            state,
+            feedback_history=feedback_history,
+        )
+        existing_domains = {item.domain.lower() for item in state.active}
+        candidates: list[SpeculativeAvoidance] = []
+        for item in raw:
+            domain = str(item.get("domain", "")).strip()
+            if not domain or domain.lower() in existing_domains:
+                continue
+            if guard.is_duplicate_domain(domain):
+                continue
+            reason = str(item.get("reason", "")).strip()
+            if len(reason) < 20:
+                continue
+            raw_specifics = item.get("specifics") or []
+            specifics = [
+                SpeculativeAvoidanceSpecific(name=str(specific).strip())
+                for specific in raw_specifics
+                if isinstance(specific, str) and str(specific).strip()
+            ]
+            if len(specifics) < 2:
+                continue
+            confidence = float(item.get("confidence", 0.4))
+            if confidence < 0.3:
+                continue
+            candidates.append(
+                SpeculativeAvoidance(
+                    domain=domain,
+                    reason=reason,
+                    source_mode=str(item.get("source_mode", "")).strip(),
+                    source_signal=str(item.get("source_signal", "")).strip(),
+                    experience_mode=_normalize_experience_mode(item.get("experience_mode")),
+                    entry_load=_normalize_entry_load(item.get("entry_load")),
+                    confidence=confidence,
+                    weight=confidence,
+                    created_at=now.isoformat(),
+                    ttl_days=self._default_ttl_days,
+                    confirmation_threshold=self._confirmation_threshold,
+                    specifics=specifics,
+                )
+            )
+
+        ordered_candidates = sorted(
+            candidates,
+            key=lambda item: (item.confidence, item.weight),
+            reverse=True,
+        )
+        for candidate in ordered_candidates[:slots]:
+            state.active.append(candidate)
+            existing_domains.add(candidate.domain.lower())
+        if candidates:
+            state.last_generation_at = now.isoformat()
+        return state

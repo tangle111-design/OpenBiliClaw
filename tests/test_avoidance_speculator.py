@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -194,3 +196,147 @@ async def test_avoidance_speculator_tick_promotes_without_io_writeback(tmp_path)
 
     assert [item.domain for item in result.promoted] == ["已确认避雷"]
     assert speculator._load_state().active == []
+
+
+def test_avoidance_novelty_guard_blocks_positive_like_domain():
+    from openbiliclaw.soul.avoidance_speculator import (
+        AvoidanceNoveltyGuard,
+        AvoidanceState,
+    )
+    from openbiliclaw.soul.profile import (
+        InterestDomain,
+        InterestLayer,
+        InterestSpecific,
+        OnionProfile,
+    )
+
+    profile = OnionProfile(
+        interest=InterestLayer(
+            likes=[
+                InterestDomain(
+                    domain="AI",
+                    weight=0.9,
+                    specifics=[InterestSpecific(name="大模型", weight=0.8)],
+                )
+            ]
+        )
+    )
+
+    guard = AvoidanceNoveltyGuard.from_profile_and_state(profile, AvoidanceState())
+
+    assert guard.is_duplicate_domain("AI") is True
+    assert guard.is_duplicate_domain("AI大模型") is True
+
+
+def test_choose_next_avoidance_probe_skips_denied_feedback_domain():
+    from openbiliclaw.soul.avoidance_speculator import (
+        SpeculativeAvoidance,
+        choose_next_avoidance_candidate,
+    )
+
+    chosen = choose_next_avoidance_candidate(
+        [
+            SpeculativeAvoidance(
+                domain="浅层热点复读",
+                confirmation_count=0,
+                confidence=0.9,
+                weight=0.9,
+                experience_mode="knowledge",
+                entry_load="light",
+            ),
+            SpeculativeAvoidance(
+                domain="营销号带货",
+                confirmation_count=0,
+                confidence=0.4,
+                weight=0.4,
+                experience_mode="people_story",
+                entry_load="light",
+            ),
+        ],
+        feedback_history=[
+            {
+                "domain": "浅层热点",
+                "response": "reject",
+                "axis": "knowledge|light",
+            }
+        ],
+    )
+
+    assert chosen is not None
+    assert chosen.domain == "营销号带货"
+
+
+def test_choose_next_avoidance_probe_prefers_fresh_axis():
+    from openbiliclaw.soul.avoidance_speculator import (
+        SpeculativeAvoidance,
+        choose_next_avoidance_candidate,
+    )
+
+    chosen = choose_next_avoidance_candidate(
+        [
+            SpeculativeAvoidance(
+                domain="浅层热点复读",
+                confirmation_count=0,
+                confidence=0.9,
+                weight=0.9,
+                experience_mode="knowledge",
+                entry_load="light",
+            ),
+            SpeculativeAvoidance(
+                domain="过度情绪站队",
+                confirmation_count=0,
+                confidence=0.4,
+                weight=0.4,
+                experience_mode="people_story",
+                entry_load="light",
+            ),
+        ],
+        probed_axes={"knowledge|light"},
+    )
+
+    assert chosen is not None
+    assert chosen.domain == "过度情绪站队"
+
+
+@pytest.mark.asyncio
+async def test_avoidance_speculator_force_tick_generates_candidates(tmp_path):
+    from openbiliclaw.soul.avoidance_speculator import AvoidanceSpeculator
+    from openbiliclaw.soul.profile import OnionProfile
+
+    class FakeLLMService:
+        async def complete_structured_task(self, **kwargs):  # type: ignore[no-untyped-def]
+            assert "negative_signal" in kwargs["system_instruction"]
+            return SimpleNamespace(
+                content=json.dumps(
+                    {
+                        "avoidances": [
+                            {
+                                "domain": "浅层热点复读",
+                                "reason": (
+                                    "用户可能不喜欢没有信息增量、"
+                                    "只是在复读热梗和立场的热点内容。"
+                                ),
+                                "source_mode": "negative_signal",
+                                "source_signal": "thumbs_down: 热点复读",
+                                "experience_mode": "knowledge",
+                                "entry_load": "light",
+                                "confidence": 0.66,
+                                "specifics": ["标题党热点解读", "无信息增量复读", "情绪化站队剪辑"],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+    speculator = AvoidanceSpeculator(llm_service=FakeLLMService(), data_dir=tmp_path)
+
+    result = await speculator.force_tick(OnionProfile())
+
+    assert [item.domain for item in result.generated] == ["浅层热点复读"]
+    assert result.generated[0].source_mode == "negative_signal"
+    assert [item.name for item in result.generated[0].specifics] == [
+        "标题党热点解读",
+        "无信息增量复读",
+        "情绪化站队剪辑",
+    ]
