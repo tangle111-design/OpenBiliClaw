@@ -41,14 +41,21 @@
 
     <aside class="side-drawer" id="sideDrawer" aria-label="侧边菜单" aria-hidden="true">
       <div class="side-drawer-scrim" id="sideDrawerScrim"></div>
-      <div class="side-drawer-panel">
+      <div class="side-drawer-panel" aria-labelledby="sideDrawerTitle">
+        <div class="side-drawer-head">
+          <div>
+            <p class="eyebrow">OpenBiliClaw</p>
+            <h2 id="sideDrawerTitle">推荐控制台</h2>
+          </div>
+        </div>
         <nav class="side-drawer-nav" aria-label="全局功能">
           <button class="nav-action" id="profileBtn" type="button"><span class="nav-glyph">◎</span><span>我的画像</span></button>
           <button class="nav-action" id="chatBtn" type="button"><span class="nav-glyph">✦</span><span>聊聊口味</span></button>
           <button class="nav-action" id="settingsBtn" type="button"><span class="nav-glyph">⌁</span><span>设置</span></button>
         </nav>
         <section class="side-section side-runtime-panel" aria-label="实时运行摘要">
-          <h3 class="side-section-title"><span class="section-glyph">⌁</span><span>推荐池实时看板</span></h3>
+          <p class="eyebrow">Runtime</p>
+          <h3>推荐池实时看板</h3>
           <p id="runtimeSummary">连接 FastAPI 后，这里会显示候选池、补货和待处理行为信号。</p>
           <div class="hero-status-grid" aria-label="推荐池实时状态">
             <div><span>可换库存</span><strong id="poolAvailable">—</strong></div>
@@ -63,7 +70,8 @@
           <p class="hero-topics">最近主题：<span id="poolTopics">等待后端同步</span></p>
         </section>
         <section class="side-section side-activity-section" data-od-id="activity-rail" aria-label="后台动态摘要">
-          <h3 class="side-section-title"><span class="section-glyph">•</span><span>后台刚记住的事</span></h3>
+          <p class="eyebrow">Activity</p>
+          <h3>后台刚记住的事</h3>
           <div class="activity-list" id="activityList"></div>
           <div class="drawer-actions"><button class="small-btn" id="activityBtn" type="button">查看全部动态</button></div>
         </section>
