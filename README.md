@@ -27,12 +27,12 @@
 
 ---
 
-## 📌 v0.3.89 / extension v0.3.44 重要更新（2026-05-22）
+## 📌 v0.3.91 / extension v0.3.46 重要更新（2026-05-24）
 
-- **💬 惊喜推荐原地聊** —— 移动端 Web 和插件的「聊一聊」现在都在惊喜推荐卡片内展开 composer，不再把你丢到对话 tab。
-- **🧵 多轮历史不串线** —— 每条惊喜推荐都有自己的多轮气泡历史，左右切换候选、side panel reload 或 pending 回复完成后都能按内容恢复。
-- **🔁 durable chat 对齐** —— 惊喜推荐内聊统一走 `/api/chat/turns` 的 `scope=delight`，pending / completed / failed 状态都在局部 UI 中就地更新。
-- **🧭 避雷方向主动确认** —— 系统现在会主动确认你可能想避开的内容形态；确认后写入 `disliked_topics` 并清理候选池，未确认前不参与过滤。
+- **🧭 避雷探针上线** —— 系统会主动确认你可能想避开的内容形态、低质表达或风格边界。
+- **✅ 确认后才过滤** —— 只有用户确认或显式负向信号达到阈值后，才写入 `disliked_topics` 并清理候选池。
+- **📱 全端可操作** —— 移动端 Web、桌面 Web、浏览器插件和 OpenClaw 都能看到并处理待确认避雷方向。
+- **💬 可多聊再判断** —— 避雷探针支持 `scope=avoidance_probe` 的 durable chat，聊天确认/否认会走同一条写回路径。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
@@ -576,7 +576,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.89 / extension v0.3.44: 惊喜推荐内联多轮聊天 + 避雷探针（2026-05-22）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
+最新版本：**v0.3.91 / extension v0.3.46: 不喜欢领域探针（2026-05-24）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
 
 ## 🗺️ 后续规划
 
