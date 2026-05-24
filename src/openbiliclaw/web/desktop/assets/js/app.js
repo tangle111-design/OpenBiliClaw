@@ -413,7 +413,7 @@
             <p class="video-title">${escapeHtml(item.title)}</p>
             <p class="video-meta">${escapeHtml(recommendationMeta(item))}</p>
           </div>
-          <p class="reason" role="button" tabindex="0" aria-expanded="false" title="${escapeHtml(item.reason)}">${escapeHtml(item.reason)}</p>
+          <p class="reason" role="button" tabindex="0" aria-expanded="false" title="${escapeHtml(item.reason)}"><span class="reason-text">${escapeHtml(item.reason)}</span></p>
           <div class="card-actions" aria-label="推荐反馈操作">
             <div class="card-feedback-icons" aria-label="喜欢或不感兴趣">
               <button class="feedback-icon-btn" data-action="like" type="button" aria-label="喜欢" title="喜欢">
