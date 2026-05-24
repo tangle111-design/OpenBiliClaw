@@ -1115,7 +1115,7 @@
       else state.messages = messages;
       syncMessageCount();
       if (!messages.length) {
-        list.innerHTML = `<div class="empty-state">暂无待处理消息。兴趣确认、惊喜推荐和通知都会出现在这里。</div>`;
+        list.innerHTML = `<div class="empty-state">暂无待处理。兴趣确认、惊喜推荐和通知都会出现在这里。</div>`;
         return;
       }
       list.replaceChildren(...messages.map((msg) => {
