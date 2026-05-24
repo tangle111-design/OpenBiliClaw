@@ -17,12 +17,12 @@
 
 ---
 
-## 📌 v0.3.89 / extension v0.3.44 Highlights (2026-05-22)
+## 📌 v0.3.91 / extension v0.3.46 Highlights (2026-05-24)
 
-- **💬 Delight chat stays in context** — Mobile Web and the extension now expand "Chat" inside the delight card instead of switching to the main chat tab.
-- **🧵 Multi-turn history stays scoped** — each delight keeps its own chat bubbles, so candidate navigation, side-panel reloads, and pending replies do not overwrite earlier turns.
-- **🔁 Durable chat alignment** — delight inline chat uses `/api/chat/turns` with `scope=delight`, and pending / completed / failed states update in place.
-- **🧭 Proactive avoidance probing** — the system now asks about content forms you may want to avoid; confirmed answers write `disliked_topics` and purge the pool, while unconfirmed probes do not filter recommendations.
+- **🧭 Avoidance probes** — the system now asks about content forms, low-quality patterns, or style boundaries you may want to avoid.
+- **✅ Confirmed before filtering** — only explicit confirmation or enough explicit negative evidence writes `disliked_topics` and purges the pool.
+- **📱 Available everywhere** — Mobile Web, Desktop Web, the browser extension, and OpenClaw can all show and handle pending avoidance probes.
+- **💬 Chat before deciding** — avoidance probes support durable `scope=avoidance_probe` chat, and chat-based confirm/reject flows use the same writeback path.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -505,7 +505,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.89 / extension v0.3.44: inline multi-turn delight chat + avoidance probes (2026-05-22)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
+Latest: **v0.3.91 / extension v0.3.46: avoidance probes (2026-05-24)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
 
 ## 🗺️ Roadmap
 
