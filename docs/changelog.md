@@ -4,6 +4,13 @@
 
 ---
 
+## v0.3.90 / extension v0.3.46: 真实可换库存口径修正（2026-05-24）
+
+- 修复 runtime status / runtime stream 的候选池数字口径：`pool_available_count` 现在只表示后端当前可立即 `serve()` 的候选；新增 `pool_raw_count` / `pool_pending_count` 用于区分素材库存和待整理内容，避免“池子有素材”被显示成“还有 N 条可换”。
+- `count_pool_candidates()` 读取前会刷新 SQLite/WAL snapshot，避免同一次操作里 runtime status 看到旧库存、`get_pool_candidates()` 看到新状态而返回空。
+- 推荐 serve 的零候选 warning 增加 `raw/servable/pending` 诊断字段，方便区分 Gemini quota / 分类文案未完成导致的 pending，和真实 count/load 查询漂移。
+- 插件 side panel、移动 Web 和桌面 Web 统一显示真实可换数；当 `pool_available_count=0` 且 `pool_pending_count>0` 时显示“找到 N 条素材，正在整理成可换内容”，不会把 pending 数量写成“可换”。插件手动“换一批”空结果会重新同步 runtime status，并用单飞锁避免重复点击竞态。
+
 ## v0.3.89 / extension v0.3.44: 惊喜推荐内联多轮聊天（2026-05-22）
 
 - 修复用户显式配置 `[llm.embedding].provider = "openrouter"` 仍然报 `No embedding-capable provider available (requested='openrouter')` 并禁用 embedding 的 bug：`_EMBEDDING_CAPABLE_PROVIDERS` 漏了 `openrouter`，dedicated 构建分支也没有 OpenRouter 路径。现在 registry 显式支持 OpenRouter embedding（必须配 `model = "<vendor>/<model>"`，例如 `google/gemini-embedding-2-preview`；无显式 model 时拒绝构建，避免运行时 404），`[llm.openrouter]` 的 `http_referer` / `x_title` 也会透传到 embedding 实例。`OpenRouterProvider.supports_embedding` 仍保持 `False` —— 只有用户显式选 openrouter 才走这条 dedicated 路径，不污染 chat-side 的自动回退链。

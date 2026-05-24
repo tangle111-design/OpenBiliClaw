@@ -17,12 +17,11 @@
 
 ---
 
-## 📌 v0.3.89 / extension v0.3.44 Highlights (2026-05-22)
+## 📌 v0.3.90 / extension v0.3.46 Highlights (2026-05-24)
 
-- **💬 Delight chat stays in context** — Mobile Web and the extension now expand "Chat" inside the delight card instead of switching to the main chat tab.
-- **🧵 Multi-turn history stays scoped** — each delight keeps its own chat bubbles, so candidate navigation, side-panel reloads, and pending replies do not overwrite earlier turns.
-- **🔁 Durable chat alignment** — delight inline chat uses `/api/chat/turns` with `scope=delight`, and pending / completed / failed states update in place.
-- **📱 No iOS focus zoom** — the inline composer keeps a 16px textarea font size to avoid Safari auto-zoom.
+- **🔢 True reshuffle inventory** — the extension, Mobile Web, and Desktop Web now show "available" only for candidates the backend can immediately `serve()`.
+- **🧰 Pending material is separate** — discovered items that still need copy, classification, or a linkable URL are shown as "being prepared" instead of "N available".
+- **🔁 Reshuffle status resync** — an empty manual reshuffle after advertised inventory refreshes runtime status and avoids repeated-click races.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -407,10 +406,10 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   Chrome Extension                   │
-│      (Behavior · Recs · Chat · Runtime Toggles)       │
+│      (Behavior · Recs · True Pool Count · Chat)        │
 │      (Cookies · XHS/DY/YT tasks · init bridge)        │
 └────────────────────────┬────────────────────────────┘
-                         │ REST API / WebSocket (presence + cookies)
+                         │ REST API / WebSocket (presence + cookies + pool counts)
 ┌────────────────────────▼────────────────────────────┐
 │                 Agent Orchestration                   │
 │       (Skills · Dialogue · Runtime Gate · Account Sync) │
@@ -421,6 +420,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 ├─────────┴──────────┴───────────┴────────────────────┤
 │ LLM (API Key/Codex OAuth) · Bilibili API · Extension Proxy │
 │ Runtime: Account sync + XHS/DY/YouTube producers           │
+│ Runtime status: pool_available/raw/pending_count            │
 │ SQLite: events(inferred_satisfaction) · content_cache   │
 │         recommendations · chat_turns                    │
 └─────────────────────────────────────────────────────┘
@@ -438,6 +438,8 @@ Four Bilibili strategies work in coordination, each with independent API quota, 
 | **Explore** | LLM-driven cross-domain exploration | Fair share |
 
 Results go through multi-dimensional diversity selection: platform-family reservation (saved default Bilibili / Xiaohongshu / Douyin / YouTube = 8 / 1 / 1 / 1, configurable via `[scheduler.pool_source_shares]`; the effective default only includes Bilibili until XHS / Douyin / YouTube are explicitly enabled) → topic deduplication → style balancing → ceiling caps, ensuring broad coverage in final recommendations. The four Bilibili strategies count as `bilibili`; XHS extension sources count as `xiaohongshu`; Douyin search / hot / feed count as `douyin`; YouTube `yt_search` / `yt_trending` / `yt_channel` count as `youtube`. Disabled platforms are removed from the effective runtime mix.
+
+Frontend pool counts come from runtime status: `pool_available_count` means candidates with ready copy, classification, linkable URL, and no recent-view conflict; `pool_pending_count` means discovered material still being prepared. The extension, Mobile Web, and Desktop Web do not label pending material as available to reshuffle.
 
 For first-run profiling, `openbiliclaw init` can enqueue XHS, Douyin, and YouTube `bootstrap_profile` tasks. XHS opens Xiaohongshu in the user's logged-in browser session, navigates to the profile, parses saved / liked / explicit history state, and returns `partial` batches; the backend reuses recent XHS bootstrap tasks by default and marks a task `in_progress` before returning it to the extension so the same foreground favorites / likes pull is not opened repeatedly. Douyin visits post / favorite / like / follow scopes in the logged-in Douyin session and combines DOM extraction with a MAIN-world API harvester. YouTube visits watch history / subscriptions / liked videos pages and reads rendered DOM items. The backend converts all three sources into normal `view / favorite / like / follow` events, keeps full raw task results for diagnostics, and filters already-seen bootstrap keys through `source_bootstrap_state.json` before old items can re-enter memory or the profile pipeline. It still does not crawl or log in to those sites directly.
 
@@ -503,7 +505,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.89 / extension v0.3.44: inline multi-turn delight chat (2026-05-22)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
+Latest: **v0.3.90 / extension v0.3.46: true reshuffle inventory counts (2026-05-24)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
 
 ## 🗺️ Roadmap
 
