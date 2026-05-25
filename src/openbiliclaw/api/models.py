@@ -164,6 +164,8 @@ class PendingDelightOut(BaseModel):
     delight_score: float = 0.0
     delight_hook: str = ""
     cover_url: str = ""
+    content_url: str = ""
+    source_platform: str = ""
 
 
 class PendingDelightResponse(BaseModel):

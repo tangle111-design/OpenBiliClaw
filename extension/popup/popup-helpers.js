@@ -39,10 +39,17 @@ export function buildVideoUrl(bvid) {
   return `https://www.bilibili.com/video/${normalizeText(bvid)}`;
 }
 
+export function buildYouTubeUrl(videoId) {
+  return `https://www.youtube.com/watch?v=${normalizeText(videoId)}`;
+}
+
 export function buildContentUrl(item) {
   if (item?.content_url) return item.content_url;
-  if (item?.bvid) return buildVideoUrl(item.bvid);
-  return "";
+  const platform = normalizeText(item?.source_platform);
+  const vid = normalizeText(item?.content_id || item?.bvid);
+  if (!vid) return "";
+  if (platform === "youtube") return buildYouTubeUrl(vid);
+  return buildVideoUrl(vid);
 }
 
 export function getTabButtonState(activeTab, tabName) {
@@ -113,6 +120,8 @@ export function normalizeDelightCandidate(item) {
     delight_score: Number(item?.delight_score ?? 0),
     delight_hook: normalizeText(item?.delight_hook),
     cover_url: normalizeCoverUrl(item?.cover_url),
+    content_url: normalizeText(item?.content_url) || "",
+    source_platform: normalizeText(item?.source_platform) || "",
     state: normalizedState,
     response_message: normalizeText(item?.response_message),
     chat_reply: normalizeText(item?.chat_reply),

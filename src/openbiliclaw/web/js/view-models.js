@@ -201,10 +201,17 @@ export function buildVideoUrl(bvid) {
   return `https://www.bilibili.com/video/${normalizeText(bvid)}`;
 }
 
+export function buildYouTubeUrl(videoId) {
+  return `https://www.youtube.com/watch?v=${normalizeText(videoId)}`;
+}
+
 export function buildContentUrl(item) {
   if (item?.content_url) return item.content_url;
-  if (item?.bvid) return buildVideoUrl(item.bvid);
-  return "";
+  const platform = normalizeText(item?.source_platform);
+  const vid = normalizeText(item?.content_id || item?.bvid);
+  if (!vid) return "";
+  if (platform === "youtube") return buildYouTubeUrl(vid);
+  return buildVideoUrl(vid);
 }
 
 // ── Recommendation Normalization ─────────────────────────────
