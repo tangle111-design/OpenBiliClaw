@@ -195,21 +195,41 @@
       return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
     }
 
+    // Decode source-provided entities for display text only; every later HTML or attribute output must still escape by context.
+    function decodeHtmlEntities(value) {
+      return String(value ?? "").replace(/&(#x?[0-9a-fA-F]+|amp|lt|gt|quot|apos|#39);/g, (match, entity) => {
+        if (entity === "amp") return "&";
+        if (entity === "lt") return "<";
+        if (entity === "gt") return ">";
+        if (entity === "quot") return '"';
+        if (entity === "apos" || entity === "#39") return "'";
+        if (entity.startsWith("#x")) {
+          const codePoint = Number.parseInt(entity.slice(2), 16);
+          return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+        }
+        if (entity.startsWith("#")) {
+          const codePoint = Number.parseInt(entity.slice(1), 10);
+          return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+        }
+        return match;
+      });
+    }
+
     function normalizeRecommendation(item) {
       return {
         id: Number(item?.id ?? Date.now()),
         bvid: String(item?.bvid ?? item?.content_id ?? ""),
-        title: String(item?.title ?? "未命名内容"),
-        up: String(item?.up_name ?? item?.up ?? "未知创作者"),
+        title: decodeHtmlEntities(item?.title ?? "未命名内容"),
+        up: decodeHtmlEntities(item?.up_name ?? item?.up ?? "未知创作者"),
         cover_url: normalizeImageUrl(item?.cover_url ?? item?.cover ?? item?.pic ?? item?.thumbnail_url ?? item?.thumbnail ?? item?.image_url),
         content_url: String(item?.content_url ?? ""),
-        topic: String(item?.topic_label ?? item?.topic ?? "未归类"),
+        topic: decodeHtmlEntities(item?.topic_label ?? item?.topic ?? "未归类"),
         platform: String(item?.source_platform ?? item?.platform ?? "bilibili"),
         duration: String(item?.duration ?? ""),
         presented: Boolean(item?.presented),
         feedback_type: String(item?.feedback_type ?? item?.feedback ?? ""),
         pool_status: String(item?.pool_status ?? item?.status ?? ""),
-        reason: String(item?.expression ?? item?.reason ?? "后端暂未返回解释。")
+        reason: decodeHtmlEntities(item?.expression ?? item?.reason ?? "后端暂未返回解释。")
       };
     }
 
@@ -2012,8 +2032,8 @@
       return {
         type: "delight",
         bvid: String(item.bvid ?? item.content_id ?? ""),
-        title: String(item.title ?? "发现了一条你可能会意外喜欢的内容"),
-        reason: String(item.delight_reason ?? item.reason ?? item.delight_hook ?? item.message ?? "这条来自后端高惊喜分候选。"),
+        title: decodeHtmlEntities(item.title ?? "发现了一条你可能会意外喜欢的内容"),
+        reason: decodeHtmlEntities(item.delight_reason ?? item.reason ?? item.delight_hook ?? item.message ?? "这条来自后端高惊喜分候选。"),
         cover_url: normalizeImageUrl(item.cover_url ?? item.cover ?? item.pic ?? item.thumbnail_url ?? item.thumbnail ?? item.image_url),
         content_url: String(item.content_url ?? ""),
         source_platform: String(item.source_platform ?? item.platform ?? "bilibili"),
