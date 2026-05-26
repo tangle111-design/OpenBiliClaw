@@ -2896,7 +2896,8 @@
     }
 
     .mobile-button,
-    .messages-button {
+    .messages-button,
+    .webui-button {
       width: 32px;
       height: 32px;
       border: 0;
@@ -2912,13 +2913,15 @@
     }
 
     .mobile-button:hover,
-    .messages-button:hover {
+    .messages-button:hover,
+    .webui-button:hover {
       background: var(--brand-soft);
       transform: translateY(-1px);
     }
 
     .mobile-button svg,
-    .messages-button svg {
+    .messages-button svg,
+    .webui-button svg {
       width: 16px;
       height: 16px;
       color: var(--text-secondary);
@@ -3586,6 +3589,9 @@
           </div>
         </div>
         <div class="hero-actions">
+          <button id="openWebButton" class="webui-button" type="button" title="在浏览器中打开 Web 版" aria-label="在浏览器中打开 Web 版">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </button>
           <button id="mobileQrButton" class="mobile-button" type="button" title="手机打开" aria-label="显示移动端二维码">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h2v2h-2zM18 14h3M14 18h3M19 18h2v3h-5"/></svg>
           </button>

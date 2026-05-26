@@ -175,6 +175,7 @@ const elements = {
   chatInput: document.getElementById("chatInput"),
   chatSendButton: document.getElementById("chatSendButton"),
   chatStatus: document.getElementById("chatStatus"),
+  openWebButton: document.getElementById("openWebButton"),
   mobileQrButton: document.getElementById("mobileQrButton"),
   mobileQrOverlay: document.getElementById("mobileQrOverlay"),
   mobileQrBack: document.getElementById("mobileQrBack"),
@@ -1350,6 +1351,24 @@ async function openMobileQrPanel() {
 function closeMobileQrPanel() {
   const overlay = elements.mobileQrOverlay;
   if (overlay instanceof HTMLElement) overlay.hidden = true;
+}
+
+function bindOpenWeb() {
+  if (elements.openWebButton instanceof HTMLElement) {
+    elements.openWebButton.addEventListener("click", async () => {
+      const origin = await getBackendOrigin();
+      const url = origin + "/";
+      try {
+        if (globalThis.chrome?.tabs?.create) {
+          void globalThis.chrome.tabs.create({ url });
+          return;
+        }
+      } catch {
+        // Fall back to window.open below.
+      }
+      window.open(url, "_blank", "noopener");
+    });
+  }
 }
 
 function bindMobileQr() {
@@ -5053,6 +5072,7 @@ async function initializePopup() {
   bindRefreshButton();
   bindActivityToggle();
   bindChat();
+  bindOpenWeb();
   bindMobileQr();
   bindSettings();
 
