@@ -978,3 +978,122 @@ def test_effective_disliked_topics_base_then_overlay(tmp_path: Path) -> None:
     )
     memory.save_profile_overrides(new_ov)
     assert "钓鱼贴" in engine.get_effective_disliked_topics()
+
+
+# --- apply_user_edit orchestration (Task 7) -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_user_edit_persists_override_and_records_cognition(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    _seed_soul(memory, _overlay_profile(core_traits=("好奇",)))
+
+    result = await engine.apply_user_edit(target="core.core_traits", op="add", value="务实")
+
+    assert result["ok"] is True
+    assert memory.load_profile_overrides().list_edits["core.core_traits"].add == ["务实"]
+    cognition = memory.load_cognition_updates()
+    assert cognition
+    assert cognition[0]["source"] == "manual"
+    assert cognition[0]["source_label"] == "手动编辑"
+    effective = await engine.get_profile()
+    assert "务实" in effective.core.core_traits
+
+
+@pytest.mark.asyncio
+async def test_apply_user_edit_dislike_add_triggers_purge_with_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import openbiliclaw.soul.dislike_writeback as dislike_writeback
+
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    _seed_soul(memory, _overlay_profile())
+
+    calls: list[list[str]] = []
+
+    async def fake_purge(*, database, embedding_service, llm_service, newly_added, all_dislikes):  # type: ignore[no-untyped-def]
+        calls.append(list(newly_added))
+        return []
+
+    monkeypatch.setattr(dislike_writeback, "purge_pool_for_new_dislikes", fake_purge)
+    await engine.apply_user_edit(
+        target="dislikes", op="add", value="营销号", database=object()
+    )
+    assert len(calls) == 1
+    assert "营销号" in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_apply_user_edit_duplicate_dislike_does_not_purge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import openbiliclaw.soul.dislike_writeback as dislike_writeback
+
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    # AI already dislikes 营销号 -> adding it is a no-op for effective dislikes
+    _seed_soul(memory, _overlay_profile(dislikes=("营销号",)))
+
+    calls: list[object] = []
+
+    async def fake_purge(**kwargs):  # type: ignore[no-untyped-def]
+        calls.append(kwargs)
+        return []
+
+    monkeypatch.setattr(dislike_writeback, "purge_pool_for_new_dislikes", fake_purge)
+    await engine.apply_user_edit(
+        target="dislikes", op="add", value="营销号", database=object()
+    )
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_apply_user_edit_syncs_both_speculators(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    _seed_soul(memory, _overlay_profile())
+
+    seen: dict[str, str] = {}
+
+    class _Spec:
+        def user_confirm_speculation(self, domain: str, *, confirmation_source: str = "x") -> bool:
+            seen["like"] = domain
+            return True
+
+        def user_reject_speculation(self, domain: str, cooldown_days: int = 30) -> bool:
+            return True
+
+    class _Avoid:
+        def user_confirm_avoidance(self, domain: str) -> None:
+            seen["dislike"] = domain
+
+        def user_reject_avoidance(self, domain: str, cooldown_days: int = 30) -> bool:
+            return True
+
+    engine._speculator = _Spec()  # type: ignore[assignment]
+    engine._avoidance_speculator = _Avoid()  # type: ignore[assignment]
+
+    await engine.apply_user_edit(target="likes", op="add", value="户外")
+    await engine.apply_user_edit(target="dislikes", op="add", value="营销号")
+
+    assert seen["like"] == "户外"
+    assert seen["dislike"] == "营销号"
+
+
+@pytest.mark.asyncio
+async def test_apply_user_edit_invalid_target_raises(tmp_path: Path) -> None:
+    from openbiliclaw.soul.overrides import ProfileEditError
+
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    _seed_soul(memory, _overlay_profile())
+
+    with pytest.raises(ProfileEditError):
+        await engine.apply_user_edit(target="core.bogus", op="add", value="x")
