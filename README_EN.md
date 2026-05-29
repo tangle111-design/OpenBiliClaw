@@ -426,6 +426,8 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 │ Runtime status: pool_available/raw/pending_count           │
 │ SQLite: events(inferred_satisfaction) · content_cache   │
 │         recommendations · chat_turns · avoidance_state  │
+│ Profile overrides: edits -> profile_overrides.json overlay │
+│         (merged at read · rebuild-proof · 3 frontends)   │
 └─────────────────────────────────────────────────────┘
 ```
 
