@@ -155,6 +155,35 @@ def test_apply_embedding_config_writes_embedding_owned_credentials(tmp_path: Pat
     assert 'api_key = "sk-embedding"' in text
 
 
+def test_should_auto_wire_embedding_when_unconfigured_local() -> None:
+    # Flag-driven install that never passed --embedding-* and left embedding
+    # empty → default to local Ollama so dedup isn't silently disabled.
+    assert bootstrap.should_auto_wire_embedding(
+        embedding_provider_arg=None, effective_provider="", mode="local"
+    )
+
+
+def test_should_not_auto_wire_embedding_when_already_configured() -> None:
+    assert not bootstrap.should_auto_wire_embedding(
+        embedding_provider_arg=None, effective_provider="gemini", mode="local"
+    )
+
+
+def test_should_not_auto_wire_embedding_when_explicitly_disabled() -> None:
+    # User passed --embedding-provider "" to deliberately turn embedding off.
+    assert not bootstrap.should_auto_wire_embedding(
+        embedding_provider_arg="", effective_provider="", mode="local"
+    )
+
+
+def test_should_not_auto_wire_embedding_under_docker() -> None:
+    # The container can't reach the host's Ollama at localhost, so wiring it
+    # would just mint a broken config.
+    assert not bootstrap.should_auto_wire_embedding(
+        embedding_provider_arg=None, effective_provider="", mode="docker"
+    )
+
+
 def test_build_init_command_appends_all_source_flags_for_local(tmp_path: Path) -> None:
     command = bootstrap.build_init_command(
         "local",

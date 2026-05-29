@@ -1476,6 +1476,31 @@ def apply_llm_model(project_dir: Path, provider: str, model: str) -> None:
     update_config_secret(project_dir / "config.toml", f"llm.{provider}", "model", model)
 
 
+def should_auto_wire_embedding(
+    *, embedding_provider_arg: str | None, effective_provider: str, mode: str
+) -> bool:
+    """Whether bootstrap should default ``[llm.embedding]`` to local Ollama.
+
+    v0.3.95+: embedding is fully decoupled from the chat provider, so a
+    flag-driven install that never passed ``--embedding-*`` — or one whose
+    chat provider can't embed (Claude / DeepSeek / OpenRouter) — would
+    leave embedding unconfigured and silently disable semantic dedup.
+
+    Returns ``True`` only when embedding is unconfigured AND the user did
+    not explicitly disable it (``--embedding-provider ""``) AND we're not
+    under Docker (the container can't reach the host's Ollama at
+    ``localhost``).
+    """
+    if mode == "docker":
+        return False
+    explicitly_disabled = embedding_provider_arg is not None and not (
+        embedding_provider_arg or ""
+    ).strip()
+    if explicitly_disabled:
+        return False
+    return not effective_provider.strip()
+
+
 def apply_embedding_config(
     project_dir: Path,
     *,
@@ -2312,6 +2337,50 @@ def run(args: argparse.Namespace) -> int:
     if mode == "auto":
         mode = "docker" if detect_docker() else "local"
     emit(BootstrapResult("ok", "mode_selected", {"mode": mode}))
+
+    # v0.3.95+: revive the embedding→Ollama safety net. Embedding is fully
+    # decoupled from the chat provider (v0.3.32+), so an install that sets
+    # a chat-only provider (Claude / DeepSeek / OpenRouter can't embed) —
+    # or any flag-driven run that never passed --embedding-* — would leave
+    # [llm.embedding].provider empty, silently disabling semantic dedup and
+    # letting near-duplicate content slip through. The old flag was declared
+    # but never set, so the net was dead. Wire it for real. Skipped under
+    # Docker (the container would point at its own localhost, not the host's
+    # Ollama) and when the user explicitly disabled embedding by passing
+    # --embedding-provider "".
+    effective_embedding_provider = str(
+        read_simple_toml(project_dir / "config.toml")
+        .get("llm", {})
+        .get("embedding", {})
+        .get("provider", "")
+    ).strip()
+    if should_auto_wire_embedding(
+        embedding_provider_arg=args.embedding_provider,
+        effective_provider=effective_embedding_provider,
+        mode=mode,
+    ):
+        apply_embedding_config(
+            project_dir,
+            provider="ollama",
+            model="bge-m3",
+            base_url=None,
+            api_key=None,
+        )
+        auto_embedding_to_ollama = True
+        emit(
+            BootstrapResult(
+                "ok",
+                "embedding_auto_ollama",
+                {
+                    "provider": "ollama",
+                    "model": "bge-m3",
+                    "reason": (
+                        "embedding was unconfigured; defaulted to local Ollama bge-m3 "
+                        "so semantic dedup isn't silently disabled"
+                    ),
+                },
+            )
+        )
 
     # When the user picks ollama for either LLM or embedding, the install
     # isn't really "done" until ollama is installed, the daemon is running,

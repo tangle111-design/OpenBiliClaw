@@ -2414,6 +2414,77 @@
       padding: 6px 0;
     }
 
+    .embedding-banner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0 0 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(255, 196, 87, 0.18), rgba(251, 114, 153, 0.14));
+      border: 1px solid rgba(255, 176, 32, 0.4);
+    }
+
+    .embedding-banner-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .embedding-banner-text strong {
+      font-size: 12.5px;
+      font-weight: 800;
+      color: var(--text-main);
+    }
+
+    .embedding-banner-text span {
+      font-size: 11.5px;
+      line-height: 1.5;
+      color: var(--text-secondary);
+    }
+
+    .embedding-banner-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .embedding-banner-btn {
+      padding: 7px 12px;
+      border: none;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      cursor: pointer;
+      background: linear-gradient(135deg, #fb7299, #5aa9ff);
+      white-space: nowrap;
+    }
+
+    .embedding-banner-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .embedding-banner-dismiss {
+      width: 24px;
+      height: 24px;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .embedding-banner-dismiss:hover {
+      background: rgba(0, 0, 0, 0.06);
+    }
+
     .empty-state {
       padding: 28px 20px;
       text-align: center;
@@ -3699,6 +3770,20 @@
                 <span id="poolTopics" class="recommendation-status-value">还在继续摸你的口味</span>
               </div>
             </div>
+          </div>
+        </div>
+        <div id="embeddingBanner" class="embedding-banner" hidden role="status">
+          <div class="embedding-banner-text">
+            <strong>语义去重未启用</strong>
+            <span>可能会刷到换皮重复的视频。启用本地 Ollama 向量化即可改善。</span>
+          </div>
+          <div class="embedding-banner-actions">
+            <button id="embeddingBannerEnable" type="button" class="embedding-banner-btn">
+              一键启用本地 Ollama
+            </button>
+            <button id="embeddingBannerDismiss" type="button" class="embedding-banner-dismiss" aria-label="关闭提示">
+              ✕
+            </button>
           </div>
         </div>
         <div id="delightSlot" hidden></div>

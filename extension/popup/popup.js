@@ -50,6 +50,7 @@ import {
   fetchChatTurn,
   fetchChatTurns,
   fetchConfig,
+  fetchHealth,
   fetchPendingDelight,
   fetchPendingDelightBatch,
   fetchProfileSummary,
@@ -5282,6 +5283,82 @@ function bindSettings() {
   });
 }
 
+// Session-scoped dismissal so we don't nag on every popup open after the
+// user explicitly closes the banner. Re-appears next session if embedding
+// is still disabled.
+const EMBEDDING_BANNER_DISMISS_KEY = "embeddingBannerDismissed";
+
+async function enableLocalOllamaEmbedding(enableBtn) {
+  const original = enableBtn ? enableBtn.textContent : "";
+  if (enableBtn) {
+    enableBtn.disabled = true;
+    enableBtn.textContent = "启用中…";
+  }
+  try {
+    await updateConfig({
+      llm: {
+        embedding: {
+          provider: "ollama",
+          model: "bge-m3",
+          base_url: "http://localhost:11434/v1",
+        },
+      },
+    });
+    // Re-check: hot-reload rebuilds the embedding service in-process, so
+    // health flips to embedding_ready=true only if Ollama actually served
+    // a vector. Don't claim success on a config write alone.
+    const health = await fetchHealth();
+    const banner = document.getElementById("embeddingBanner");
+    if (health && health.embedding_ready) {
+      if (banner) banner.hidden = true;
+      setHint("已启用本地 Ollama 语义去重，重复内容会少很多。", "success");
+    } else {
+      if (enableBtn) {
+        enableBtn.disabled = false;
+        enableBtn.textContent = "重试";
+      }
+      setHint(
+        "配置已写入，但 Ollama 还没就绪。请确认已运行 `ollama serve` 并 `ollama pull bge-m3`。",
+        "error",
+      );
+    }
+  } catch {
+    if (enableBtn) {
+      enableBtn.disabled = false;
+      enableBtn.textContent = "重试";
+    }
+    setHint("启用失败，请检查后端连接后重试。", "error");
+  }
+}
+
+async function maybeShowEmbeddingBanner() {
+  const banner = document.getElementById("embeddingBanner");
+  if (!banner) return;
+  if (sessionStorage.getItem(EMBEDDING_BANNER_DISMISS_KEY) === "1") return;
+  const health = await fetchHealth();
+  // Only nag when the backend explicitly reports embedding is off. A null
+  // health (backend unreachable) or older backend without the field stays
+  // silent — the connection banner already covers "backend down".
+  if (!health || health.embedding_ready !== false) {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  const enableBtn = document.getElementById("embeddingBannerEnable");
+  const dismissBtn = document.getElementById("embeddingBannerDismiss");
+  if (enableBtn && !enableBtn.dataset.bound) {
+    enableBtn.dataset.bound = "1";
+    enableBtn.addEventListener("click", () => void enableLocalOllamaEmbedding(enableBtn));
+  }
+  if (dismissBtn && !dismissBtn.dataset.bound) {
+    dismissBtn.dataset.bound = "1";
+    dismissBtn.addEventListener("click", () => {
+      sessionStorage.setItem(EMBEDDING_BANNER_DISMISS_KEY, "1");
+      banner.hidden = true;
+    });
+  }
+}
+
 async function initializePopup() {
   const params = new URLSearchParams(window.location.search);
   const requestedTab = params.get("tab");
@@ -5304,6 +5381,7 @@ async function initializePopup() {
   );
   setHint("先看看本地后端连上没。");
   await initializeRecommendations();
+  void maybeShowEmbeddingBanner();
   await hydrateChatHistory();
   // Always fetch profile-summary on startup so the messages inbox is
   // populated regardless of which tab the user lands on.  Without this

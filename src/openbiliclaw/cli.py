@@ -1646,7 +1646,7 @@ def _prompt_provider_triplet(menu_choice: str) -> tuple[str, str, str, str]:
     return provider, default_base_url, api_key, model
 
 
-def _interactive_embedding_setup(default_provider: str) -> None:
+def _interactive_embedding_setup(default_provider: str, *, auto_if_ready: bool = False) -> None:
     """Phase 3 — embedding service (v0.3.20+ "有默认值的取舍提问").
 
     Default = 1 (本地 Ollama bge-m3). Mirrors the question shape used by
@@ -1654,7 +1654,23 @@ def _interactive_embedding_setup(default_provider: str) -> None:
     "不确定就回 1". Two advanced branches (custom OpenAI-compatible
     endpoint / pin a different provider) are kept but de-emphasized so
     普通用户 don't get derailed.
+
+    ``auto_if_ready`` (v0.3.95+): when a local Ollama is already running
+    and serving bge-m3, skip the menu entirely and just wire it up. This
+    closes the "confirmed Ollama for chat but embedding stayed disabled"
+    gap that silently degrades dedup. Only ``init`` passes this — the
+    explicit ``setup-embedding`` command keeps the full menu so users can
+    deliberately switch providers.
     """
+    if auto_if_ready and _ollama_is_running() and _ollama_has_model("bge-m3"):
+        _save_embedding_config(provider="ollama", model="bge-m3")
+        console.print(
+            "\n[bold green]检测到本地 Ollama 已就绪且装有 bge-m3,已自动启用本地 embedding"
+            "(跨视频去重 / 相似度判定)。[/bold green]"
+            "\n[dim]想换成 Gemini/OpenAI 或关闭,去插件设置页或重跑 "
+            "`openbiliclaw setup-embedding`。[/dim]"
+        )
+        return
     console.print(
         "\n[bold]Embedding(向量化)服务[/bold]\n"
         "[dim]把视频标题/简介压成向量,跨视频做相似度对比 —— 决定"
@@ -1919,7 +1935,7 @@ def _interactive_runtime_config_setup() -> None:
             "\n[dim]Embedding 是和聊天模型分开的：把视频标题/简介变成向量，"
             "用于跨视频去重和相似度判定。频次很高，所以单独拎出来配。[/dim]"
         )
-        _interactive_embedding_setup(provider)
+        _interactive_embedding_setup(provider, auto_if_ready=True)
 
         console.print(
             "\n[bold]最后是 Per-module 覆盖（高级，默认可跳过）[/bold]"

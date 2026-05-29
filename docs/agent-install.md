@@ -235,6 +235,17 @@ and explicit source choices (`--yes-xhs` / `--no-xhs` plus
 `status=needs_decisions` and **does not run init**. Ask the missing
 questions, then re-run bootstrap with those flags.
 
+v0.3.95+ embedding safety net (`should_auto_wire_embedding`): when
+`[llm.embedding].provider` would otherwise stay empty — e.g. the chat
+provider is Claude / DeepSeek / OpenRouter (which can't embed) and you
+never passed `--embedding-provider` — bootstrap auto-writes
+`provider=ollama, model=bge-m3` and pulls the model, so semantic dedup
+isn't silently disabled (the symptom is recommendations repeating
+near-identical content under different ids). This is skipped under
+Docker (the container can't reach the host's Ollama at `localhost`) and
+when you explicitly disable embedding via `--embedding-provider ""`.
+Emits `embedding_auto_ollama` in the progress stream when it fires.
+
 ### Step 1 — Pick an LLM service
 
 Tell the user, in plain Chinese (or the conversation's language):

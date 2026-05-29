@@ -4,6 +4,14 @@
 
 ---
 
+## v0.3.95 / extension v0.3.54: embedding 默认值兜底 + 语义去重未启用提示（2026-05-29）
+
+- 修复「embedding 服务静默禁用 → 刷到换皮重复视频」的根因。bvid 级去重一直 100% 生效（同一 bvid 不会重复推荐），但同一内容的不同 ID（跨平台镜像 / 转载 / 同名系列）只能靠 embedding 语义去重 catch，而 embedding 一旦悬空就只剩日志一行警告、用户无感知。
+- **新增 `/api/health` 的 `embedding_ready` 字段**：插件 popup 在 embedding 未启用时显示一条可关闭的提示横幅，「一键启用本地 Ollama」按钮直接 PUT `/api/config` 热加载并复检 health，成功才收起横幅（`fetchHealth` + `maybeShowEmbeddingBanner`）。
+- **`openbiliclaw init` 自动兜底**：`_interactive_embedding_setup(auto_if_ready=True)` 检测到本机 Ollama 已运行且装有 bge-m3 时直接启用本地 embedding、跳过菜单；显式 `setup-embedding` 仍保留完整菜单以便切换 provider。
+- **修复一句话安装的死代码兜底**：`agent_bootstrap.py` 的 `auto_embedding_to_ollama` 此前声明后从未置 True（兜底等于失效），导致「主模型选 Claude/DeepSeek/OpenRouter（不能做 embedding）却没单独配 embedding」时 embedding 悬空。新增 `should_auto_wire_embedding()`：embedding 未配置、用户未显式 `--embedding-provider ""` 关闭、且非 Docker 时，自动写入 `provider=ollama, model=bge-m3` 并拉取模型。
+- 测试：新增 `embedding_ready` health 两例 + `should_auto_wire_embedding` 四例，后端 test_api_app / test_agent_bootstrap 全绿，扩展 typecheck 通过。
+
 ## v0.3.94 / extension v0.3.53: 推荐封面图加载白闪修复（三端）（2026-05-29）
 
 - 修复推荐封面图在向下滚动 / 加载更多时「先白一下再出来」的问题（三端）：移动 Web 封面改为全部 eager 加载、滚动预热窗口扩到 16 张 / 2400px；桌面 Web 封面 `lazy→eager` 并在「加载更多」前预解码新封面（`warmCoverImages`）；插件 popup 续页前预解码封面（`preloadCoverImages`）、自动加载阈值 96px→600px。封面在卡片进入视口前完成下载+解码，渲染即出图，不再露白底。

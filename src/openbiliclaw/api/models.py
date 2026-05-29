@@ -36,6 +36,11 @@ class HealthResponse(BaseModel):
     service: str
     profile_ready: bool | None = None
     lan_ip: str | None = None
+    # v0.3.95+: surfaces whether the embedding service built successfully.
+    # ``False`` means semantic dedup / diversity is degraded (recommendations
+    # may repeat near-identical content under different ids) — the popup
+    # turns this into a one-click "enable local Ollama" banner.
+    embedding_ready: bool | None = None
 
 
 class RecommendationOut(BaseModel):

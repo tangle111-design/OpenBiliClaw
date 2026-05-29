@@ -50,7 +50,7 @@ result = await service.check_and_update_now()
 
 降级模式下可用接口：
 
-- `GET /api/health`：返回 `status="degraded"`、`reason="llm_registry_unavailable"` 和 blocking issues；当 `SoulEngine` 可用时会额外返回可选字段 `profile_ready`，表示 soul 画像是否已生成。
+- `GET /api/health`：返回 `status="degraded"`、`reason="llm_registry_unavailable"` 和 blocking issues；当 `SoulEngine` 可用时会额外返回可选字段 `profile_ready`，表示 soul 画像是否已生成。v0.3.95+ 额外返回 `embedding_ready`（bool）——embedding 服务是否成功构建；`false` 表示语义去重 / MMR 多样性降级（可能刷到换皮重复内容），插件 popup 据此显示「一键启用本地 Ollama」横幅。
 - `GET /api/config`：返回完整配置、`degraded=true` 和同一组 issues。
 - `PUT /api/config`：允许保存修复配置，但跳过热重载并返回 `restart_required=true`。
 - `GET /api/runtime-status` 与 `/api/runtime-stream`：用于 popup 展示降级状态；stream 会先发送 `{type:"degraded", ...}` 并保持连接。

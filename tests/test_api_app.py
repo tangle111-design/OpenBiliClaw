@@ -721,6 +721,37 @@ class TestBackendAPI:
         assert body["service"] == "openbiliclaw-api"
         assert body["profile_ready"] is True
 
+    def test_health_endpoint_reports_embedding_not_ready_without_service(self) -> None:
+        from fastapi.testclient import TestClient
+
+        # A bare object() soul engine has no _embedding_service attribute,
+        # so embedding is reported as not ready — the popup turns this into
+        # the "enable local Ollama" banner.
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.get("/api/health")
+
+        assert response.status_code == 200
+        assert response.json()["embedding_ready"] is False
+
+    def test_health_endpoint_reports_embedding_ready_when_service_present(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class EmbeddingSoulEngine:
+            def __init__(self) -> None:
+                self._embedding_service = object()
+
+        app = create_app(
+            memory_manager=object(), database=object(), soul_engine=EmbeddingSoulEngine()
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/health")
+
+        assert response.status_code == 200
+        assert response.json()["embedding_ready"] is True
+
     def test_detect_lan_ip_prefers_rfc1918_interface_over_benchmark_tun(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

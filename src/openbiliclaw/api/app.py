@@ -1004,16 +1004,29 @@ def create_app(
             logger.debug("Health profile readiness check failed", exc_info=True)
             return None
 
+    def _health_embedding_ready() -> bool:
+        """Whether a working embedding service was built at startup.
+
+        ``False`` means semantic dedup / MMR diversity is degraded — the
+        popup surfaces this as a one-click "enable local Ollama" banner so
+        the user isn't left silently scrolling near-duplicate content with
+        only a log line as the signal.
+        """
+        soul_engine = getattr(ctx, "soul_engine", None)
+        return getattr(soul_engine, "_embedding_service", None) is not None
+
     @app.get("/api/health", response_model=HealthResponse, response_model_exclude_none=True)
     def health() -> HealthResponse | JSONResponse:
         profile_ready = _health_profile_ready()
         lan_ip = _detect_lan_ip()
+        embedding_ready = _health_embedding_ready()
         if bool(getattr(ctx, "degraded", False)):
             body: dict[str, object] = {
                 "status": "degraded",
                 "service": "openbiliclaw-api",
                 "reason": str(getattr(ctx, "degraded_reason", "")),
                 "issues": _degraded_issues_payload(),
+                "embedding_ready": embedding_ready,
             }
             if profile_ready is not None:
                 body["profile_ready"] = profile_ready
@@ -1025,6 +1038,7 @@ def create_app(
             service="openbiliclaw-api",
             profile_ready=profile_ready,
             lan_ip=lan_ip,
+            embedding_ready=embedding_ready,
         )
 
     @app.get("/api/image-proxy", response_model=None)

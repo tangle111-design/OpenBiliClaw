@@ -138,6 +138,20 @@ export async function checkBackendStatus() {
   }
 }
 
+// Full /health payload (status, profile_ready, embedding_ready, ...).
+// Returns null when the backend is unreachable so callers can no-op
+// instead of throwing on startup.
+export async function fetchHealth() {
+  try {
+    const backendUrl = await getBackendBaseUrl();
+    const response = await fetch(`${backendUrl}/health`, { method: "GET" });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchRecommendations() {
   const payload = await requestJson("/recommendations", { method: "GET" });
   return Array.isArray(payload.items) ? payload.items.map(normalizeRecommendation) : [];

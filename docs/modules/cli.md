@@ -337,6 +337,8 @@ $ openbiliclaw profile
 
 默认初始化信号上限：B 站观看历史最多 300 条、收藏最多 300 条、关注 UP 最多 100 人；小红书 / 抖音 / YouTube 的 `bootstrap_profile` 每个 scope 默认最多 300 条。交互式 `init` 会让用户确认 B 站收藏 / 关注上限，收藏回车使用 300、关注回车使用 100；脚本化场景可传 `--bilibili-favorite-limit N` / `--bilibili-follow-limit N`，传 `0` 表示跳过对应信号。
 
+v0.3.95+：交互式 `init` 的 embedding 配置阶段（`_interactive_embedding_setup(auto_if_ready=True)`）会先探测本机 Ollama——若 Ollama 已运行且装有 `bge-m3`，直接写入 `provider=ollama, model=bge-m3` 并跳过选项菜单，避免「确认用 Ollama 当聊天模型、却把语义去重所需的 embedding 留空」导致推荐刷到换皮重复。显式 `setup-embedding` 命令不走自动跳过，始终展示完整菜单以便切换 provider。
+
 ```bash
 $ openbiliclaw init
 初始化 OpenBiliClaw
