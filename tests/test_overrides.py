@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import pytest
+
 from openbiliclaw.soul.overrides import (
     DomainAdd,
     InterestPolarityEdit,
     ListEdit,
+    ProfileEditError,
     ProfileOverrides,
     ScalarPin,
     TextPin,
+    apply_edit,
     apply_overrides,
 )
 from openbiliclaw.soul.profile import (
@@ -170,3 +174,102 @@ def test_apply_overrides_remove_suppresses_rederived_trait() -> None:
     assert "完美主义" in rebuilt.core.core_traits
     result = apply_overrides(rebuilt, ov)
     assert "完美主义" not in result.core.core_traits
+
+
+# --- apply_edit reducer ---------------------------------------------------
+
+
+def test_apply_edit_does_not_mutate_input() -> None:
+    base = ProfileOverrides()
+    new_ov, res = apply_edit(base, target="core.core_traits", op="add", value="务实")
+    assert base.is_empty()
+    assert new_ov.list_edits["core.core_traits"].add == ["务实"]
+    assert res.ok
+
+
+def test_apply_edit_text_set_trims_and_reset() -> None:
+    ov, _ = apply_edit(
+        ProfileOverrides(), target="personality_portrait", op="set", value="  我的画像  "
+    )
+    assert ov.text_pins["personality_portrait"].value == "我的画像"
+    ov2, _ = apply_edit(ov, target="personality_portrait", op="reset")
+    assert "personality_portrait" not in ov2.text_pins
+
+
+def test_apply_edit_text_validation() -> None:
+    with pytest.raises(ProfileEditError):
+        apply_edit(ProfileOverrides(), target="role.life_stage", op="set", value="   ")
+    with pytest.raises(ProfileEditError):
+        apply_edit(ProfileOverrides(), target="personality_portrait", op="set", value="x" * 1201)
+    with pytest.raises(ProfileEditError):
+        apply_edit(ProfileOverrides(), target="role.life_stage", op="add", value="x")
+
+
+def test_apply_edit_scalar_clamps() -> None:
+    ov, _ = apply_edit(
+        ProfileOverrides(), target="surface.exploration_openness", op="set", value=2.0
+    )
+    assert ov.scalar_pins["surface.exploration_openness"].value == 1.0
+
+
+def test_apply_edit_list_mutual_exclusion_and_idempotency() -> None:
+    ov, _ = apply_edit(ProfileOverrides(), target="core.core_traits", op="add", value="务实")
+    ov, _ = apply_edit(ov, target="core.core_traits", op="add", value="务实")
+    assert ov.list_edits["core.core_traits"].add == ["务实"]
+    ov, _ = apply_edit(ov, target="core.core_traits", op="remove", value="务实")
+    edit = ov.list_edits["core.core_traits"]
+    assert edit.add == []
+    assert edit.remove == ["务实"]
+
+
+def test_apply_edit_list_reset_item_drops_empty_field() -> None:
+    ov, _ = apply_edit(ProfileOverrides(), target="values_layer.values", op="remove", value="自由")
+    ov, _ = apply_edit(ov, target="values_layer.values", op="reset", value="自由")
+    assert "values_layer.values" not in ov.list_edits
+
+
+def test_apply_edit_list_max_adds() -> None:
+    ov = ProfileOverrides()
+    for i in range(30):
+        ov, _ = apply_edit(ov, target="core.deep_needs", op="add", value=f"需求{i}")
+    with pytest.raises(ProfileEditError):
+        apply_edit(ov, target="core.deep_needs", op="add", value="超额")
+
+
+def test_apply_edit_unknown_target_and_op() -> None:
+    with pytest.raises(ProfileEditError):
+        apply_edit(ProfileOverrides(), target="core.nonexistent", op="add", value="x")
+    with pytest.raises(ProfileEditError):
+        apply_edit(ProfileOverrides(), target="core.core_traits", op="frobnicate", value="x")
+
+
+def test_apply_edit_list_rejects_set_op() -> None:
+    with pytest.raises(ProfileEditError):
+        apply_edit(ProfileOverrides(), target="core.core_traits", op="set", value="x")
+
+
+def test_apply_edit_interest_domain_add_remove() -> None:
+    ov, _ = apply_edit(ProfileOverrides(), target="dislikes", op="add", value="标题党测评")
+    assert ov.interest_edits["dislikes"].add_domains[0].domain == "标题党测评"
+    ov, _ = apply_edit(ov, target="dislikes", op="remove", value="标题党测评")
+    edit = ov.interest_edits["dislikes"]
+    assert all(d.domain != "标题党测评" for d in edit.add_domains)
+    assert "标题党测评" in edit.remove_domains
+
+
+def test_apply_edit_interest_specific_via_parent() -> None:
+    ov, _ = apply_edit(ProfileOverrides(), target="likes", op="add", value="自托管", parent="科技")
+    assert ov.interest_edits["likes"].specific_edits["科技"].add == ["自托管"]
+
+
+def test_apply_edit_interest_weight_pin_requires_weight() -> None:
+    ov, _ = apply_edit(ProfileOverrides(), target="likes", op="set", value="科技", weight=0.95)
+    assert ov.interest_edits["likes"].weight_pins["科技"] == 0.95
+    with pytest.raises(ProfileEditError):
+        apply_edit(ProfileOverrides(), target="likes", op="set", value="科技")
+
+
+def test_apply_edit_feeds_apply_overrides() -> None:
+    ov, _ = apply_edit(ProfileOverrides(), target="dislikes", op="add", value="营销号")
+    result = apply_overrides(_sample_profile(), ov)
+    assert "营销号" in result.preferences.disliked_topics

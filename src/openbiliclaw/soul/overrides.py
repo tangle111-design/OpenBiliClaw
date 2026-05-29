@@ -476,3 +476,193 @@ def apply_overrides(profile: OnionProfile, overrides: ProfileOverrides) -> Onion
         _set_text_field(result, path, text_pin.value)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Edit reducer: validate one user edit and fold it into the overrides.
+# ---------------------------------------------------------------------------
+
+MAX_PORTRAIT_LEN = 1200
+MAX_TEXT_LEN = 200
+MAX_LIST_ITEM_LEN = 40
+MAX_LIST_ADDS = 30
+VALID_OPS: tuple[str, ...] = ("set", "add", "remove", "reset")
+
+
+class ProfileEditError(ValueError):
+    """Raised when a profile edit request is invalid (maps to HTTP 422)."""
+
+
+@dataclass
+class EditResult:
+    ok: bool
+    target: str
+    op: str
+    message: str = ""
+
+
+def _clone_overrides(overrides: ProfileOverrides) -> ProfileOverrides:
+    return ProfileOverrides.from_dict(overrides.to_dict())
+
+
+def _require_text(value: object, *, max_len: int, label: str) -> str:
+    if not isinstance(value, str):
+        raise ProfileEditError(f"{label} 需要文本值")
+    trimmed = value.strip()
+    if not trimmed:
+        raise ProfileEditError(f"{label} 不能为空")
+    if len(trimmed) > max_len:
+        raise ProfileEditError(f"{label} 超长（最多 {max_len} 字）")
+    return trimmed
+
+
+def _require_number(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ProfileEditError("需要数值")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ProfileEditError("需要数值") from None
+
+
+def _drop(items: list[str], key: str) -> list[str]:
+    return [item for item in items if _norm(item) != key]
+
+
+def _edit_text(ov: ProfileOverrides, target: str, op: str, value: object) -> None:
+    if op == "reset":
+        ov.text_pins.pop(target, None)
+        return
+    if op != "set":
+        raise ProfileEditError(f"{target} 只支持 set / reset")
+    max_len = MAX_PORTRAIT_LEN if target == "personality_portrait" else MAX_TEXT_LEN
+    ov.text_pins[target] = TextPin(value=_require_text(value, max_len=max_len, label=target))
+
+
+def _edit_scalar(ov: ProfileOverrides, target: str, op: str, value: object) -> None:
+    if op == "reset":
+        ov.scalar_pins.pop(target, None)
+        return
+    if op != "set":
+        raise ProfileEditError(f"{target} 只支持 set / reset")
+    ov.scalar_pins[target] = ScalarPin(value=_clamp01(_require_number(value)))
+
+
+def _edit_list(ov: ProfileOverrides, target: str, op: str, value: object) -> None:
+    edit = ov.list_edits.get(target, ListEdit())
+    if op == "reset" and (value is None or (isinstance(value, str) and not value.strip())):
+        ov.list_edits.pop(target, None)
+        return
+    item = _require_text(value, max_len=MAX_LIST_ITEM_LEN, label=target)
+    key = _norm(item)
+    if op == "add":
+        edit.remove = _drop(edit.remove, key)
+        if all(_norm(existing) != key for existing in edit.add):
+            edit.add.append(item)
+        if len(edit.add) > MAX_LIST_ADDS:
+            raise ProfileEditError(f"{target} 自定义新增过多（最多 {MAX_LIST_ADDS} 项）")
+    elif op == "remove":
+        edit.add = _drop(edit.add, key)
+        if all(_norm(existing) != key for existing in edit.remove):
+            edit.remove.append(item)
+    elif op == "reset":
+        edit.add = _drop(edit.add, key)
+        edit.remove = _drop(edit.remove, key)
+    else:
+        raise ProfileEditError(f"{target} 只支持 add / remove / reset")
+    if edit.is_empty():
+        ov.list_edits.pop(target, None)
+    else:
+        ov.list_edits[target] = edit
+
+
+def _edit_interest(
+    ov: ProfileOverrides,
+    polarity: str,
+    op: str,
+    value: object,
+    parent: str,
+    weight: float | None,
+) -> None:
+    edit = ov.interest_edits.get(polarity, InterestPolarityEdit())
+    if op == "reset" and (value is None or (isinstance(value, str) and not value.strip())):
+        ov.interest_edits.pop(polarity, None)
+        return
+
+    name = _require_text(value, max_len=MAX_LIST_ITEM_LEN, label=polarity)
+    key = _norm(name)
+    parent_key = parent.strip()
+
+    if parent_key and op in ("add", "remove"):
+        # specific under a domain
+        listedit = edit.specific_edits.get(parent_key, ListEdit())
+        if op == "add":
+            listedit.remove = _drop(listedit.remove, key)
+            if all(_norm(existing) != key for existing in listedit.add):
+                listedit.add.append(name)
+        else:  # remove
+            listedit.add = _drop(listedit.add, key)
+            if all(_norm(existing) != key for existing in listedit.remove):
+                listedit.remove.append(name)
+        if listedit.is_empty():
+            edit.specific_edits.pop(parent_key, None)
+        else:
+            edit.specific_edits[parent_key] = listedit
+    elif op == "add":
+        edit.remove_domains = _drop(edit.remove_domains, key)
+        if all(_norm(dom.domain) != key for dom in edit.add_domains):
+            new_weight = _clamp01(weight) if weight is not None else 0.5
+            edit.add_domains.append(DomainAdd(domain=name, weight=new_weight))
+    elif op == "remove":
+        edit.add_domains = [dom for dom in edit.add_domains if _norm(dom.domain) != key]
+        if all(_norm(existing) != key for existing in edit.remove_domains):
+            edit.remove_domains.append(name)
+    elif op == "set":
+        if weight is None:
+            raise ProfileEditError("固定兴趣权重需要 weight")
+        edit.weight_pins[name] = _clamp01(weight)
+    elif op == "reset":
+        edit.add_domains = [dom for dom in edit.add_domains if _norm(dom.domain) != key]
+        edit.remove_domains = _drop(edit.remove_domains, key)
+        edit.weight_pins = {k: v for k, v in edit.weight_pins.items() if _norm(k) != key}
+        edit.specific_edits = {k: v for k, v in edit.specific_edits.items() if _norm(k) != key}
+    else:
+        raise ProfileEditError(f"{polarity} 只支持 add / remove / set / reset")
+
+    if edit.is_empty():
+        ov.interest_edits.pop(polarity, None)
+    else:
+        ov.interest_edits[polarity] = edit
+
+
+def apply_edit(
+    overrides: ProfileOverrides,
+    *,
+    target: str,
+    op: str,
+    value: object = None,
+    parent: str = "",
+    weight: float | None = None,
+) -> tuple[ProfileOverrides, EditResult]:
+    """Validate one edit and fold it into a *copy* of ``overrides``.
+
+    Pure: never mutates the input. Raises ``ProfileEditError`` on invalid
+    input (unknown target/op, empty/oversized value, …). add/remove sets are
+    kept mutually exclusive; repeated add / absent remove are idempotent.
+    """
+    if op not in VALID_OPS:
+        raise ProfileEditError(f"未知操作: {op}")
+    ov = _clone_overrides(overrides)
+
+    if target in TEXT_FIELDS:
+        _edit_text(ov, target, op, value)
+    elif target in SCALAR_FIELDS:
+        _edit_scalar(ov, target, op, value)
+    elif target in LIST_FIELDS:
+        _edit_list(ov, target, op, value)
+    elif target in INTEREST_POLARITIES:
+        _edit_interest(ov, target, op, value, parent, weight)
+    else:
+        raise ProfileEditError(f"未知字段: {target}")
+
+    return ov, EditResult(ok=True, target=target, op=op)
