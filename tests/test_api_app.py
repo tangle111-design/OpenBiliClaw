@@ -5757,3 +5757,14 @@ class TestProfileEditEndpoints:
         )
         state2 = client.get("/api/profile/edit-state").json()  # type: ignore[attr-defined]
         assert state2["fields"]["personality_portrait"]["pinned"] is False
+
+    def test_profile_summary_carries_overrides_annotation(self, tmp_path: Path) -> None:
+        client = self._client(tmp_path)
+        client.post(  # type: ignore[attr-defined]
+            "/api/profile/edit",
+            json={"target": "core.core_traits", "op": "add", "value": "务实"},
+        )
+        resp = client.get("/api/profile-summary")  # type: ignore[attr-defined]
+        assert resp.status_code == 200
+        overrides = resp.json()["overrides"]
+        assert overrides["list_edits"]["core.core_traits"]["add"] == ["务实"]

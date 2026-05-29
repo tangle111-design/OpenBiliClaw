@@ -1478,6 +1478,14 @@ def create_app(
         except Exception:
             return ProfileSummaryResponse(initialized=False)
 
+        overrides_summary: dict[str, object] = {}
+        _get_overrides = getattr(ctx.soul_engine, "get_overrides", None)
+        if callable(_get_overrides):
+            try:
+                overrides_summary = _get_overrides().to_dict()
+            except Exception:
+                overrides_summary = {}
+
         from openbiliclaw.api.models import (
             AwarenessNoteOut,
             ContextModeOut,
@@ -1707,6 +1715,7 @@ def create_app(
             next_cognition_cursor=next_cognition_cursor,
             active_insights=active_insights_out,
             recent_awareness=recent_awareness_out,
+            overrides=overrides_summary,
         )
 
     @app.get("/api/profile/edit-state")

@@ -437,6 +437,9 @@ class ProfileSummaryResponse(BaseModel):
     next_cognition_cursor: str = ""
     active_insights: list[InsightHypothesisOut] = Field(default_factory=list)
     recent_awareness: list[AwarenessNoteOut] = Field(default_factory=list)
+    # User-authored overrides (ProfileOverrides.to_dict()), so the display UI
+    # can badge edited/pinned fields. Empty when the user has made no edits.
+    overrides: dict[str, object] = Field(default_factory=dict)
 
 
 class EventIngestResponse(BaseModel):
