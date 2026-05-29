@@ -737,3 +737,14 @@ def test_memory_layer_load_uses_utf8_even_when_default_locale_is_gbk(
     monkeypatch.setattr(builtins, "open", real_open)
     reloaded = json_module.loads(layer_path.read_text(encoding="utf-8"))
     assert reloaded["summary"] == "更新后的画像 ✨"
+
+
+def test_load_profile_overrides_corrupt_file_returns_empty(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    path = tmp_path / "memory" / "profile_overrides.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{ this is not valid json", encoding="utf-8")
+
+    # Corrupt overrides must not raise (which would degrade the profile API).
+    assert memory.load_profile_overrides().is_empty()

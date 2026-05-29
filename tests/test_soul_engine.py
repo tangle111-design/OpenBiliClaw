@@ -15,6 +15,7 @@ from openbiliclaw.soul.profile import (
     CoreLayer,
     InterestDomain,
     InterestLayer,
+    InterestSpecific,
     OnionProfile,
 )
 
@@ -1097,3 +1098,35 @@ async def test_apply_user_edit_invalid_target_raises(tmp_path: Path) -> None:
 
     with pytest.raises(ProfileEditError):
         await engine.apply_user_edit(target="core.bogus", op="add", value="x")
+
+
+def test_effective_disliked_topics_honors_specific_removal(tmp_path: Path) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    _seed_soul(
+        memory,
+        OnionProfile(
+            interest=InterestLayer(
+                dislikes=[
+                    InterestDomain(
+                        domain="低质内容", weight=0.9, specifics=[InterestSpecific(name="标题党")]
+                    )
+                ]
+            )
+        ),
+    )
+    assert "标题党" in engine.get_effective_disliked_topics()
+
+    new_ov, _ = apply_edit(
+        memory.load_profile_overrides(),
+        target="dislikes",
+        op="remove",
+        value="标题党",
+        parent="低质内容",
+    )
+    memory.save_profile_overrides(new_ov)
+
+    effective = engine.get_effective_disliked_topics()
+    assert "标题党" not in effective  # specific removal must reach the hard filter
+    assert "低质内容" in effective

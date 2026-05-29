@@ -32,7 +32,7 @@ from .dialogue_insight_analyzer import (
     DialogueInsightAnalyzer,
 )
 from .insight_analyzer import InsightAnalyzer
-from .overrides import ProfileOverrides, apply_edit, apply_overrides, effective_dislike_terms
+from .overrides import ProfileOverrides, apply_edit, apply_overrides
 from .pipeline import ProfileUpdatePipeline
 from .preference_analyzer import PreferenceAnalyzer
 from .profile import (
@@ -369,26 +369,44 @@ class SoulEngine:
         return self._memory.load_profile_overrides()
 
     def get_effective_disliked_topics(self) -> list[str]:
-        """Effective dislike terms for hard filters (base-then-overlay).
+        """Effective dislike terms for hard filters.
 
-        ``base`` = raw ``soul.interest.dislikes`` (domains + specifics) ∪ raw
-        flat ``preference.disliked_topics``; the dislikes overlay's remove/add
-        is then applied — remove last, so a user-removed term is NOT re-added
-        by a raw source (the reason this is not a plain union, evals F6).
+        Soul-side dislikes are taken from the EFFECTIVE profile (``apply_overrides``)
+        so overlay edits at *every* granularity reflect here — domain add/remove
+        AND per-domain specific add/remove. Flat ``preference.disliked_topics``
+        (which lives outside the soul layer) is unioned in, but suppressed by any
+        overlay dislike removal (domain- or specific-level) so a user-removed term
+        is not re-added by the raw preference layer (F6).
         """
-        base: list[str] = []
+        overrides = self._memory.load_profile_overrides()
+        terms: list[str] = []
         soul_data = self._memory.get_layer("soul").data
         if soul_data:
-            raw_profile = OnionProfile.from_dict(soul_data)
-            for domain in raw_profile.interest.dislikes:
-                base.append(domain.domain)
-                base.extend(spec.name for spec in domain.specifics)
+            effective = apply_overrides(OnionProfile.from_dict(soul_data), overrides)
+            for domain in effective.interest.dislikes:
+                terms.append(domain.domain)
+                terms.extend(spec.name for spec in domain.specifics)
+        remove_keys: set[str] = set()
+        dislikes_edit = overrides.interest_edits.get("dislikes")
+        if dislikes_edit is not None:
+            removals = list(dislikes_edit.remove_domains)
+            for spec_edit in dislikes_edit.specific_edits.values():
+                removals.extend(spec_edit.remove)
+            remove_keys = {item.strip().lower() for item in removals if item.strip()}
         preference_data = self._memory.get_layer("preference").data
         if isinstance(preference_data, dict):
             raw_topics = preference_data.get("disliked_topics")
             if isinstance(raw_topics, list):
-                base.extend(str(topic) for topic in raw_topics)
-        return effective_dislike_terms(base, self._memory.load_profile_overrides())
+                terms.extend(str(topic) for topic in raw_topics)
+        result: list[str] = []
+        seen: set[str] = set()
+        for term in terms:
+            key = term.strip().lower()
+            if not key or key in seen or key in remove_keys:
+                continue
+            seen.add(key)
+            result.append(term)
+        return result
 
     async def apply_user_edit(
         self,

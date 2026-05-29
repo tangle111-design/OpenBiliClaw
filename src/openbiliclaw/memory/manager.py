@@ -461,8 +461,15 @@ class MemoryManager:
 
         if not self._profile_overrides_path.exists():
             return ProfileOverrides()
-        with open(self._profile_overrides_path, encoding="utf-8") as file:
-            loaded = json.load(file)
+        try:
+            with open(self._profile_overrides_path, encoding="utf-8") as file:
+                loaded = json.load(file)
+        except (OSError, ValueError) as exc:
+            # ValueError covers json.JSONDecodeError. A corrupt overrides file
+            # must not degrade the whole profile to initialized=false — drop the
+            # overrides and keep serving the AI profile.
+            logger.warning("profile_overrides.json unreadable, ignoring overrides: %s", exc)
+            return ProfileOverrides()
         return ProfileOverrides.from_dict(loaded)
 
     def save_profile_overrides(self, overrides: ProfileOverrides) -> None:
