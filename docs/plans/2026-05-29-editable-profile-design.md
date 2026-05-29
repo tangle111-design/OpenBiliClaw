@@ -1,7 +1,8 @@
 # 可编辑用户画像设计（插件端 + PC/移动 Web）
 
 > 对应 issue **#19 — 用户可编辑/修正 AI 生成的个人画像**
-> 状态：设计稿 v3（已纳入两轮评审 findings）· **Phase 1 后端已实现**（见 `2026-05-29-editable-profile.md` 与 changelog）
+> 状态：设计稿 v3 · **Phase 1（后端）+ Phase 2（插件）+ Phase 3（移动 + 桌面 Web）均已实现**（见 `2026-05-29-editable-profile.md` 与 changelog）
+> 注：实现时发现桌面 Web（`/web`，`web/desktop/`）与移动 SPA（`/m`，`web/`）是**两套独立前端**，已分别接入；本文 §前端设计原述「一份 web 覆盖 /web + /m」有误。
 > 日期：2026-05-29
 
 ## 评审修订（v1 → v2）

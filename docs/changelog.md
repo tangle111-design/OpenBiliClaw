@@ -4,6 +4,13 @@
 
 ---
 
+## 可编辑用户画像 · Phase 2/3：插件 + Web 编辑 UI（2026-05-29）
+
+- **三端可编辑画像 UI**：插件 side panel、移动 Web（`/m`）、桌面 Web（`/web`）画像页都新增「编辑画像」开关，进入后是由未截断的 `GET /api/profile/edit-state` 驱动的编辑面板——chip 增删（核心特质 / 深层需求 / 价值观 / 内在驱动 / 认知风格 / 常看 UP）、兴趣树领域增删（喜欢 / 不喜欢）、长文改写（人格素描 / 人生阶段 / 当前阶段）。
+- **确定性 + 可撤销**：每个控件 POST 一次 `/api/profile/edit`，从返回的 `edit_state` 即时重渲染；文本固定项显示「AI 想更新此项」漂移建议，任一改过的字段可「恢复 AI 建议」（reset）。编辑抗画像重建（后端覆盖层）。
+- **覆盖三套前端**：实现时发现桌面 Web（`/web`，`web/desktop/`）与移动 SPA（`/m`，`web/`）是**两套独立前端**（Phase 1 设计文档曾误以为同一套），本期分别接入；插件为第三套。
+- 测试：插件新增 `tests/popup-profile-edit.test.ts`（typecheck + 347 例全绿）；三端 JS `node --check` 通过；后端编辑 API over-the-wire E2E 13/13。对应 issue #19。
+
 ## 可编辑用户画像 · Phase 1：后端覆盖层（2026-05-29）
 
 - **新增 `soul/overrides.py` 覆盖层**：用户对画像的手动编辑写入独立 `data/memory/profile_overrides.json`，AI 画像照常存 `soul.json`。**有效画像 = AI 画像 ⊕ 用户覆盖**，在读收口 `SoulEngine.get_profile()` 与镜像收口 `MemoryManager.sync_profile_files()` 叠加——三条画像重建落点不变，用户编辑天然不被重建覆盖。
