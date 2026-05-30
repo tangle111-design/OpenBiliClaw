@@ -27,6 +27,24 @@ cp config.example.toml config.toml
 
 `openbiliclaw start` 默认读取这里的 host / port。浏览器插件的手机二维码入口会在后端地址仍是 loopback 时读取 `/api/health.lan_ip`，用局域网 IP 生成 `/m/` 二维码；但后端仍需要绑定 `0.0.0.0`，手机才能连上。
 
+### `[api.auth]`
+
+局域网 / 远程访问的**可选密码门禁**（`ApiAuthConfig`）。仅当 `enabled=true` 且请求非可信本机时生效；本机（loopback 且无转发头）默认免登录，浏览器插件不受影响。详见 [`docs/modules/api-auth.md`](api-auth.md) 与设计文档 [`docs/plans/2026-05-30-web-password-auth-design.md`](../plans/2026-05-30-web-password-auth-design.md)。
+
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `enabled` | bool | `false` | 是否为局域网 / 远程访问开启密码门禁。`true` 且 `password_hash` 为空时按配置错误处理（blocking） |
+| `password_hash` | string | `""` | scrypt 密码哈希。**请勿手填明文**；用 `openbiliclaw set-password` / `init` / 环境变量设置 |
+| `session_secret` | string | `""` | 登录态 HMAC 签名密钥。首次启用为空时自动生成并写回 config；请勿外泄 |
+| `session_ttl_hours` | int | `0` | 登录态有效期（小时）。`0` = 永不过期（默认，「记住登录」）；`>0` = 限时登录 |
+| `trust_loopback` | bool | `true` | 本机请求是否免登录（扩展 / CLI 依赖此项）。设 `false` 连本机也要登录。带代理转发头（`X-Forwarded-For` 等）的请求不算本机 |
+| `trusted_proxies` | list[string] | `[]` | 受信任的同机 / 前置反向代理 IP；仅当直接对端命中此列表，才采信 `X-Forwarded-For`（从右向左）解析真实客户端 IP。**仅 TOML**（env 不支持列表）。同机反代必须配置，否则远程会被误判为本机 |
+| `allowed_bearer_origins` | list[string] | `[]` | 允许「跨源 Bearer 登录」的 Origin 白名单。默认空 = 只允许同源 Cookie 登录，绝不向 JS 返回 token。**仅 TOML** |
+
+> **环境变量覆盖（显式读取）**：`OPENBILICLAW_API_AUTH_ENABLED` / `_PASSWORD`（明文，启动时即 hash）/ `_PASSWORD_HASH` / `_SESSION_SECRET` / `_SESSION_TTL_HOURS` / `_TRUST_LOOPBACK`。`trusted_proxies` 与 `allowed_bearer_origins` 是列表，**只支持 TOML**，没有 env 覆盖。
+>
+> 撤销纪元 `auth_epoch` 与密码指纹 `password_fingerprint` 是运行时高频可变状态，**不在 config.toml**，由后端写在 SQLite `data/openbiliclaw.db` 的 `auth_state` 表（改密 / 登出所有设备 / 轮换密钥时自增，使旧登录态立即失效）。`session_secret` / `password_hash` 也**永不经 `GET /api/config` 返回**（即便 `reveal_keys=true`）。
+
 ### `[llm]`
 
 | 键 | 类型 | 默认值 | 说明 |
@@ -437,6 +455,12 @@ YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 /
 | `OPENBILICLAW_PROXY_PORT` | Docker 运行时可选宿主机代理端口，默认 `7897` |
 | `OPENBILICLAW_PROXY_TIMEOUT` | Docker 运行时代理探测超时（秒），默认 `1.0` |
 | `OPENBILICLAW_DOUYIN_COOKIE` | 抖音 direct-cookie discovery 的显式 Cookie 覆盖；未设置时读取扩展同步的 `data/douyin_cookie.json` |
+| `OPENBILICLAW_API_AUTH_ENABLED` | 覆盖 `[api.auth].enabled`（局域网密码门禁总开关） |
+| `OPENBILICLAW_API_AUTH_PASSWORD` | 明文访问密码；启动时即 scrypt hash，优先于 `_PASSWORD_HASH`（适合 Docker / 多 worker 注入同一密码） |
+| `OPENBILICLAW_API_AUTH_PASSWORD_HASH` | 预生成的 scrypt 密码哈希；覆盖 `[api.auth].password_hash` |
+| `OPENBILICLAW_API_AUTH_SESSION_SECRET` | 登录态 HMAC 签名密钥；覆盖 `[api.auth].session_secret`（多进程共用同一密钥） |
+| `OPENBILICLAW_API_AUTH_SESSION_TTL_HOURS` | 覆盖 `[api.auth].session_ttl_hours`（0=永不过期） |
+| `OPENBILICLAW_API_AUTH_TRUST_LOOPBACK` | 覆盖 `[api.auth].trust_loopback`（本机是否免登录） |
 | `OPENBILICLAW_NO_XHS` | 设为 `1` 时永久跳过 `init` 的小红书接入，即使脚本传了 `--yes-xhs` |
 | `OPENBILICLAW_NO_DOUYIN` | 设为 `1` 时永久跳过 `init` 的抖音接入，即使脚本传了 `--yes-douyin` |
 | `OPENBILICLAW_NO_YOUTUBE` | 设为 `1` 时永久跳过 `init` 的 YouTube 接入，即使脚本传了 `--yes-youtube` |

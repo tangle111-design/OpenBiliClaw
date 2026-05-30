@@ -31,7 +31,10 @@ export function createStreamClient({
   }
 
   function connect() {
-    if (stopped) return;
+    // connect() is the explicit "start": clear any prior disconnect latch so
+    // the stream can be resumed after re-login (the gate closes it on revoke).
+    stopped = false;
+    if (socket) return;
     try {
       socket = new WebSocket(buildWsUrl());
     } catch {

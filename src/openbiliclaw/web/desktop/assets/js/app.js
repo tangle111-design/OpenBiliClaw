@@ -240,13 +240,20 @@
     }
 
     function getApiBase() {
-      // Default to the origin the page is served from, so a non-default backend
-      // port "just works" and a profile edit never silently writes to a
-      // different backend on :8420. An explicit saved/typed setting still wins.
+      // Default to a *relative* same-origin path so the request carries the page
+      // scheme/host/port exactly (correct under an HTTPS reverse proxy and PWA
+      // launch) and the HttpOnly session cookie is sent automatically. An
+      // explicit saved/typed backend setting still wins (cross-origin mode).
+      const typedHost = ($("#backendHost")?.value || storageGet("openbiliclaw.webui.backendHost") || "").trim();
+      const typedPort = String($("#backendPort")?.value || storageGet("openbiliclaw.webui.backendPort") || "").trim();
+      if (!typedHost && !typedPort) {
+        return "/api";
+      }
       const def = locationApiDefault();
-      const host = normalizeBackendHost($("#backendHost")?.value || storageGet("openbiliclaw.webui.backendHost") || def.host);
-      const port = String($("#backendPort")?.value || storageGet("openbiliclaw.webui.backendPort") || def.port).trim() || def.port;
-      return `http://${host}:${port}/api`;
+      const host = normalizeBackendHost(typedHost || def.host);
+      const port = (typedPort || def.port).trim() || def.port;
+      const proto = (typeof location !== "undefined" && location.protocol === "https:") ? "https" : "http";
+      return `${proto}://${host}:${port}/api`;
     }
 
     function restoreBackendEndpoint() {
@@ -290,7 +297,160 @@
     }
 
     function getRuntimeStreamUrl() {
-      return `${getApiBase().replace(/^http/, "ws")}/runtime-stream`;
+      const base = getApiBase();
+      let url;
+      if (base.startsWith("/")) {
+        // relative same-origin base → build an absolute ws(s) URL from the page
+        const proto = (typeof location !== "undefined" && location.protocol === "https:") ? "wss" : "ws";
+        const host = (typeof location !== "undefined" && location.host) || "127.0.0.1:8420";
+        url = `${proto}://${host}${base}/runtime-stream`;
+      } else {
+        url = `${base.replace(/^http/, "ws")}/runtime-stream`;
+      }
+      // cross-origin handshake can't send a cookie → carry the bearer token
+      return appendToken(url);
+    }
+
+    // ── Password gate (login overlay) ────────────────────────────
+    let _authOverlayShown = false;
+    const SESSION_TOKEN_KEY = "openbiliclaw.session_token";
+
+    // Cross-origin mode: the desktop UI points at a backend on a *different*
+    // origin, so the same-origin cookie isn't sent. The server then issues a
+    // finite bearer token (allowed_bearer_origins + ttl>0); we keep it in
+    // sessionStorage and attach it as Authorization / ?token= (review r1#5).
+    function isCrossOriginBase() {
+      const base = getApiBase();
+      if (!base || base.startsWith("/")) return false;
+      try {
+        return new URL(base).origin !== location.origin;
+      } catch {
+        return false;
+      }
+    }
+
+    function getSessionToken() {
+      if (!isCrossOriginBase()) return "";
+      try {
+        return sessionStorage.getItem(SESSION_TOKEN_KEY) || "";
+      } catch {
+        return "";
+      }
+    }
+
+    function setSessionToken(token) {
+      try {
+        if (token) sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+        else sessionStorage.removeItem(SESSION_TOKEN_KEY);
+      } catch { /* sessionStorage unavailable */ }
+    }
+
+    function withBearer(headers) {
+      const token = getSessionToken();
+      return token ? { ...(headers || {}), Authorization: `Bearer ${token}` } : (headers || {});
+    }
+
+    function appendToken(url) {
+      const token = getSessionToken();
+      if (!token) return url;
+      return url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token);
+    }
+
+    async function fetchAuthStatus() {
+      try {
+        const base = getApiBase() || DEFAULT_API_BASE;
+        const res = await fetch(`${base}/auth/status`, {
+          credentials: "same-origin",
+          headers: withBearer(),
+        });
+        if (!res.ok) return { enabled: false, authenticated: true };
+        return await res.json();
+      } catch {
+        return { enabled: false, authenticated: true };
+      }
+    }
+
+    function handleAuthRequired() {
+      // Mid-session token loss (expired / revoked): reload after re-login.
+      showLoginOverlay();
+    }
+
+    function showLoginOverlay(onSuccess) {
+      if (_authOverlayShown) return;
+      _authOverlayShown = true;
+      const overlay = document.createElement("div");
+      overlay.id = "authOverlay";
+      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("aria-modal", "true");
+      overlay.style.cssText =
+        "position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;" +
+        "background:rgba(20,28,46,0.55);backdrop-filter:blur(4px);";
+      overlay.innerHTML =
+        '<form id="authForm" autocomplete="off" style="width:min(360px,90vw);display:flex;flex-direction:column;gap:14px;' +
+        'padding:28px 24px;background:#fff;border-radius:18px;box-shadow:0 18px 48px rgba(0,0,0,.22);">' +
+        '<h2 style="margin:0;font-size:20px;color:#fb7299;text-align:center;">OpenBiliClaw</h2>' +
+        '<p style="margin:0;font-size:14px;color:#60708c;text-align:center;">请输入访问密码</p>' +
+        '<input id="authPassword" type="password" placeholder="密码" autocomplete="current-password" ' +
+        'aria-label="访问密码" style="padding:12px 14px;font-size:15px;border:1px solid #e2e6ef;border-radius:10px;">' +
+        '<button type="submit" style="padding:12px;font-size:15px;font-weight:600;color:#fff;background:#fb7299;' +
+        'border:none;border-radius:10px;cursor:pointer;">登录</button>' +
+        '<p id="authError" role="alert" hidden style="margin:0;font-size:13px;color:#ef4444;text-align:center;"></p>' +
+        "</form>";
+      document.body.appendChild(overlay);
+      const input = overlay.querySelector("#authPassword");
+      const button = overlay.querySelector("button");
+      const errorEl = overlay.querySelector("#authError");
+      input?.focus();
+
+      const showError = (msg) => {
+        if (!errorEl) return;
+        errorEl.textContent = msg;
+        errorEl.hidden = false;
+        input?.select();
+      };
+
+      overlay.querySelector("#authForm")?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const password = input?.value || "";
+        if (!password) { showError("请输入密码"); return; }
+        if (button) { button.disabled = true; button.textContent = "登录中…"; }
+        if (errorEl) errorEl.hidden = true;
+        try {
+          const base = getApiBase() || DEFAULT_API_BASE;
+          const res = await fetch(`${base}/auth/login`, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password }),
+          });
+          const data = await res.json().catch(() => null);
+          if (res.ok && data?.ok) {
+            // Cross-origin bearer mode: the server returns a finite token here.
+            if (data.token) setSessionToken(data.token);
+            overlay.remove();
+            _authOverlayShown = false;
+            if (typeof onSuccess === "function") onSuccess();
+            else location.reload();
+            return;
+          }
+          if (res.status === 403) showError("此来源不被允许跨源登录（需配置 allowed_bearer_origins）");
+          else if (res.status === 400) showError("跨源登录需设置有限有效期（session_ttl_hours>0）");
+          else showError(res.status === 429 ? "尝试过于频繁，请稍后再试" : "密码错误");
+        } catch {
+          showError("无法连接后端，请稍后重试");
+        } finally {
+          if (button) { button.disabled = false; button.textContent = "登录"; }
+        }
+      });
+    }
+
+    function ensureAuthenticated() {
+      return fetchAuthStatus().then((status) => {
+        if (status && status.enabled && status.authenticated === false) {
+          return new Promise((resolve) => showLoginOverlay(resolve));
+        }
+        return undefined;
+      });
     }
 
     function escapeHtml(value) {
@@ -360,6 +520,12 @@
     async function requestJsonStrict(path, options = {}) {
       const base = options.baseUrl || getApiBase() || DEFAULT_API_BASE;
       const { baseUrl, timeoutMs = 60000, signal, ...fetchOptions } = options;
+      // Same-origin: send the session cookie + CSRF header on EVERY request
+      // (incl. GET) so state-changing GETs like /api/recommendations are
+      // covered (§4.8). Cross-origin: attach the bearer token instead.
+      fetchOptions.credentials = "same-origin";
+      fetchOptions.headers = { ...(fetchOptions.headers || {}), "X-OBC-Auth": "1" };
+      fetchOptions.headers = withBearer(fetchOptions.headers);
       const controller = signal ? null : new AbortController();
       const timeoutId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
       try {
@@ -367,6 +533,10 @@
         const contentType = response.headers.get("content-type") || "";
         const details = contentType.includes("application/json") ? await response.json().catch(() => null) : await response.text().catch(() => "");
         if (!response.ok) {
+          if (response.status === 401) {
+            setSessionToken("");  // drop a stale bearer token before re-login
+            handleAuthRequired();
+          }
           const error = new Error(configErrorMessage(details) || `${path} 请求失败：HTTP ${response.status}`);
           error.status = response.status;
           error.details = details;
@@ -744,7 +914,17 @@
         return "";
       }
       const base = getApiBase() || DEFAULT_API_BASE;
-      return `${base}/image-proxy?url=${encodeURIComponent(url)}`;
+      // cross-origin <img> can't send the cookie/header → carry the token in the query
+      return appendToken(`${base}/image-proxy?url=${encodeURIComponent(url)}`);
+    }
+
+    // In cross-origin bearer mode the cover <img> carries the token in ?token=,
+    // but a plain <img> sends no Origin so the backend would ignore it. Marking
+    // it crossorigin makes the browser send Origin (and skip the cookie), so the
+    // allowed-origin + ?token= path authorizes it. Same-origin mode omits this so
+    // the cookie is still sent. See review r4#2.
+    function imgCrossOriginAttr() {
+      return isCrossOriginBase() ? ' crossorigin="anonymous"' : "";
     }
 
     function coverImg(item) {
@@ -753,7 +933,7 @@
       // loading="eager" (not lazy): cover starts fetching the moment the card is
       // in the DOM, so a card scrolled into view never shows the gradient
       // placeholder while a native lazy <img> defers its fetch ("白一下再出来").
-      return `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.title)} 的封面" loading="eager" fetchpriority="auto" decoding="async" referrerpolicy="no-referrer">`;
+      return `<img src="${escapeHtml(url)}"${imgCrossOriginAttr()} alt="${escapeHtml(item.title)} 的封面" loading="eager" fetchpriority="auto" decoding="async" referrerpolicy="no-referrer">`;
     }
 
     // Warm the browser cache for a batch of cover images before their cards are
@@ -769,6 +949,7 @@
         if (!src || warmedCoverUrls.has(src)) continue;
         warmedCoverUrls.add(src);
         const img = new Image();
+        if (isCrossOriginBase()) img.crossOrigin = "anonymous";
         img.decoding = "async";
         const loaded = new Promise((resolve) => {
           img.onload = () => resolve();
@@ -2698,6 +2879,7 @@
       thumb.classList.toggle("has-image", Boolean(url));
       if (!url) return;
       const image = document.createElement("img");
+      if (isCrossOriginBase()) image.crossOrigin = "anonymous";
       image.src = url;
       image.alt = "";
       image.loading = "lazy";
@@ -3244,7 +3426,8 @@
       $("#statusLabel").textContent = "首屏渲染失败";
       $("#runtimeSummary").textContent = error?.message || "请检查后端返回的数据结构。";
     }
-    hydrateFromBackend()
+    ensureAuthenticated()
+      .then(() => hydrateFromBackend())
       .then(connectRuntimeStream)
       .catch((error) => {
         console.error("后端数据加载失败", error);

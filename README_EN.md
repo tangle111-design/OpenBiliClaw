@@ -413,6 +413,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 │      (Cookies · XHS/DY/YT tasks · init bridge)        │
 └────────────────────────┬────────────────────────────┘
                          │ REST API / WebSocket (presence + cookies + pool counts + source-aware clicks + probes)
+                         │ + Mobile/Desktop Web (/m · /web) · optional [api.auth] password gate (local free / LAN needs password)
 ┌────────────────────────▼────────────────────────────┐
 │                 Agent Orchestration                   │
 │       (Skills · Dialogue · Runtime Gate · Account Sync) │

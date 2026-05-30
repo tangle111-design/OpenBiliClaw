@@ -280,6 +280,7 @@ class Database:
         self._ensure_chat_turns_table()
         self._ensure_watch_later_table()
         self._ensure_favorites_table()
+        self._ensure_auth_state_table()
 
         # Set schema version
         self._conn.execute(
@@ -3165,6 +3166,172 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_favorites_added
                 ON favorites(added_at DESC);
         """)
+
+    # ── Auth state (password gate revocation epoch) ──────────────
+
+    def _ensure_auth_state_table(self) -> None:
+        """Create the auth_state key/value table.
+
+        Holds the global revocation epoch (``auth_epoch``) and the password
+        fingerprint, kept out of ``config.toml`` so that revocation is a
+        cross-process atomic counter rather than a whole-file rewrite. See
+        ``docs/plans/2026-05-30-web-password-auth-design.md`` §4.7.
+        """
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS auth_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
+
+    def get_auth_epoch(self) -> int:
+        """Return the current revocation epoch. Reads fresh WAL state.
+
+        A missing row means "never bumped" → 0. A present-but-corrupt value
+        RAISES (never silently 0) so the auth gate fails closed instead of
+        resurrecting tokens minted before a prior revocation. See §4.7.
+        """
+        self._ensure_fresh_read()
+        row = self.conn.execute("SELECT value FROM auth_state WHERE key = 'auth_epoch'").fetchone()
+        if row is None:
+            return 0
+        try:
+            return int(row[0])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"corrupt auth_epoch value: {row[0]!r}") from exc
+
+    def bump_auth_epoch(self) -> int:
+        """Atomically increment and return the revocation epoch.
+
+        Uses a short-lived connection with ``BEGIN IMMEDIATE`` so concurrent
+        bumps (or another process) cannot lose an increment.
+        """
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT value FROM auth_state WHERE key = 'auth_epoch'").fetchone()
+            # Missing → 0; corrupt → raise (never reset a damaged epoch downward).
+            current = 0 if row is None else int(row[0])
+            new_value = current + 1
+            conn.execute(
+                """
+                INSERT INTO auth_state (key, value) VALUES ('auth_epoch', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (str(new_value),),
+            )
+            conn.commit()
+            return new_value
+        finally:
+            conn.close()
+
+    def reconcile_password_fingerprint(self, fingerprint: str) -> bool:
+        """Detect a password change and bump the epoch if needed.
+
+        Compares ``fingerprint`` (derived from stable credential material, see
+        ``auth_core.password_fingerprint``) against the stored value, inside a
+        single ``BEGIN IMMEDIATE`` transaction (CAS). Returns ``True`` when the
+        epoch was bumped. First enable (no prior fingerprint) records it WITHOUT
+        bumping. See §4.7.
+        """
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT value FROM auth_state WHERE key = 'password_fingerprint'"
+            ).fetchone()
+            stored = row[0] if row is not None else None
+            bumped = False
+            if stored is None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO auth_state (key, value) VALUES "
+                    "('password_fingerprint', ?)",
+                    (fingerprint,),
+                )
+            elif stored != fingerprint:
+                epoch_row = conn.execute(
+                    "SELECT value FROM auth_state WHERE key = 'auth_epoch'"
+                ).fetchone()
+                # Missing → 0; corrupt → raise (the caller fails closed).
+                current = 0 if epoch_row is None else int(epoch_row[0])
+                conn.execute(
+                    "INSERT OR REPLACE INTO auth_state (key, value) VALUES ('auth_epoch', ?)",
+                    (str(current + 1),),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO auth_state (key, value) VALUES "
+                    "('password_fingerprint', ?)",
+                    (fingerprint,),
+                )
+                bumped = True
+            conn.commit()
+            return bumped
+        finally:
+            conn.close()
+
+    def set_password_fingerprint(self, fingerprint: str) -> None:
+        """Overwrite the stored fingerprint without touching the epoch.
+
+        Used after ``--rotate-secret`` re-bases the fingerprint under a new
+        signing secret, so the next reconcile does not double-bump.
+        """
+        self._execute_write(
+            "INSERT OR REPLACE INTO auth_state (key, value) VALUES ('password_fingerprint', ?)",
+            (fingerprint,),
+        )
+
+    def revoke_and_set_fingerprint(self, fingerprint: str | None, *, force_bump: bool) -> None:
+        """Atomically (single ``BEGIN IMMEDIATE``) set the fingerprint, bumping the
+        epoch when the credential changed or ``force_bump`` is set.
+
+        Used by the local admin endpoint so a password change's revocation
+        (epoch bump) and fingerprint update commit together — never a half state
+        where the new password is live but old sessions survive (review r1#2).
+
+        The bump decision is made INSIDE the transaction by comparing ``fingerprint``
+        to the stored one (CAS), mirroring ``reconcile_password_fingerprint``: a
+        first-ever set (no stored fingerprint) never bumps, but any *change* from an
+        existing fingerprint always does — even when the caller's ``force_bump`` is
+        false. This catches an effective credential change the caller can't see in
+        its request, e.g. admin hot-publishing a ``password_hash`` that drifted on
+        disk via an out-of-band ``set-password`` (review r4#2). ``force_bump`` adds a
+        revoke for enabled on/off toggles, which carry no fingerprint change.
+
+        Raises on a corrupt epoch (caller fails closed). The caller persists the new
+        config FIRST (rolling it back if this raises) and publishes to the live gate
+        only AFTER this commits, so a failure here leaves the durable DB state
+        untouched and the persisted/live auth on the old password; a crash between
+        the config write and this call is healed by the startup fingerprint
+        reconcile (review r2#1).
+        """
+        conn = self.open_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            stored_row = conn.execute(
+                "SELECT value FROM auth_state WHERE key = 'password_fingerprint'"
+            ).fetchone()
+            stored = stored_row[0] if stored_row is not None else None
+            credential_changed = (
+                fingerprint is not None and stored is not None and stored != fingerprint
+            )
+            if force_bump or credential_changed:
+                row = conn.execute(
+                    "SELECT value FROM auth_state WHERE key = 'auth_epoch'"
+                ).fetchone()
+                current = 0 if row is None else int(row[0])  # corrupt → raise
+                conn.execute(
+                    "INSERT OR REPLACE INTO auth_state (key, value) VALUES ('auth_epoch', ?)",
+                    (str(current + 1),),
+                )
+            if fingerprint is not None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO auth_state (key, value) VALUES "
+                    "('password_fingerprint', ?)",
+                    (fingerprint,),
+                )
+            conn.commit()
+        finally:
+            conn.close()
 
     # ── Favorites CRUD ───────────────────────────────────────────
 

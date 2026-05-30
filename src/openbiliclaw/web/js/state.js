@@ -7,6 +7,9 @@
  */
 
 export const state = {
+  authEnabled: false,
+  authenticated: true,
+  needsLogin: false,
   activeTab: "recommend",
   online: false,
   degraded: false,

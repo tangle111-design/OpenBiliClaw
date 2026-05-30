@@ -6,6 +6,13 @@
   <title>OpenBiliClaw</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    /* The popup toggles visibility via the `hidden` property, but nearly every
+       layout class sets `display: flex/grid`, which beats the UA
+       `[hidden] { display: none }` rule at equal specificity — leaving
+       "hidden" elements (embedding banner, comment composers, profile-edit
+       panel, toasts, …) stuck visible. Make `hidden` authoritative everywhere
+       so `el.hidden = true` actually hides. */
+    [hidden] { display: none !important; }
 
     :root {
       --bg-base: #fffafc;
@@ -3668,6 +3675,19 @@
       gap: 8px;
     }
 
+    .settings-inline-btn {
+      align-self: flex-start;
+      margin: 4px 0;
+      padding: 6px 14px;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: #fff;
+      background: var(--brand, #fb7299);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .settings-inline-btn:hover { filter: brightness(1.05); }
     .settings-hint {
       margin: 0 0 4px;
       padding: 8px 10px;
@@ -4611,6 +4631,16 @@
           <p class="settings-hint">
             默认 8420。修改后需用 <code>openbiliclaw start --port &lt;同一端口&gt;</code> 启动后端。
           </p>
+        </div>
+        <div class="settings-field" id="authControlField">
+          <label>局域网访问密码</label>
+          <div class="settings-field-row">
+            <input id="cfgAuthEnabled" type="checkbox">
+            <span>开启后，手机 / 其他设备访问需登录密码（本机与本插件始终免登录）</span>
+          </div>
+          <input id="cfgAuthPassword" type="password" placeholder="设置 / 修改访问密码" autocomplete="new-password" hidden>
+          <button id="cfgAuthSave" type="button" class="settings-inline-btn" hidden>保存密码设置</button>
+          <p class="settings-hint" id="cfgAuthHint">读取鉴权状态中…</p>
         </div>
         <div class="settings-field">
           <label for="cfgLanguage">语言</label>

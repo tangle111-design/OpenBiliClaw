@@ -3,9 +3,21 @@
  * Mirrors extension popup-api.js but without Chrome-specific code.
  */
 
+// Derived from the page origin, so every request stays same-origin and the
+// HttpOnly session cookie (and WebSocket handshake) is carried automatically
+// when the password gate is enabled. See
+// docs/plans/2026-05-30-web-password-auth-design.md §4.3.
 const BASE_URL = `${location.protocol}//${location.host}/api`;
 const DEFAULT_READ_TIMEOUT_MS = 12_000;
 const QUICK_READ_TIMEOUT_MS = 5_000;
+const CSRF_HEADER = "X-OBC-Auth";
+
+/** Notify the shell that the session is gone so it can show the login view. */
+function signalAuthRequired() {
+  try {
+    window.dispatchEvent(new CustomEvent("obc:auth-required"));
+  } catch { /* non-browser env */ }
+}
 
 function abortError(message = "Request aborted") {
   if (typeof DOMException === "function") {
@@ -43,11 +55,18 @@ export async function requestJson(path, options = {}) {
   const { timeoutMs, signal, ...fetchOptions } = options;
   const timeout = withTimeout(signal, timeoutMs);
   if (timeout.signal) fetchOptions.signal = timeout.signal;
+  // Send the session cookie on every request; add the CSRF header on EVERY
+  // request (incl. GET) so state-changing GETs like /api/recommendations are
+  // covered. Only fetch() carries it — <img>/WebSocket don't and don't hit
+  // CSRF-gated paths. Required by the gate, §4.8.
+  fetchOptions.credentials = "same-origin";
+  fetchOptions.headers = { ...(fetchOptions.headers || {}), [CSRF_HEADER]: "1" };
   try {
     const res = await fetch(`${BASE_URL}${path}`, fetchOptions);
     if (!res.ok) {
       let details = null;
       try { details = await res.json(); } catch { details = null; }
+      if (res.status === 401) signalAuthRequired();
       const err = new Error(`${path} failed: ${res.status}`);
       err.status = res.status;
       err.details = details;
@@ -57,6 +76,34 @@ export async function requestJson(path, options = {}) {
   } finally {
     timeout.cleanup();
   }
+}
+
+// ── Auth (password gate) ────────────────────────────────────
+export async function fetchAuthStatus() {
+  try {
+    return await requestJson("/auth/status", { timeoutMs: QUICK_READ_TIMEOUT_MS });
+  } catch {
+    // Treat an unreachable backend as "not gated" so the normal offline UI shows.
+    return { enabled: false, authenticated: true };
+  }
+}
+
+export async function login(password) {
+  const res = await fetch(`${BASE_URL}/auth/login`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  return { ok: res.ok && Boolean(data?.ok), status: res.status, data };
+}
+
+export async function logout() {
+  try {
+    await fetch(`${BASE_URL}/auth/logout`, { method: "POST", credentials: "same-origin" });
+  } catch { /* best-effort cookie clear */ }
 }
 
 const json = (body) => ({

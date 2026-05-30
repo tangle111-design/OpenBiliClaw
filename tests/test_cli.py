@@ -2042,6 +2042,9 @@ def test_init_guides_missing_runtime_config_interactively(
 
     monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
     monkeypatch.setattr(
+        cli_module, "_maybe_setup_password_in_init", lambda **_: None, raising=False
+    )
+    monkeypatch.setattr(
         cli_module,
         "_save_runtime_provider_config",
         fake_save_runtime_config,
@@ -2094,7 +2097,7 @@ def test_init_guides_missing_runtime_config_interactively(
                 "gemini",
                 "gemini-key",
                 "",
-                    "3",
+                "3",
                 "n",
                 "y",
                 "",
@@ -2150,6 +2153,9 @@ def test_init_guides_missing_auth_interactively(
 
     fake_auth = FakeAuthManager()
     monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
+    monkeypatch.setattr(
+        cli_module, "_maybe_setup_password_in_init", lambda **_: None, raising=False
+    )
     monkeypatch.setattr(
         cli_module,
         "_load_runtime_config_error",
@@ -2402,7 +2408,7 @@ def test_init_caps_bilibili_favorites_at_300_and_following_at_100(
             users = [
                 SimpleNamespace(uname=f"关注用户 {idx}", sign=f"签名 {idx}")
                 for idx in range(start, min(start + page_size, 350))
-                ]
+            ]
             return users
 
     class FakeAuthManager:
@@ -4694,3 +4700,255 @@ def test_fetch_xhs_handles_timeout_status(monkeypatch: pytest.MonkeyPatch) -> No
     result = runner.invoke(app, ["fetch-xhs"])
     assert result.exit_code == 0  # timeout is not a hard failure
     assert "超时" in result.output
+
+
+# ── Password gate CLI (set-password / init prompt) ──────────────────────────
+
+
+def test_set_password_command_sets_enables_and_disables(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    from openbiliclaw import auth_core as ac
+    from openbiliclaw.config import Config, load_config, save_config
+
+    root = tmp_path / "runtime"
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
+    save_config(Config(), root / "config.toml")
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
+
+    # set a password (hidden prompt + confirmation)
+    result = runner.invoke(app, ["set-password"], input="hunter2\nhunter2\n")
+    assert result.exit_code == 0, result.stdout
+    cfg = load_config()
+    assert cfg.api.auth.enabled is True
+    assert ac.verify_password("hunter2", cfg.api.auth.password_hash)
+    assert cfg.api.auth.session_secret  # auto-generated
+
+    # set-password must revoke existing sessions immediately (bump the epoch),
+    # not only at the next restart's reconcile (review r2#1).
+    from openbiliclaw.storage.database import Database
+
+    db = Database(cfg.data_path / "openbiliclaw.db")
+    db.initialize()
+    try:
+        assert db.get_auth_epoch() >= 1
+    finally:
+        db.close()
+
+    # disable turns the gate off
+    result = runner.invoke(app, ["set-password", "--disable"])
+    assert result.exit_code == 0
+    assert load_config().api.auth.enabled is False
+
+
+def test_set_password_fails_loudly_when_revocation_unavailable(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    from openbiliclaw.config import Config, save_config
+
+    root = tmp_path / "runtime"
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
+    save_config(Config(), root / "config.toml")
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
+    # epoch bump fails (e.g. data dir unwritable) → must NOT claim immediate revoke
+    monkeypatch.setattr(cli_module, "_bump_auth_epoch", lambda _cfg: False, raising=False)
+
+    result = runner.invoke(app, ["set-password"], input="hunter2\nhunter2\n")
+    assert result.exit_code == 1
+    assert "未能立即撤销" in result.stdout
+
+
+def test_set_password_logout_all_bumps_epoch(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    from openbiliclaw import auth_core as ac
+    from openbiliclaw.config import Config, load_config, save_config
+    from openbiliclaw.storage.database import Database
+
+    root = tmp_path / "runtime"
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
+    cfg = Config()
+    cfg.api.auth.enabled = True
+    cfg.api.auth.password_hash = ac.hash_password("pw")
+    cfg.api.auth.session_secret = "secret"
+    save_config(cfg, root / "config.toml")
+
+    result = runner.invoke(app, ["set-password", "--logout-all"])
+    assert result.exit_code == 0
+    db = Database(load_config().data_path / "openbiliclaw.db")
+    db.initialize()
+    try:
+        assert db.get_auth_epoch() == 1
+    finally:
+        db.close()
+
+
+def test_set_password_refuses_when_env_override_present(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    from openbiliclaw.config import Config, save_config
+
+    root = tmp_path / "runtime"
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
+    save_config(Config(), root / "config.toml")
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
+    # env supplies the password → config edits would be silently overridden
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_PASSWORD", "env-pw")
+
+    for args in (
+        ["set-password"],
+        ["set-password", "--disable"],
+        ["set-password", "--rotate-secret"],
+    ):
+        result = runner.invoke(app, args, input="newpw\nnewpw\n")
+        assert result.exit_code == 1, args
+        assert "环境变量覆盖" in result.stdout, args
+
+    # but --logout-all (DB-only revocation) still works despite env overrides
+    monkeypatch.setattr(cli_module, "_bump_auth_epoch", lambda _cfg: True, raising=False)
+    result = runner.invoke(app, ["set-password", "--logout-all"])
+    assert result.exit_code == 0
+
+
+@pytest.mark.parametrize(
+    "env_var",
+    ["OPENBILICLAW_API_AUTH_SESSION_TTL_HOURS", "OPENBILICLAW_API_AUTH_TRUST_LOOPBACK"],
+)
+def test_set_password_refuses_on_any_auth_env_override(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path, env_var: str
+) -> None:
+    # save_config writes the WHOLE [api.auth] block, so even a ttl / trust_loopback
+    # env override would be baked into config.toml as a stale literal. The guard
+    # must refuse the full override surface, not just the password (review r3#2).
+    from openbiliclaw.config import Config, save_config
+
+    root = tmp_path / "runtime"
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
+    save_config(Config(), root / "config.toml")
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
+    monkeypatch.setenv(env_var, "1")
+
+    result = runner.invoke(app, ["set-password"], input="newpw\nnewpw\n")
+    assert result.exit_code == 1
+    assert "环境变量覆盖" in result.stdout
+    assert env_var in result.stdout
+
+
+def test_set_password_refuses_when_shadowed_by_config_local(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    # config.local.toml is merged OVER config.toml; a credential field pinned there
+    # shadows a set-password write to config.toml (silently reverts on restart), so
+    # the command must refuse loudly instead of reporting success (review r9).
+    from openbiliclaw.config import Config, save_config
+
+    root = tmp_path / "runtime"
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
+    save_config(Config(), root / "config.toml")
+    (root / "config.local.toml").write_text('[api.auth]\npassword = "localpw"\n', encoding="utf-8")
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
+
+    result = runner.invoke(app, ["set-password"], input="newpw\nnewpw\n")
+    assert result.exit_code == 1
+    assert "config.local.toml" in result.stdout
+    assert "password" in result.stdout
+
+
+def test_set_password_logout_all_fails_loudly_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    from openbiliclaw.config import Config, save_config
+
+    root = tmp_path / "runtime"
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
+    save_config(Config(), root / "config.toml")
+    monkeypatch.setattr(cli_module, "_bump_auth_epoch", lambda _cfg: False, raising=False)
+    result = runner.invoke(app, ["set-password", "--logout-all"])
+    assert result.exit_code == 1  # must not report success when revocation failed
+
+
+def test_init_password_prompt_sets_password(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from openbiliclaw import auth_core as ac
+    from openbiliclaw.config import Config, load_config, save_config
+
+    root = tmp_path / "runtime"
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
+    save_config(Config(), root / "config.toml")
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
+    monkeypatch.setattr(cli_module.typer, "confirm", lambda *a, **k: True)
+    monkeypatch.setattr(cli_module.typer, "prompt", lambda *a, **k: "lanpass")
+
+    cli_module._maybe_setup_password_in_init(allow_lan=True)
+
+    cfg = load_config()
+    assert cfg.api.auth.enabled is True
+    assert ac.verify_password("lanpass", cfg.api.auth.password_hash)
+
+
+def test_init_password_prompt_skipped_when_lan_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from openbiliclaw.config import Config, load_config, save_config
+
+    root = tmp_path / "runtime"
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
+    save_config(Config(), root / "config.toml")
+    monkeypatch.setattr(cli_module, "_is_interactive_terminal", lambda: True, raising=False)
+
+    def _boom(*_a: object, **_k: object) -> bool:
+        raise AssertionError("should not prompt when LAN access is disabled")
+
+    monkeypatch.setattr(cli_module.typer, "confirm", _boom)
+    cli_module._maybe_setup_password_in_init(allow_lan=False)
+    assert load_config().api.auth.enabled is False
+
+
+def test_set_password_rotate_secret_rebases_fingerprint(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
+) -> None:
+    # --rotate-secret must re-base the stored fingerprint under the NEW secret so
+    # the next startup reconcile does not perform a redundant epoch bump (the
+    # set_password_fingerprint method exists for exactly this).
+    from openbiliclaw.auth_core import hash_password, password_fingerprint
+    from openbiliclaw.config import Config, get_auth_plain_password, load_config, save_config
+    from openbiliclaw.storage.database import Database
+
+    root = tmp_path / "runtime"
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(root))
+    cfg = Config()
+    cfg.api.auth.enabled = True
+    cfg.api.auth.password_hash = hash_password("pw")
+    cfg.api.auth.session_secret = "old-secret-aaaaaaaaaaaaaaaaaaaaaaaa"
+    save_config(cfg, root / "config.toml")
+
+    # simulate a running backend that already reconciled under the OLD secret
+    db_path = cfg.data_path / "openbiliclaw.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db = Database(db_path)
+    db.initialize()
+    db.set_password_fingerprint(
+        password_fingerprint(
+            "old-secret-aaaaaaaaaaaaaaaaaaaaaaaa",
+            plain=None,
+            password_hash=cfg.api.auth.password_hash,
+        )
+    )
+    db.close()
+
+    result = runner.invoke(app, ["set-password", "--rotate-secret"])
+    assert result.exit_code == 0, result.stdout
+
+    # reconcile under the NEW secret must NOT bump — the fingerprint was re-based
+    reloaded = load_config()
+    assert reloaded.api.auth.session_secret != "old-secret-aaaaaaaaaaaaaaaaaaaaaaaa"
+    db2 = Database(reloaded.data_path / "openbiliclaw.db")
+    db2.initialize()
+    expected_fp = password_fingerprint(
+        reloaded.api.auth.session_secret,
+        plain=get_auth_plain_password(),
+        password_hash=reloaded.api.auth.password_hash,
+    )
+    assert db2.reconcile_password_fingerprint(expected_fp) is False  # no redundant bump
+    db2.close()

@@ -1103,3 +1103,428 @@ similarity_threshold = 0.88
     assert loaded.llm.embedding.api_key == ""
     assert loaded.llm.embedding.base_url == ""
     assert loaded.llm.embedding.similarity_threshold == 0.88
+
+
+def test_api_auth_env_vars_matches_loader_read_surface() -> None:
+    """The env-managed guard list MUST equal what ``_build_api_auth`` reads.
+
+    Drift here is a real security gap: a new ``OPENBILICLAW_API_AUTH_*`` override
+    added to config loading but not to ``API_AUTH_ENV_VARS`` would let the local
+    admin endpoint / CLI silently write a config the env wins back on restart
+    (review r2#2). Scoped to ``_build_api_auth`` so it tracks the loader exactly.
+    """
+    import inspect
+    import re
+
+    from openbiliclaw.config import API_AUTH_ENV_VARS, _build_api_auth
+
+    src = inspect.getsource(_build_api_auth)
+    read = set(re.findall(r"OPENBILICLAW_API_AUTH_[A-Z_]+", src))
+    assert read == set(API_AUTH_ENV_VARS), (
+        f"_build_api_auth reads {read} but API_AUTH_ENV_VARS guards "
+        f"{set(API_AUTH_ENV_VARS)} — keep them in lockstep"
+    )
+
+
+def test_save_config_does_not_bake_in_auth_env_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An auth env override must never be persisted into config.toml by an
+    unrelated save (review r4#1).
+
+    load_config gives env precedence, so the in-memory Config carries the env
+    value; writing it back would leave a stale literal once the env var is
+    removed, silently shifting the trust boundary / session lifetime. save_config
+    must preserve the operator's on-disk [api.auth] value for env-overridden
+    fields instead. Covers the central save path used by startup secret-gen,
+    PUT /api/config and cookie sync alike.
+    """
+    from openbiliclaw.config import Config, load_config, save_config
+
+    path = tmp_path / "config.toml"
+    cfg = Config()
+    cfg.api.auth.enabled = True
+    cfg.api.auth.password_hash = "phash"
+    cfg.api.auth.trust_loopback = True  # operator's on-disk choice
+    cfg.api.auth.session_ttl_hours = 0
+    save_config(cfg, path)
+
+    # env now overrides trust_loopback + ttl; load reflects the env values
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_TRUST_LOOPBACK", "false")
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_SESSION_TTL_HOURS", "12")
+    loaded = load_config(path)
+    assert loaded.api.auth.trust_loopback is False  # env wins at load
+    assert loaded.api.auth.session_ttl_hours == 12
+
+    # an unrelated change is saved while env-managed
+    loaded.llm.openai.api_key = "sk-unrelated"
+    save_config(loaded, path)
+
+    # with the env vars gone, the file must still hold the ORIGINAL on-disk values,
+    # not the env-derived ones
+    monkeypatch.delenv("OPENBILICLAW_API_AUTH_TRUST_LOOPBACK")
+    monkeypatch.delenv("OPENBILICLAW_API_AUTH_SESSION_TTL_HOURS")
+    reloaded = load_config(path)
+    assert reloaded.api.auth.trust_loopback is True
+    assert reloaded.api.auth.session_ttl_hours == 0
+    assert reloaded.llm.openai.api_key == "sk-unrelated"  # unrelated change persisted
+
+
+def test_save_config_omits_env_auth_field_absent_on_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When an env-overridden auth field has no on-disk value, save omits it
+    rather than baking the env value — load then falls back to the safe default."""
+    from openbiliclaw.config import load_config, save_config
+
+    path = tmp_path / "config.toml"
+    # hand-written config WITHOUT a trust_loopback line under [api.auth]
+    path.write_text('[api.auth]\nenabled = true\npassword_hash = "x"\n', encoding="utf-8")
+
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_TRUST_LOOPBACK", "false")
+    loaded = load_config(path)
+    assert loaded.api.auth.trust_loopback is False  # env wins at load
+    save_config(loaded, path)
+    assert "trust_loopback" not in path.read_text(encoding="utf-8")  # not baked in
+    monkeypatch.delenv("OPENBILICLAW_API_AUTH_TRUST_LOOPBACK")
+    # default is True; the env "false" was never written through
+    assert load_config(path).api.auth.trust_loopback is True
+
+
+def test_save_config_preserves_string_boolean_auth_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preserving an env-overridden boolean must use loader coercion, not bool().
+
+    A quoted string boolean such as `trust_loopback = "false"` is accepted by the
+    loader as False; a naive bool("false") would round-trip it to true and
+    silently reopen the loopback bypass once the env var is removed (review r5#1).
+    """
+    from openbiliclaw.config import load_config, save_config
+
+    path = tmp_path / "config.toml"
+    # operator wrote QUOTED string booleans on disk
+    path.write_text(
+        '[api.auth]\nenabled = "false"\npassword_hash = "x"\ntrust_loopback = "false"\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_TRUST_LOOPBACK", "true")
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_ENABLED", "true")
+    loaded = load_config(path)
+    assert loaded.api.auth.trust_loopback is True  # env wins at load
+    assert loaded.api.auth.enabled is True
+    save_config(loaded, path)
+    monkeypatch.delenv("OPENBILICLAW_API_AUTH_TRUST_LOOPBACK")
+    monkeypatch.delenv("OPENBILICLAW_API_AUTH_ENABLED")
+
+    # the on-disk "false" values must be preserved as False, NOT flipped to true
+    reloaded = load_config(path)
+    assert reloaded.api.auth.trust_loopback is False
+    assert reloaded.api.auth.enabled is False
+
+
+def test_save_config_preserves_malformed_ttl_as_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A malformed on-disk TTL must coerce like the loader (→ 0), not crash save."""
+    from openbiliclaw.config import load_config, save_config
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[api.auth]\nenabled = true\npassword_hash = "x"\nsession_ttl_hours = "garbage"\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_SESSION_TTL_HOURS", "24")
+    loaded = load_config(path)
+    assert loaded.api.auth.session_ttl_hours == 24  # env wins at load
+    save_config(loaded, path)  # must not raise on the garbage on-disk value
+    monkeypatch.delenv("OPENBILICLAW_API_AUTH_SESSION_TTL_HOURS")
+    assert load_config(path).api.auth.session_ttl_hours == 0
+
+
+def test_save_config_preserves_on_disk_plaintext_password_under_env_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An env-managed save must not drop a supported on-disk plaintext password.
+
+    _build_api_auth honors a plaintext `password` key (hashing it) and
+    get_auth_plain_password treats it as stable fingerprint material. If
+    preservation only handled `password_hash`, a file with `password = "..."` and
+    no `password_hash` would lose its credential under an env override, locking the
+    gate out after the env var is removed (review r6#1).
+    """
+    from openbiliclaw.auth_core import verify_password
+    from openbiliclaw.config import load_config, save_config
+
+    path = tmp_path / "config.toml"
+    # operator wrote a PLAINTEXT password (no password_hash) on disk
+    path.write_text('[api.auth]\nenabled = true\npassword = "oldpw"\n', encoding="utf-8")
+
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_PASSWORD", "envpw")
+    loaded = load_config(path)
+    assert verify_password("envpw", loaded.api.auth.password_hash)  # env wins at load
+    save_config(loaded, path)  # unrelated env-managed save
+    assert 'password = "oldpw"' in path.read_text(encoding="utf-8")  # credential preserved
+
+    monkeypatch.delenv("OPENBILICLAW_API_AUTH_PASSWORD")
+    reloaded = load_config(path)
+    assert reloaded.api.auth.enabled is True
+    assert reloaded.api.auth.password_hash  # non-empty → no lockout
+    assert verify_password("oldpw", reloaded.api.auth.password_hash)  # operator's pw restored
+
+
+def test_coerce_ttl_hours_handles_toml_special_floats(tmp_path: Path) -> None:
+    """Bare TOML nan / inf TTL must coerce to 0, not crash load_config (review r6#2)."""
+    from openbiliclaw.config import load_config
+
+    path = tmp_path / "config.toml"
+    for literal in ("nan", "inf", "-inf"):
+        path.write_text(f"[api.auth]\nsession_ttl_hours = {literal}\n", encoding="utf-8")
+        assert load_config(path).api.auth.session_ttl_hours == 0, literal
+
+
+def test_save_config_preserves_nan_ttl_without_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Env-managed preservation of an on-disk nan TTL must not raise (review r6#2)."""
+    from openbiliclaw.config import load_config, save_config
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[api.auth]\nenabled = true\npassword_hash = "x"\nsession_ttl_hours = nan\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_SESSION_TTL_HOURS", "5")
+    loaded = load_config(path)
+    assert loaded.api.auth.session_ttl_hours == 5  # env wins at load
+    save_config(loaded, path)  # must not raise on the nan on-disk value
+    monkeypatch.delenv("OPENBILICLAW_API_AUTH_SESSION_TTL_HOURS")
+    assert load_config(path).api.auth.session_ttl_hours == 0
+
+
+def test_password_hash_env_governs_credential_without_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OPENBILICLAW_API_AUTH_PASSWORD_HASH must be used verbatim, not mangled by
+    the generic env splitter into a dict hashed as its repr (review r7#1)."""
+    from openbiliclaw.auth_core import hash_password, verify_password
+    from openbiliclaw.config import get_auth_plain_password, load_config
+
+    real_hash = hash_password("secret")
+    path = tmp_path / "config.toml"
+    path.write_text("[api.auth]\nenabled = true\n", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_PASSWORD_HASH", real_hash)
+
+    loaded = load_config(path)
+    assert loaded.api.auth.enabled is True
+    # the env hash is the credential — login with the matching password works
+    assert loaded.api.auth.password_hash == real_hash
+    assert verify_password("secret", loaded.api.auth.password_hash)
+    # no stable plaintext under a hash env → reconcile uses the hash material
+    assert get_auth_plain_password() is None
+
+
+def test_password_hash_env_does_not_crash_with_on_disk_plaintext(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An on-disk plaintext `password` plus PASSWORD_HASH env must not crash load
+    (the splitter previously raised TypeError descending into the string), and the
+    env hash must WIN precedence over the on-disk plaintext (review r7#1)."""
+    from openbiliclaw.auth_core import hash_password, verify_password
+    from openbiliclaw.config import load_config
+
+    real_hash = hash_password("envsecret")
+    path = tmp_path / "config.toml"
+    path.write_text('[api.auth]\nenabled = true\npassword = "oldpw"\n', encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_PASSWORD_HASH", real_hash)
+
+    loaded = load_config(path)  # must not raise
+    # env hash wins over on-disk plaintext
+    assert loaded.api.auth.password_hash == real_hash
+    assert verify_password("envsecret", loaded.api.auth.password_hash)
+    assert not verify_password("oldpw", loaded.api.auth.password_hash)
+
+
+def test_password_env_wins_over_password_hash_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Precedence: env PASSWORD (plaintext) beats env PASSWORD_HASH (review r7#1)."""
+    from openbiliclaw.auth_core import hash_password, verify_password
+    from openbiliclaw.config import load_config
+
+    path = tmp_path / "config.toml"
+    path.write_text("[api.auth]\nenabled = true\n", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_PASSWORD", "plainwins")
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_PASSWORD_HASH", hash_password("hashloses"))
+
+    loaded = load_config(path)
+    assert verify_password("plainwins", loaded.api.auth.password_hash)
+    assert not verify_password("hashloses", loaded.api.auth.password_hash)
+
+
+def test_password_hash_env_preserves_on_disk_plaintext_for_after_env_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A PASSWORD_HASH-env-managed save preserves the on-disk plaintext password so
+    removing the env override restores the operator's own credential (review r7#1)."""
+    from openbiliclaw.auth_core import hash_password, verify_password
+    from openbiliclaw.config import load_config, save_config
+
+    path = tmp_path / "config.toml"
+    path.write_text('[api.auth]\nenabled = true\npassword = "diskpw"\n', encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_API_AUTH_PASSWORD_HASH", hash_password("envsecret"))
+
+    loaded = load_config(path)
+    save_config(loaded, path)  # env-managed write
+    assert 'password = "diskpw"' in path.read_text(encoding="utf-8")
+    monkeypatch.delenv("OPENBILICLAW_API_AUTH_PASSWORD_HASH")
+    reloaded = load_config(path)
+    assert verify_password("diskpw", reloaded.api.auth.password_hash)
+
+
+def test_save_config_preserves_unchanged_plaintext_password_non_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-env save must NOT drop an unchanged on-disk plaintext `password`.
+
+    Dropping it (writing hash-only) flips the reconcile fingerprint basis from
+    "pw:"+plain to "ph:"+hash and spuriously revokes remembered sessions on the
+    next restart after an unrelated settings/cookie save (review r8).
+    """
+    from openbiliclaw.config import get_auth_plain_password, load_config, save_config
+
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    path = tmp_path / "config.toml"
+    path.write_text('[api.auth]\nenabled = true\npassword = "secret"\n', encoding="utf-8")
+
+    # an UNRELATED save (e.g. settings UI changing an LLM key) — auth untouched
+    cfg = load_config(path)
+    cfg.llm.openai.api_key = "sk-unrelated"
+    save_config(cfg, path)
+
+    text = path.read_text(encoding="utf-8")
+    assert 'password = "secret"' in text  # plaintext preserved
+    assert "password_hash" not in text  # not converted to hash-only
+    # the plaintext fingerprint source is still available → stable basis
+    assert get_auth_plain_password() == "secret"
+
+
+def test_save_config_drops_stale_plaintext_when_password_changed(tmp_path: Path) -> None:
+    """When the in-memory hash no longer matches the on-disk plaintext (password
+    deliberately changed, e.g. set-password), the stale plaintext is dropped and
+    the new hash persisted — the change is not silently reverted (review r8)."""
+    from openbiliclaw.auth_core import hash_password, verify_password
+    from openbiliclaw.config import load_config, save_config
+
+    path = tmp_path / "config.toml"
+    path.write_text('[api.auth]\nenabled = true\npassword = "oldpw"\n', encoding="utf-8")
+
+    cfg = load_config(path)
+    cfg.api.auth.password_hash = hash_password("newpw")  # deliberate change
+    save_config(cfg, path)
+
+    text = path.read_text(encoding="utf-8")
+    assert "oldpw" not in text  # stale plaintext dropped
+    reloaded = load_config(path)
+    assert verify_password("newpw", reloaded.api.auth.password_hash)
+    assert not verify_password("oldpw", reloaded.api.auth.password_hash)
+
+
+def test_save_config_does_not_bake_in_config_local_auth_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unrelated full-config save must not bake config.local.toml-derived auth
+    values into config.toml (review r10). load_config merges config.local OVER
+    config.toml (local wins); persisting the merged value would leave a stale
+    literal that shifts the trust boundary once config.local is removed.
+    """
+    from openbiliclaw.config import load_config, save_config
+
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    (tmp_path / "config.toml").write_text(
+        '[api.auth]\nenabled = true\npassword_hash = "h"\n'
+        "trust_loopback = true\nsession_ttl_hours = 5\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "config.local.toml").write_text(
+        "[api.auth]\ntrust_loopback = false\nsession_ttl_hours = 12\n", encoding="utf-8"
+    )
+
+    merged = load_config()  # config.local wins
+    assert merged.api.auth.trust_loopback is False
+    assert merged.api.auth.session_ttl_hours == 12
+
+    merged.llm.openai.api_key = "sk-unrelated"  # unrelated change
+    save_config(merged)  # writes config.toml (no explicit path → default)
+
+    # config.toml must keep its OWN base values, not config.local's overrides
+    text = (tmp_path / "config.toml").read_text(encoding="utf-8")
+    assert "trust_loopback = true" in text
+    assert "session_ttl_hours = 5" in text
+    assert "sk-unrelated" in text  # the unrelated change persisted
+
+    # removing config.local → the base config.toml values govern (no stale local)
+    (tmp_path / "config.local.toml").unlink()
+    reloaded = load_config()
+    assert reloaded.api.auth.trust_loopback is True
+    assert reloaded.api.auth.session_ttl_hours == 5
+
+
+def test_save_config_does_not_bake_in_config_local_password(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A config.local plaintext password must not be materialized into config.toml
+    by an unrelated save; config.toml keeps its own credential (review r10)."""
+    from openbiliclaw.auth_core import verify_password
+    from openbiliclaw.config import load_config, save_config
+
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    (tmp_path / "config.toml").write_text(
+        '[api.auth]\nenabled = true\npassword = "basepw"\n', encoding="utf-8"
+    )
+    (tmp_path / "config.local.toml").write_text(
+        '[api.auth]\npassword = "localpw"\n', encoding="utf-8"
+    )
+
+    merged = load_config()
+    assert verify_password("localpw", merged.api.auth.password_hash)  # local wins
+    merged.llm.openai.api_key = "sk-unrelated"
+    save_config(merged)
+
+    text = (tmp_path / "config.toml").read_text(encoding="utf-8")
+    assert 'password = "basepw"' in text  # base credential preserved
+    assert "localpw" not in text  # config.local value NOT baked in
+
+    (tmp_path / "config.local.toml").unlink()
+    assert verify_password("basepw", load_config().api.auth.password_hash)
+
+
+def test_save_config_explicit_path_ignores_project_root_config_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A save to an explicit path unrelated to the project root must NOT be gated
+    by the project-root config.local.toml — load_config(explicit) never merges it,
+    so its overrides must not preserve/omit fields in the explicit file (review
+    r11). Otherwise a legitimate explicit-path auth change is silently dropped.
+    """
+    from openbiliclaw.config import Config, load_config, save_config
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(proj))
+    (proj / "config.local.toml").write_text(
+        "[api.auth]\ntrust_loopback = false\n", encoding="utf-8"
+    )
+
+    explicit = tmp_path / "elsewhere" / "config.toml"
+    cfg = Config()
+    cfg.api.auth.enabled = True
+    cfg.api.auth.password_hash = "h"
+    cfg.api.auth.trust_loopback = False  # the intended explicit-path value
+    save_config(cfg, explicit)
+
+    # the project-root config.local must not have shadowed the explicit write
+    assert "trust_loopback = false" in explicit.read_text(encoding="utf-8")
+    assert load_config(explicit).api.auth.trust_loopback is False

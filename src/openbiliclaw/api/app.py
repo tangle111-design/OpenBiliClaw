@@ -678,6 +678,31 @@ def create_app(
     # ── Build RuntimeContext ────────────────────────────────────────
     config = load_config()
 
+    # Auto-generate the session signing secret on first enable so login state
+    # survives restarts (see docs/plans/2026-05-30-web-password-auth-design.md).
+    from openbiliclaw.api.auth import (
+        AuthGate,
+        _auth_env_overrides,
+        authorize_websocket,
+        ensure_session_secret,
+        make_auth_middleware,
+        reconcile_password_fingerprint,
+        register_auth_routes,
+    )
+    from openbiliclaw.config import ApiAuthConfig as _ApiAuthConfig
+
+    # Injection-path test doubles may hand back a config without ``api.auth``;
+    # fall back to a disabled gate so the password feature stays inert there.
+    _auth_cfg = getattr(getattr(config, "api", None), "auth", None)
+    if not isinstance(_auth_cfg, _ApiAuthConfig):
+        _auth_cfg = _ApiAuthConfig()
+
+    if ensure_session_secret(_auth_cfg):
+        with suppress(Exception):
+            from openbiliclaw.config import save_config
+
+            save_config(config)
+
     if soul_engine is not None:
         # Injection path: caller provides swappable components.
         # Auto-create stable components (database, memory_manager) if missing.
@@ -749,6 +774,170 @@ def create_app(
     app.state.degraded_reason = str(getattr(ctx, "degraded_reason", ""))
     app.state.degraded_issues = list(getattr(ctx, "degraded_issues", []))
 
+    # ── Password gate (LAN/remote auth) ─────────────────────────────
+    app.state.auth_gate = AuthGate(_auth_cfg, getattr(ctx, "database", None))
+
+    def _get_auth_gate() -> AuthGate:
+        return cast("AuthGate", app.state.auth_gate)
+
+    register_auth_routes(app, _get_auth_gate)
+
+    @app.post("/api/auth/admin")
+    async def auth_admin(request: Request) -> JSONResponse:
+        """Local-only enable/disable + set/change of the password gate.
+
+        Lives here (not in register_auth_routes) so it shares ``PUT /api/config``'s
+        ``_CONFIG_SAVE_LOCK`` + snapshot/rollback — its full-file ``save_config``
+        must not race with a concurrent settings save (review r1#3). Callable only
+        by a trusted-local client (extension / local UI / CLI), never a remote
+        session ("change the lock only from inside the house"); applied live (no
+        restart); refused when env-managed.
+        """
+        import secrets as _secrets
+
+        from openbiliclaw import auth_core as _ac
+        from openbiliclaw.config import _default_config_path as _cfg_path
+        from openbiliclaw.config import get_auth_plain_password as _get_plain
+        from openbiliclaw.config import load_config as _load
+        from openbiliclaw.config import save_config as _save
+
+        gate = _get_auth_gate()
+        if not gate.is_trusted_local(request):
+            return JSONResponse({"ok": False, "error": "local_only"}, status_code=403)
+        if gate.database is None:
+            return JSONResponse({"ok": False, "error": "unavailable"}, status_code=503)
+        env_vars = _auth_env_overrides()
+        if env_vars:
+            return JSONResponse(
+                {"ok": False, "error": "env_managed", "vars": env_vars}, status_code=409
+            )
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        enabled = bool(body.get("enabled"))
+        password = body.get("password")
+        password = str(password) if password is not None else None
+        ttl = body.get("session_ttl_hours")
+
+        async with _CONFIG_SAVE_LOCK:
+            cfg = _load()  # re-read inside the lock to avoid clobbering a concurrent save
+            auth = cfg.api.auth
+            was_enabled = auth.enabled
+            if enabled:
+                if password and password.strip():
+                    auth.password_hash = _ac.hash_password(password)
+                if not auth.password_hash.strip():
+                    return JSONResponse(
+                        {"ok": False, "error": "password_required"}, status_code=400
+                    )
+                auth.enabled = True
+                if not auth.session_secret.strip():
+                    auth.session_secret = _secrets.token_urlsafe(32)
+                if ttl is not None:
+                    with suppress(TypeError, ValueError):
+                        auth.session_ttl_hours = max(0, int(ttl))
+            else:
+                auth.enabled = False
+
+            # force_bump revokes on an enabled on/off toggle or an explicit
+            # password in this request (neither is guaranteed to change the
+            # fingerprint). A credential change the request can't see — e.g. a
+            # password_hash that drifted on disk via an out-of-band `set-password`
+            # while running — is caught by revoke_and_set_fingerprint comparing the
+            # new fingerprint to the stored one inside its transaction (r4#2).
+            force_bump = (auth.enabled != was_enabled) or bool(password and password.strip())
+            config_path = _cfg_path()
+            config_existed = config_path.exists()
+            backup_path = _snapshot_config_file(config_path)
+
+            def _rollback_cfg() -> None:
+                # Restore config.toml to its pre-save state on any failure path. If
+                # it existed, restore the snapshot; if it did NOT (backup is None),
+                # remove anything _save created so a failed change leaves no durable
+                # config behind (review r11#2).
+                if backup_path is not None:
+                    with suppress(Exception):
+                        _restore_config_snapshot(backup_path, config_path)
+                elif not config_existed:
+                    with suppress(Exception):
+                        config_path.unlink(missing_ok=True)
+
+            # 1) Persist to disk FIRST (snapshot + rollback, like PUT /api/config).
+            #    Nothing is published to the live gate or the DB yet, so a write
+            #    failure here leaves ALL durable + live state on the old password.
+            try:
+                _save(cfg)
+            except Exception:
+                _rollback_cfg()
+                logger.warning("auth: admin save_config failed", exc_info=True)
+                return JSONResponse({"ok": False, "error": "unavailable"}, status_code=503)
+            # 2) Verify the write is EFFECTIVE as startup will see it. config.toml is
+            #    not the only layer: load_config merges config.local.toml OVER it
+            #    (local wins). If config.local pins an auth field, our config.toml
+            #    write silently reverts on restart while the live gate briefly shows
+            #    success. Reload the merged effective config; if the intended change
+            #    didn't take, roll back and report a conflict instead of a false
+            #    success (review r9). (env is refused earlier with 409.)
+            effective = _load().api.auth
+            shadowed = effective.enabled != cfg.api.auth.enabled
+            if enabled and password and password.strip():
+                shadowed = shadowed or not _ac.verify_password(password, effective.password_hash)
+            if enabled and ttl is not None:
+                shadowed = shadowed or effective.session_ttl_hours != cfg.api.auth.session_ttl_hours
+            if shadowed:
+                _rollback_cfg()
+                logger.warning("auth: admin change shadowed by config.local.toml; not applied")
+                return JSONResponse({"ok": False, "error": "shadowed"}, status_code=409)
+            # 3) Derive the fingerprint from the SAME material the startup reconcile
+            #    will read AFTER this save — get_auth_plain_password() on the JUST-
+            #    persisted file (env is refused above). save_config may keep an
+            #    unchanged plaintext `password` line (→ "pw:"+plain) or persist
+            #    hash-only (→ "ph:"+hash); reading post-save makes our stored
+            #    fingerprint match reconcile's exactly, so a successful change never
+            #    spuriously revokes on the next restart (review r3#1 / r8).
+            plain_after = _get_plain()
+            fingerprint = (
+                _ac.password_fingerprint(
+                    auth.session_secret, plain=plain_after, password_hash=auth.password_hash
+                )
+                if (auth.password_hash.strip() and auth.session_secret.strip())
+                else None
+            )
+            # 4) Durable revocation (atomic). If it fails, roll the config file back
+            #    so the persisted password still matches the UNCHANGED DB
+            #    fingerprint/epoch, and do NOT publish — old sessions stay valid
+            #    under the old password (revoke-first would instead commit an epoch
+            #    bump + fingerprint that the config rollback can't undo). A crash
+            #    BETWEEN the steps is self-healed by reconcile_password_fingerprint
+            #    at startup: config's new password vs the stale DB fingerprint
+            #    mismatches → bump + store → the change completes deterministically.
+            try:
+                gate.database.revoke_and_set_fingerprint(fingerprint, force_bump=force_bump)
+            except Exception:
+                _rollback_cfg()
+                logger.warning("auth: admin revoke failed; change not applied", exc_info=True)
+                return JSONResponse({"ok": False, "error": "unavailable"}, status_code=503)
+            # 5) Publish live so it takes effect without a restart.
+            gate.auth = cfg.api.auth
+            gate.reconcile_ok = True
+
+        logger.info("auth: gate %s via local admin", "enabled" if enabled else "disabled")
+        return JSONResponse(
+            {
+                "ok": True,
+                "enabled": cfg.api.auth.enabled,
+                "trust_loopback": cfg.api.auth.trust_loopback,
+            }
+        )
+
+    with suppress(Exception):
+        from openbiliclaw.config import get_auth_plain_password
+
+        reconcile_password_fingerprint(app.state.auth_gate, plain=get_auth_plain_password())
+
     def _degraded_issues_payload() -> list[dict[str, str]]:
         return [
             {
@@ -777,11 +966,17 @@ def create_app(
             or path == "/api/health"
             or path == "/api/runtime-status"
             or (path == "/api/config" and method in {"GET", "PUT"})
+            or path.startswith("/api/auth")
             or path.startswith("/m")
         )
         if allowed:
             return await call_next(request)
         return JSONResponse(status_code=503, content=_degraded_body())
+
+    # Register AFTER the degraded guard so the auth gate is the outermost http
+    # middleware (runs first): unauthenticated requests are rejected before any
+    # downstream handling. CORS stays inner; 401/403 echo a permissive header.
+    app.middleware("http")(make_auth_middleware(_get_auth_gate))
 
     async def _run_post_feedback_tasks() -> None:
         with suppress(Exception):
@@ -1362,6 +1557,11 @@ def create_app(
 
     @app.websocket("/api/runtime-stream")
     async def runtime_stream(websocket: WebSocket) -> None:
+        # The http auth middleware does NOT cover the websocket scope, so the
+        # password gate must be enforced here before accepting the handshake.
+        if not authorize_websocket(_get_auth_gate(), websocket):
+            await websocket.close(code=4401)
+            return
         await websocket.accept()
         if bool(getattr(ctx, "degraded", False)):
             connected = False
@@ -1386,6 +1586,26 @@ def create_app(
                     ctx.presence.on_disconnect()
             return
 
+        # Live revocation: an already-open socket from a remote client must stop
+        # receiving events once its token is revoked (logout-all / password change
+        # / rotate-secret). The http auth middleware never sees an established ws,
+        # so re-check the revocation epoch here per-send and on a watchdog timer.
+        _ws_gate = _get_auth_gate()
+        _ws_is_local = _ws_gate.is_trusted_local(websocket)
+        _ws_token = (
+            None
+            if (_ws_is_local or not _ws_gate.auth.enabled)
+            else _ws_gate.pick_token(websocket)[1]
+        )
+
+        def _ws_revoked() -> bool:
+            if not _ws_gate.auth.enabled or _ws_is_local:
+                return False
+            try:
+                return not _ws_gate.token_valid(_ws_token)
+            except Exception:
+                return True  # DB unavailable → fail closed
+
         subscribe = getattr(ctx.event_hub, "subscribe", None)
         unsubscribe = getattr(ctx.event_hub, "unsubscribe", None)
         if not callable(subscribe) or not callable(unsubscribe):
@@ -1397,7 +1617,20 @@ def create_app(
         async def _send_runtime_events() -> None:
             while True:
                 event = await queue.get()
+                if _ws_revoked():
+                    with suppress(Exception):
+                        await websocket.close(code=4401)
+                    return
                 await websocket.send_json(event)
+
+        async def _revocation_watchdog() -> None:
+            # Close idle revoked sockets even when no events are flowing.
+            while True:
+                await asyncio.sleep(15)
+                if _ws_revoked():
+                    with suppress(Exception):
+                        await websocket.close(code=4401)
+                    return
 
         async def _receive_until_disconnect() -> None:
             while True:
@@ -1447,8 +1680,9 @@ def create_app(
 
             writer = asyncio.create_task(_send_runtime_events())
             reader = asyncio.create_task(_receive_until_disconnect())
+            watchdog = asyncio.create_task(_revocation_watchdog())
             done, pending = await asyncio.wait(
-                {writer, reader},
+                {writer, reader, watchdog},
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for task in pending:

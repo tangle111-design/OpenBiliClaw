@@ -14,8 +14,8 @@
 | 文件位置 | `src/openbiliclaw/web/` — 随 pip install 分发 |
 | 静态服务 | FastAPI `StaticFiles` mount at `/m/` |
 | 入口 URL | `http://<局域网IP>:8420/m/` |
-| 鉴权 | 不做鉴权；默认本机访问，手机访问需用户显式 `start --host 0.0.0.0` |
-| 安全边界 | 仅面向可信局域网，不建议暴露公网 / 公共 Wi-Fi / 未受信 VPN |
+| 鉴权 | 可选密码门禁：`[api.auth].enabled`；本机免登录，局域网 / 远程设备需密码（详见 [`docs/plans/2026-05-30-web-password-auth-design.md`](plans/2026-05-30-web-password-auth-design.md)）。仍需 `start --host 0.0.0.0` 才能被手机访问 |
+| 安全边界 | 默认面向可信局域网；开启 `[api.auth]` 后局域网 / 远程访问需密码。LAN HTTP 仍为明文，介意嗅探请上 HTTPS（反代），不建议直接暴露公网 |
 | PWA | 提供 manifest.json，支持添加到主屏幕（暂不做离线缓存） |
 | 行为采集 | 不做（无 bilibili 页面上下文） |
 | 源管理/爬取 | 不做 |
@@ -121,7 +121,7 @@ if web_dir.is_dir():
 局域网访问约定：
 - `openbiliclaw start` 默认仍绑定 `127.0.0.1`，只允许本机访问。
 - 手机访问需要用户显式使用 `openbiliclaw start --host 0.0.0.0`。
-- 该模式不做鉴权，适用于可信局域网；不要暴露到公网、公共 Wi-Fi 或未受信 VPN。
+- 默认无鉴权、面向可信局域网；可选 `[api.auth].enabled`（`openbiliclaw set-password`）为局域网 / 远程设备加密码门禁，本机免登录。LAN HTTP 仍为明文，介意嗅探请上 HTTPS（反代），不要直接暴露公网 / 公共 Wi-Fi / 未受信 VPN。
 
 ### 样式策略
 

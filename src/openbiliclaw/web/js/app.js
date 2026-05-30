@@ -3,9 +3,10 @@
  * cross-view navigation. Views render their own tab content.
  */
 
-import { fetchHealth, checkHealth } from "./api.js";
+import { fetchHealth, checkHealth, fetchAuthStatus } from "./api.js";
 import { createStreamClient } from "./stream.js";
 import { state, patchState, subscribe } from "./state.js";
+import { renderLoginView } from "./views/login.js";
 import { initRecommendView, onStreamEvent as recStreamEvent } from "./views/recommend.js";
 import { initProfileView, onStreamEvent as profileStreamEvent } from "./views/profile.js";
 import { initChatView, onStreamEvent as chatStreamEvent, toggleMessages, loadNotifications } from "./views/chat.js";
@@ -181,7 +182,10 @@ export function setUnreadCount(n) {
 }
 
 // ── Init ─────────────────────────────────────────────────────
-(async function init() {
+let _appStarted = false;
+
+async function startApp() {
+  document.body.classList.remove("auth-locked");
   for (const tab of TABS) ensureView(tab.id);
 
   renderStatusBar();
@@ -203,6 +207,47 @@ export function setUnreadCount(n) {
   stream.connect();
   loadNotifications(); // eagerly load badge count on all tabs
 
-  window.addEventListener("hashchange", () => navigateToTab(readHash()));
+  if (!_appStarted) {
+    _appStarted = true;
+    window.addEventListener("hashchange", () => navigateToTab(readHash()));
+  }
   navigateToTab(readHash());
+}
+
+function showLogin() {
+  patchState({ needsLogin: true });
+  document.body.classList.add("auth-locked");
+  $statusBar.innerHTML = "";
+  $tabBar.innerHTML = "";
+  renderLoginView($app, {
+    // Reload after a successful login instead of re-running startApp() in place:
+    // renderLoginView cleared #app (detaching cached view nodes that ensureView
+    // would otherwise return stale), and the view modules aren't safe to re-init.
+    // A reload re-runs boot() cleanly — the cookie is set, so /api/auth/status
+    // returns authenticated and the app starts fresh with no login view left
+    // behind. (Same approach as the desktop overlay.)
+    onSuccess() {
+      location.reload();
+    },
+  });
+}
+
+// Session lost mid-use (token expired / revoked) → drop the stream and re-gate.
+window.addEventListener("obc:auth-required", () => {
+  if (state.needsLogin) return;
+  try { stream.disconnect(); } catch { /* ignore */ }
+  patchState({ authenticated: false });
+  showLogin();
+});
+
+(async function boot() {
+  const status = await fetchAuthStatus();
+  const enabled = Boolean(status.enabled);
+  const authenticated = status.authenticated !== false;
+  patchState({ authEnabled: enabled, authenticated });
+  if (enabled && !authenticated) {
+    showLogin();
+    return;
+  }
+  startApp();
 })();

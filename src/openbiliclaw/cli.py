@@ -453,6 +453,7 @@ def _build_recommendation_engine() -> Any:
 
     _emb = build_embedding_service(cfg, registry)
     embedding_service = cast("SupportsEmbeddingService | None", _emb)
+
     def _xhs_self_info_provider() -> dict[str, object] | None:
         state = memory.load_discovery_runtime_state()
         info = state.get("xhs_self_info")
@@ -3177,8 +3178,212 @@ def start(
         f"正在启动本地后端，当前监听 {effective_host}:{effective_port}。",
     )
     _warn_if_pause_on_disconnect_requires_presence()
+    if cfg.api.auth.enabled:
+        _print_status_panel(
+            "info",
+            "🔒 访问控制",
+            "局域网/远程访问已启用密码登录（本机访问免登录）。",
+        )
+        if cfg.api.auth.trust_loopback and not cfg.api.auth.trusted_proxies:
+            _print_status_panel(
+                "warning",
+                "反向代理提醒",
+                "如部署在同机反向代理后，请配置 [api.auth].trusted_proxies"
+                "（并确保代理覆盖而非透传客户端转发头），或让代理自行鉴权，"
+                "否则远程请求可能被误判为本机而绕过密码。",
+            )
     _maybe_create_runtime_database_backup()
     _run_api_server(host=effective_host, port=effective_port)
+
+
+def _bump_auth_epoch(cfg: Any) -> bool:
+    """Bump the revocation epoch in the runtime DB (immediate logout-all)."""
+    from openbiliclaw.storage.database import Database
+
+    db = Database(cfg.data_path / "openbiliclaw.db")
+    try:
+        db.initialize()
+        db.bump_auth_epoch()
+        return True
+    except Exception:
+        return False
+    finally:
+        with suppress(Exception):
+            db.close()
+
+
+def _rebase_auth_fingerprint(cfg: Any) -> None:
+    """Re-store the password fingerprint under cfg's CURRENT signing secret.
+
+    Called after ``--rotate-secret`` so the next startup reconcile sees the
+    fingerprint it would itself compute (under the new secret) and does NOT
+    perform a redundant epoch bump on top of the one we already did. Best-effort:
+    if the DB is unwritable we simply leave the stale fingerprint, which only
+    costs one harmless extra reconcile bump on restart. See ``set_password_fingerprint``.
+    """
+    from openbiliclaw.auth_core import password_fingerprint
+    from openbiliclaw.config import get_auth_plain_password
+    from openbiliclaw.storage.database import Database
+
+    auth = cfg.api.auth
+    if not (auth.password_hash.strip() and auth.session_secret.strip()):
+        return
+    fingerprint = password_fingerprint(
+        auth.session_secret,
+        plain=get_auth_plain_password(),
+        password_hash=auth.password_hash,
+    )
+    db = Database(cfg.data_path / "openbiliclaw.db")
+    try:
+        db.initialize()
+        db.set_password_fingerprint(fingerprint)
+    except Exception:
+        # Best-effort: a stale fingerprint only costs one harmless reconcile bump.
+        pass
+    finally:
+        with suppress(Exception):
+            db.close()
+
+
+@app.command("set-password")
+def set_password(
+    disable: bool = typer.Option(False, "--disable", help="关闭密码门禁"),
+    logout_all: bool = typer.Option(
+        False, "--logout-all", help="使所有设备的登录态立即失效（不改密码/密钥）"
+    ),
+    rotate_secret: bool = typer.Option(
+        False, "--rotate-secret", help="轮换会话签名密钥（最强撤销，需重启后端生效）"
+    ),
+) -> None:
+    """设置 / 修改局域网访问密码（或关闭门禁 / 登出所有设备）。"""
+    import secrets as _secrets
+
+    from openbiliclaw.auth_core import hash_password
+    from openbiliclaw.config import load_config, save_config
+
+    cfg = load_config()
+
+    if logout_all:
+        # DB-only revocation — always effective, independent of env/config source.
+        ok = _bump_auth_epoch(cfg)
+        _print_status_panel(
+            "success" if ok else "error",
+            "已登出所有设备" if ok else "操作失败",
+            "所有设备需重新登录。"
+            if ok
+            else "无法访问运行库、未能撤销，请确认 data 目录可写后重试。",
+        )
+        if not ok:
+            raise typer.Exit(code=1)
+        return
+
+    # Config-writing paths below all call save_config(cfg), which writes the WHOLE
+    # [api.auth] block. cfg came from load_config(), where env vars take precedence
+    # over config.toml — so ANY auth env override would be (a) re-applied on restart
+    # (the file edit silently lost) and (b) baked into config.toml as a literal,
+    # leaving a stale value behind once the env var is later removed (this could
+    # quietly shift the trust boundary / session lifetime). Refuse loudly on the
+    # full override surface — not just the password — and tell the user to manage
+    # via env instead (review r3#2). `--logout-all` returned above, so it stays
+    # usable for an emergency revoke even while env-managed.
+    from openbiliclaw.config import API_AUTH_ENV_VARS
+
+    _auth_env = [name for name in API_AUTH_ENV_VARS if (os.environ.get(name) or "").strip()]
+    if _auth_env:
+        _print_status_panel(
+            "error",
+            "检测到环境变量覆盖，config 修改不会生效",
+            f"已设置 {', '.join(_auth_env)}；load_config 中环境变量优先于 config.toml，"
+            "改写文件重启后仍会用旧的环境变量值。请改这些环境变量并重启后端；"
+            "如只想立即失效现有登录态，用 `openbiliclaw set-password --logout-all`。",
+        )
+        raise typer.Exit(code=1)
+
+    # config.local.toml is merged OVER config.toml (local wins). If it pins any of
+    # the credential fields set-password writes, our config.toml edit silently
+    # reverts on restart — refuse loudly rather than report a false success (r9).
+    from openbiliclaw.config import config_local_auth_keys
+
+    _local_keys = sorted(
+        config_local_auth_keys() & {"password", "password_hash", "enabled", "session_secret"}
+    )
+    if _local_keys:
+        _print_status_panel(
+            "error",
+            "config.local.toml 覆盖了 [api.auth] 字段，config.toml 修改不会生效",
+            f"config.local.toml 中设置了 {', '.join(_local_keys)}；它会盖过 config.toml，"
+            "改写后者重启后仍会被覆盖。请改 config.local.toml 并重启后端；"
+            "如只想立即失效现有登录态，用 `openbiliclaw set-password --logout-all`。",
+        )
+        raise typer.Exit(code=1)
+
+    if disable:
+        cfg.api.auth.enabled = False
+        save_config(cfg)
+        _print_status_panel("success", "已关闭密码门禁", "重启后端 (openbiliclaw start) 后生效。")
+        return
+
+    if rotate_secret:
+        cfg.api.auth.session_secret = _secrets.token_urlsafe(32)
+        save_config(cfg)
+        revoked = _bump_auth_epoch(cfg)
+        if not revoked:
+            _print_status_panel(
+                "error",
+                "密钥已轮换，但未能立即撤销",
+                "新密钥已写入 config，但运行库不可写、现有登录态未即时失效。"
+                "请重启后端使其生效，或修复 data 目录后重试。",
+            )
+            raise typer.Exit(code=1)
+        # Re-base the stored fingerprint under the NEW secret so the next restart's
+        # reconcile doesn't perform a redundant epoch bump on top of this one.
+        _rebase_auth_fingerprint(cfg)
+        _print_status_panel(
+            "success",
+            "已轮换会话密钥",
+            "所有设备需重新登录；重启后端使新密钥完全生效。",
+        )
+        return
+
+    if not _is_interactive_terminal():
+        _print_status_panel(
+            "error",
+            "无法设置密码",
+            "请在交互式终端运行，或用 OPENBILICLAW_API_AUTH_PASSWORD 环境变量配置。",
+        )
+        raise typer.Exit(code=1)
+
+    password = str(
+        typer.prompt("设置访问密码", hide_input=True, confirmation_prompt=True) or ""
+    ).strip()
+    if not password:
+        _print_status_panel("error", "密码为空", "未做更改。")
+        raise typer.Exit(code=1)
+
+    cfg.api.auth.password_hash = hash_password(password)
+    cfg.api.auth.enabled = True
+    if not cfg.api.auth.session_secret.strip():
+        cfg.api.auth.session_secret = _secrets.token_urlsafe(32)
+    save_config(cfg)
+    # Revoke all existing sessions immediately (read live from SQLite by any
+    # running backend) so a compromised-password rotation does not leave old
+    # cookies valid until the next restart. The NEW password itself only takes
+    # effect once the backend reloads its config, hence the restart notice.
+    revoked = _bump_auth_epoch(cfg)
+    if not revoked:
+        _print_status_panel(
+            "error",
+            "密码已保存，但未能立即撤销现有登录态",
+            "新密码已写入 config，但运行库不可写、现有 cookie 未即时失效（仍可能有效到重启）。"
+            "请重启后端使其生效，或修复 data 目录后重跑 `set-password`。",
+        )
+        raise typer.Exit(code=1)
+    _print_status_panel(
+        "success",
+        "已设置访问密码",
+        "已立即失效所有现有登录态。请重启后端 (openbiliclaw start) 使新密码生效"
+        "（运行中的进程仍持旧配置，重启前请勿依赖新密码已启用）。",
+    )
 
 
 @app.command("serve-api")
@@ -3491,6 +3696,43 @@ def _persist_api_host_choice(*, allow_lan: bool) -> None:
             save_config(cfg)
     except Exception:
         return
+
+
+def _maybe_setup_password_in_init(*, allow_lan: bool) -> None:
+    """Offer to set a LAN access password during init (only when LAN is enabled)."""
+    if not allow_lan or not _is_interactive_terminal():
+        return
+    console.print()
+    console.print("[bold]🔒 访问密码（可选）[/bold]")
+    console.print(
+        "为局域网/远程设备访问设置登录密码？[bold]本机访问始终免登录[/bold]，"
+        "只有手机和其他电脑需要输入密码。"
+    )
+    console.print("[dim]后续可用 `openbiliclaw set-password` 设置或修改。[/dim]")
+    console.print()
+    if not typer.confirm("为局域网访问设置登录密码?", default=False):
+        return
+    password = str(
+        typer.prompt("设置访问密码", hide_input=True, confirmation_prompt=True) or ""
+    ).strip()
+    if not password:
+        console.print("[dim]密码为空，已跳过。[/dim]")
+        return
+    try:
+        import secrets as _secrets
+
+        from openbiliclaw.auth_core import hash_password
+        from openbiliclaw.config import load_config, save_config
+
+        cfg = load_config()
+        cfg.api.auth.password_hash = hash_password(password)
+        cfg.api.auth.enabled = True
+        if not cfg.api.auth.session_secret.strip():
+            cfg.api.auth.session_secret = _secrets.token_urlsafe(32)
+        save_config(cfg)
+        console.print("[green]已设置访问密码，局域网访问将需要登录。[/green]")
+    except Exception:
+        console.print("[yellow]密码设置失败，可稍后用 `openbiliclaw set-password` 重试。[/yellow]")
 
 
 def _persist_init_source_enabled_flags(
@@ -3853,6 +4095,7 @@ def init(
     # the local network (0.0.0.0) so mobile /m/ works out of the box.
     allow_lan = _ask_network_binding()
     _persist_api_host_choice(allow_lan=allow_lan)
+    _maybe_setup_password_in_init(allow_lan=allow_lan)
 
     resolved_bilibili_favorite_limit, resolved_bilibili_follow_limit = _ask_init_bilibili_limits(
         favorite_limit=bilibili_favorite_limit,

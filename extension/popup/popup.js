@@ -32,12 +32,14 @@ import {
 } from "./popup-helpers.js";
 import { createRuntimeStreamClient } from "./popup-stream.js";
 import {
+  getBackendBaseUrl,
   getBackendEndpointConfig,
   getBackendOrigin,
   isValidBackendHost,
   isValidBackendPort,
   updateBackendEndpoint,
 } from "./popup-backend-config.js";
+import { initAuthControl } from "./popup-auth-control.js";
 import {
   createQrSvgMarkup,
   getMobileQrViewState,
@@ -4965,6 +4967,18 @@ function bindSettings() {
 
   if (!gearBtn || !overlay || !backBtn || !saveBtn) return;
 
+  // LAN password-gate toggle (local-only; the extension is a trusted-local
+  // client so it can manage the gate without being able to lock itself out).
+  const authControl = initAuthControl(
+    {
+      checkbox: document.getElementById("cfgAuthEnabled"),
+      password: document.getElementById("cfgAuthPassword"),
+      saveBtn: document.getElementById("cfgAuthSave"),
+      hint: document.getElementById("cfgAuthHint"),
+    },
+    { getBaseUrl: getBackendBaseUrl },
+  );
+
   const settingsTabs = [
     ["models", document.getElementById("settingsTabModels")],
     ["sources", document.getElementById("settingsTabSources")],
@@ -5519,6 +5533,7 @@ function bindSettings() {
     // populates even when the backend is unreachable — which is the whole
     // point of changing it.
     await populateBackendEndpoint();
+    void authControl.reload();
     try {
       const cfg = await fetchConfig();
       populateForm(cfg);

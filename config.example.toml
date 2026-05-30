@@ -18,6 +18,26 @@ host = "0.0.0.0"
 # 后端 API 监听端口。
 port = 8420
 
+# 局域网/远程访问的可选密码门禁。本机（127.0.0.1 直连）默认始终免登录。
+[api.auth]
+# 是否开启密码登录门禁。
+enabled = false
+# 密码哈希（scrypt）。请勿手填明文；用 `openbiliclaw set-password` 或 init 设置。
+password_hash = ""
+# 登录态签名密钥，首次启用自动生成，请勿外泄。
+session_secret = ""
+# 登录态有效期（小时）。0 = 永不过期（默认，需登出/改密才失效）；填 >0 改为限时。
+session_ttl_hours = 0
+# 本机请求是否免登录（扩展/CLI 依赖此项）。设 false 则连本机也要登录。
+# 注意：带代理转发头(X-Forwarded-For 等)的请求不算本机，仍需登录。
+trust_loopback = true
+# 受信任的前置/同机反向代理 IP 列表。仅当直接对端命中此列表，才采信 X-Forwarded-For
+# 解析真实客户端 IP（从右向左）。留空(默认)= 永不采信转发头。同机反代必须配置此项。
+trusted_proxies = []
+# 允许「跨源 Bearer 登录」的 Origin 白名单（如桌面端从另一 origin 访问后端）。
+# 默认空 = 只允许同源 Cookie 登录，绝不向 JS 返回 token。
+allowed_bearer_origins = []
+
 [llm]
 # Default LLM provider: "openai" | "claude" | "gemini" | "deepseek" | "ollama" | "openrouter" | "openai_compatible"
 # 这里选择的 provider 决定了运行时会检查哪一组敏感字段。
