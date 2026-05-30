@@ -12,6 +12,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import time
 import uuid
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
@@ -102,6 +103,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _CONFIG_SAVE_LOCK = asyncio.Lock()
 _fire_and_forget_tasks: set[asyncio.Task[None]] = set()
+
+# /api/health embedding readiness: cache the live-probe result for this many
+# seconds so Docker healthchecks and popup re-polls don't hit the embedding
+# provider on every call. Kept short so a freshly-fixed provider (e.g. right
+# after `ollama pull bge-m3`) clears the popup's "semantic dedup off" banner
+# quickly. The probe itself is capped by a separate timeout so a hung/retrying
+# provider can never stall /api/health. The timeout is generous enough to
+# absorb an Ollama cold model-load (bge-m3 unloads after keep_alive idle; the
+# first embed re-loads it — measured ~3s), and a timeout is treated as
+# "loading, optimistically ready", NOT a hard failure — otherwise the banner
+# would flash on every popup-open-after-idle. A genuinely-missing model 404s
+# *fast*, so it still resolves to not-ready well within the cap.
+_EMBEDDING_READY_TTL_SECONDS = 30.0
+_EMBEDDING_PROBE_TIMEOUT_SECONDS = 6.0
 
 SOURCE_LABELS = {
     "feedback": "推荐反馈",
@@ -1232,22 +1247,75 @@ def create_app(
             logger.debug("Health profile readiness check failed", exc_info=True)
             return None
 
-    def _health_embedding_ready() -> bool:
-        """Whether a working embedding service was built at startup.
+    # Embedding readiness is probed live (see _health_embedding_ready) and the
+    # result cached here so frequent /api/health polls share one provider call.
+    _embedding_ready_value = False
+    _embedding_ready_checked_at = float("-inf")
+    _embedding_ready_lock = asyncio.Lock()
 
-        ``False`` means semantic dedup / MMR diversity is degraded — the
-        popup surfaces this as a one-click "enable local Ollama" banner so
-        the user isn't left silently scrolling near-duplicate content with
-        only a log line as the signal.
+    async def _health_embedding_ready() -> bool:
+        """Whether the embedding service can *currently* produce a vector.
+
+        This is a live signal, not a build-time one. A service object that
+        was constructed at startup but whose provider now 404s (``bge-m3``
+        never pulled, Ollama stopped) reports ``False`` here, so the popup's
+        "semantic dedup off" banner reflects reality instead of going green
+        while every embed silently fails. Conversely, once a previously
+        broken provider is fixed the banner clears within the cache TTL.
+
+        Layers:
+          - no service object (provider not configured) -> ``False``;
+          - service without a ``probe()`` (legacy/stub) -> build-only ``True``;
+          - otherwise a cache-bypassing ``probe()``, result cached for
+            ``_EMBEDDING_READY_TTL_SECONDS`` and single-flighted so concurrent
+            polls share one provider round-trip.
         """
+        nonlocal _embedding_ready_value, _embedding_ready_checked_at
+
         soul_engine = getattr(ctx, "soul_engine", None)
-        return getattr(soul_engine, "_embedding_service", None) is not None
+        service = getattr(soul_engine, "_embedding_service", None)
+        if service is None:
+            return False
+        probe = getattr(service, "probe", None)
+        if not callable(probe):
+            # Legacy service without a live probe — "built" is the best signal.
+            return True
+
+        if time.monotonic() - _embedding_ready_checked_at < _EMBEDDING_READY_TTL_SECONDS:
+            return _embedding_ready_value
+
+        async with _embedding_ready_lock:
+            # Another request may have refreshed the cache while we waited.
+            if time.monotonic() - _embedding_ready_checked_at < _EMBEDDING_READY_TTL_SECONDS:
+                return _embedding_ready_value
+            try:
+                ready = bool(
+                    await asyncio.wait_for(probe(), timeout=_EMBEDDING_PROBE_TIMEOUT_SECONDS)
+                )
+            except TimeoutError:
+                # Probe exceeded the cap — almost always Ollama cold-loading the
+                # model, not a real failure (a missing model 404s fast and lands
+                # in the `except Exception` branch below as a hard `False`).
+                # Report optimistically ready and cache it like any result, so
+                # concurrent / repeat polls during the multi-second load share
+                # one answer instead of each re-probing and stacking 6s waits.
+                # (A brief stale-OK is far better than flashing the banner.)
+                logger.debug(
+                    "Embedding readiness probe timed out (model loading?); optimistic ready"
+                )
+                ready = True
+            except Exception:
+                logger.debug("Embedding readiness probe errored", exc_info=True)
+                ready = False
+            _embedding_ready_value = ready
+            _embedding_ready_checked_at = time.monotonic()
+            return ready
 
     @app.get("/api/health", response_model=HealthResponse, response_model_exclude_none=True)
-    def health() -> HealthResponse | JSONResponse:
+    async def health() -> HealthResponse | JSONResponse:
         profile_ready = _health_profile_ready()
         lan_ip = _detect_lan_ip()
-        embedding_ready = _health_embedding_ready()
+        embedding_ready = await _health_embedding_ready()
         if bool(getattr(ctx, "degraded", False)):
             body: dict[str, object] = {
                 "status": "degraded",

@@ -118,6 +118,9 @@ class EmbeddingService:
     via ``[llm.embedding]`` in config.toml.
     """
 
+    # Fixed text used by ``probe()`` for /api/health live readiness checks.
+    _PROBE_TEXT = "openbiliclaw embedding readiness probe"
+
     def __init__(
         self,
         provider: SupportsEmbed,
@@ -225,6 +228,25 @@ class EmbeddingService:
                 logger.debug("L2 cache write failed", exc_info=True)
 
         return vector
+
+    async def probe(self) -> bool:
+        """Live readiness check — bypasses the cache and hits the provider once.
+
+        Returns ``True`` only when the provider currently returns a
+        non-empty vector. The L1/L2 cache is bypassed on purpose: a
+        previously-cached success must never mask a provider that has
+        since gone down (Ollama stopped, ``bge-m3`` never pulled so every
+        call 404s, remote key revoked, …). ``/api/health`` calls this
+        behind its own short TTL + single-flight, so the extra provider
+        round-trip happens at most a couple of times a minute.
+        """
+        async with self._provider_semaphore:
+            try:
+                vector = await self._provider.embed(self._PROBE_TEXT, model=self._model)
+            except Exception:
+                logger.debug("Embedding readiness probe failed", exc_info=True)
+                return False
+        return bool(vector)
 
     async def are_similar(self, text_a: str, text_b: str) -> bool:
         """Check if two texts are semantically similar above threshold."""

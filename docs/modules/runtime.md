@@ -50,7 +50,7 @@ result = await service.check_and_update_now()
 
 降级模式下可用接口：
 
-- `GET /api/health`：返回 `status="degraded"`、`reason="llm_registry_unavailable"` 和 blocking issues；当 `SoulEngine` 可用时会额外返回可选字段 `profile_ready`，表示 soul 画像是否已生成。v0.3.95+ 额外返回 `embedding_ready`（bool）——embedding 服务是否成功构建；`false` 表示语义去重 / MMR 多样性降级（可能刷到换皮重复内容），插件 popup 据此显示「一键启用本地 Ollama」横幅。
+- `GET /api/health`：返回 `status="degraded"`、`reason="llm_registry_unavailable"` 和 blocking issues；当 `SoulEngine` 可用时会额外返回可选字段 `profile_ready`，表示 soul 画像是否已生成。v0.3.95+ 额外返回 `embedding_ready`（bool）。v0.3.97+ 这是一次**实时探活**而非「服务是否构建」：经 `EmbeddingService.probe()` 绕过缓存真打一次 provider，结果按 `_EMBEDDING_READY_TTL_SECONDS`（默认 30s）+ single-flight 锁缓存，探活本身由 `_EMBEDDING_PROBE_TIMEOUT_SECONDS`（默认 6s）上限兜住绝不阻塞 health；**超时按「模型冷加载中」乐观判 `true` 并缓存**（Ollama 闲置后卸载 bge-m3，首次重载约 3s；真缺模型走快速 404，仍判 `false`），避免每次开面板闪横幅、并发 health 叠加延迟。于是 provider 现已 404（如 `bge-m3` 没拉、Ollama 停了）会如实报 `false`，修好后下次探活即翻 `true`；服务对象不存在仍 `false`，老/无 `probe()` 的服务回退「构建即就绪」。`false` 表示语义去重 / MMR 多样性降级（可能刷到换皮重复内容），插件 popup 据此显示「一键启用本地 Ollama」横幅。
 - `GET /api/config`：返回完整配置、`degraded=true` 和同一组 issues。
 - `PUT /api/config`：允许保存修复配置，但跳过热重载并返回 `restart_required=true`。
 - `GET /api/runtime-status` 与 `/api/runtime-stream`：用于 popup 展示降级状态；stream 会先发送 `{type:"degraded", ...}` 并保持连接。

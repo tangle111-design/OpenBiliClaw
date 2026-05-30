@@ -20,6 +20,13 @@
 - 修复旧懒加载状态覆盖新状态的竞态：按钮渲染后发出的 `GET /api/watch-later/{bvid}` / `GET /api/favorites/{bvid}` 如果在用户刚 toggle 或收藏列表加载 / 移除之后才返回，不再把 UI 状态回滚到旧值；并补充并发懒加载查询不会互相作废的回归测试。
 - 修复状态注册表的按钮泄漏：推荐卡与惊喜横幅每次重渲染都会为同一 bvid 注册新按钮，旧的已脱离 DOM 的按钮此前不会被回收。现在 `syncButtons` 在每次状态同步时剪除 `isConnected === false` 的条目，并在推荐列表 / 惊喜横幅 `replaceChildren` 后调用 `pruneDetached()` 主动扫除，避免注册表随会话无限增长、`syncButtons` 退化为 O(累计渲染数)。
 - 测试：新增 `extension/tests/popup-saved-sync.test.ts` 覆盖同 bvid 多按钮同步、用户点击后忽略旧状态、收藏列表外部状态写入后忽略旧状态、并发懒加载共享版本、游离按钮被剪除后不再更新；同步更新 popup 收藏 / 稍后再看静态布线断言。
+- 修复「每条推荐理由都一样、且和视频对不上」：`_precompute_batch` 在 LLM 返回数组**不带 bvid/content_id** 时会退化成按数组下标硬塞文案，弱模型（如上下文被截断的 `qwen:7b`）一旦乱序 / 重复输出就把文案张冠李戴并静默写池。现在多条候选缺 ID 时直接回退逐条生成（单条调用各自携带 bvid，不会错位），单条批次仍走原位置匹配（无歧义）；并新增去重闸：同一句文案被分配给多个不同 bvid 时整组丢弃，宁可不发也不发重复文案。
+- 修复本地 Ollama 上下文窗口被静默截断：新增 `[llm.ollama] num_ctx`（默认 `0` 保持原 `/v1` 行为）。Ollama 的 OpenAI 兼容 `/v1` 端点会丢弃 `num_ctx`，大批量 prompt 超 4096 即被截断、导致结构化 JSON 解析失败。设 `num_ctx > 0` 后聊天改走原生 `/api/chat` 端点（`OllamaProvider._complete_native`，`max_tokens→num_predict`、`json_mode→format=json`、空响应回退一次无约束重试），`options.num_ctx` 才真正生效（已实测 `context_length` 变为 8192）。
+- 测试：新增 `_precompute_batch` 无 ID 多条回退逐条、重复文案整组丢弃回归；新增 `OllamaProvider` num_ctx 路由原生端点 / json_mode→format / 默认走 `/v1` shim / 空响应去约束重试单元测试。
+- 修复「语义去重未启用」横幅**根本无法隐藏**的 CSS bug（自 v0.3.54 起一直存在,影响所有用户）：`.embedding-banner { display: flex }` 在同等优先级下盖过浏览器 UA 的 `[hidden] { display: none }`,导致 `banner.hidden = true` 形同虚设——无论 `embedding_ready` 真假、无论是否点关闭,横幅都常驻显示。新增 `.embedding-banner[hidden] { display: none }`（优先级 0,2,0 > 0,1,0）守卫,`hidden` 重新生效。**这正是「embedding 配置好了横幅还在」的真正可见症状。**
+- 修复 `embedding_ready` 信号失真（横幅显示与否的依据）：`/api/health.embedding_ready` 从「服务是否构建」改为**实时探活**,既堵住「模型 404 全挂但仍报已就绪」的假阴性,也让修好后能恢复。新增 `EmbeddingService.probe()` 绕过 L1/L2 缓存直接打一次 provider（缓存命中的旧成功不会掩盖 provider 已掉线 / `bge-m3` 没拉），`/api/health` 侧带 `_EMBEDDING_READY_TTL_SECONDS`（默认 30s）+ single-flight,避免频繁 health 轮询打爆 provider；探活由 `_EMBEDDING_PROBE_TIMEOUT_SECONDS`（默认 6s）上限兜住绝不阻塞 health。**超时按「模型冷加载中」乐观判 ready 并缓存**——Ollama 闲置后会卸载 bge-m3,首次重载约 3s,真缺模型则快速 404 仍判 not-ready,这样既不会每次开面板都闪一下横幅,也不会让并发/重复 health 各自重探把延迟叠到 10s+。服务对象不存在仍报 `false`,无 `probe()` 的旧服务回退「构建即就绪」。
+- 插件侧把横幅决策抽到 `popup-embedding-banner.js`（`shouldShowEmbeddingBanner`），并在 side panel 重新可见 / 获焦时复检（`installEmbeddingBannerAutoRefresh`）——此前 `maybeShowEmbeddingBanner` 只在面板打开时跑一次，常驻面板在 embedding 修好后仍长期残留旧横幅；现在配合后端实时探活，修好后无需重开面板横幅即自动消失。
+- 测试：新增 `EmbeddingService.probe()` 成功 / 空向量 / 异常 / 绕过缓存逐次打 provider 回归；`/api/health` 探活成功→ready、探活失败→not-ready（模型没拉场景）、结果缓存共享一次 provider 往返；前端 `popup-embedding-banner.test.ts` 覆盖 show/hide 决策、可见 / 获焦复检、隐藏时不复检、teardown 摘监听,并加 `.embedding-banner[hidden]` display:none 守卫的结构化回归（防止 un-hideable 横幅再现）。
 
 ## 可编辑用户画像 · Phase 2/3：插件 + Web 编辑 UI（2026-05-29）
 

@@ -47,6 +47,10 @@ import {
 } from "./popup-qr.js";
 import { createSavedToggleRegistry } from "./popup-saved-sync.js";
 import {
+  installEmbeddingBannerAutoRefresh,
+  shouldShowEmbeddingBanner,
+} from "./popup-embedding-banner.js";
+import {
   appendRecommendations,
   checkBackendStatus,
   fetchActivityFeed,
@@ -5699,9 +5703,10 @@ async function enableLocalOllamaEmbedding(enableBtn) {
         },
       },
     });
-    // Re-check: hot-reload rebuilds the embedding service in-process, so
-    // health flips to embedding_ready=true only if Ollama actually served
-    // a vector. Don't claim success on a config write alone.
+    // Re-check: hot-reload rebuilds the embedding service in-process and
+    // /api/health probes it live, so embedding_ready only flips true once
+    // Ollama actually serves a vector. Don't claim success on a config
+    // write alone.
     const health = await fetchHealth();
     const banner = document.getElementById("embeddingBanner");
     if (health && health.embedding_ready) {
@@ -5731,10 +5736,7 @@ async function maybeShowEmbeddingBanner() {
   if (!banner) return;
   if (sessionStorage.getItem(EMBEDDING_BANNER_DISMISS_KEY) === "1") return;
   const health = await fetchHealth();
-  // Only nag when the backend explicitly reports embedding is off. A null
-  // health (backend unreachable) or older backend without the field stays
-  // silent — the connection banner already covers "backend down".
-  if (!health || health.embedding_ready !== false) {
+  if (!shouldShowEmbeddingBanner(health)) {
     banner.hidden = true;
     return;
   }
@@ -5777,6 +5779,10 @@ async function initializePopup() {
   setHint("先看看本地后端连上没。");
   await initializeRecommendations();
   void maybeShowEmbeddingBanner();
+  // Re-check when the panel regains visibility/focus so a stale "semantic
+  // dedup off" banner clears itself once embedding recovers — the one-shot
+  // call above never re-runs while a side panel stays open.
+  installEmbeddingBannerAutoRefresh(maybeShowEmbeddingBanner);
   await hydrateChatHistory();
   // Always fetch profile-summary on startup so the messages inbox is
   // populated regardless of which tab the user lands on.  Without this

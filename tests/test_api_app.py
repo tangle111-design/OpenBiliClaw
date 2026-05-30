@@ -752,6 +752,114 @@ class TestBackendAPI:
         assert response.status_code == 200
         assert response.json()["embedding_ready"] is True
 
+    def test_health_endpoint_embedding_ready_true_when_probe_succeeds(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class _ProbeService:
+            async def probe(self) -> bool:
+                return True
+
+        class EmbeddingSoulEngine:
+            def __init__(self) -> None:
+                self._embedding_service = _ProbeService()
+
+        app = create_app(
+            memory_manager=object(), database=object(), soul_engine=EmbeddingSoulEngine()
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/health")
+
+        assert response.status_code == 200
+        assert response.json()["embedding_ready"] is True
+
+    def test_health_endpoint_embedding_not_ready_when_probe_fails(self) -> None:
+        from fastapi.testclient import TestClient
+
+        # The service object exists but the provider can't produce a vector
+        # (e.g. bge-m3 never pulled, so every embed 404s). The live probe must
+        # report not-ready instead of the old build-only ``True`` that left the
+        # popup banner green while semantic dedup was 100% broken.
+        class _FailingProbeService:
+            async def probe(self) -> bool:
+                return False
+
+        class EmbeddingSoulEngine:
+            def __init__(self) -> None:
+                self._embedding_service = _FailingProbeService()
+
+        app = create_app(
+            memory_manager=object(), database=object(), soul_engine=EmbeddingSoulEngine()
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/health")
+
+        assert response.status_code == 200
+        assert response.json()["embedding_ready"] is False
+
+    def test_health_endpoint_caches_embedding_probe_result(self) -> None:
+        from fastapi.testclient import TestClient
+
+        # Frequent /health polls (Docker healthcheck + popup re-poll on focus)
+        # must share one provider round-trip within the TTL window.
+        class _CountingProbeService:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def probe(self) -> bool:
+                self.calls += 1
+                return True
+
+        service = _CountingProbeService()
+
+        class EmbeddingSoulEngine:
+            def __init__(self) -> None:
+                self._embedding_service = service
+
+        app = create_app(
+            memory_manager=object(), database=object(), soul_engine=EmbeddingSoulEngine()
+        )
+        client = TestClient(app)
+
+        client.get("/api/health")
+        client.get("/api/health")
+
+        assert service.calls == 1
+
+    def test_health_endpoint_optimistic_when_probe_times_out(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+
+        from fastapi.testclient import TestClient
+
+        import openbiliclaw.api.app as appmod
+
+        # A slow probe (Ollama cold-loading bge-m3) must NOT flip the banner on:
+        # a timeout means "loading", reported as optimistically ready, not the
+        # hard `False` reserved for a fast explicit failure (missing model 404).
+        monkeypatch.setattr(appmod, "_EMBEDDING_PROBE_TIMEOUT_SECONDS", 0.05)
+
+        class _SlowProbeService:
+            async def probe(self) -> bool:
+                await asyncio.sleep(0.5)  # exceeds the cap → times out
+                return False  # would say not-ready, but never resolves in time
+
+        class EmbeddingSoulEngine:
+            def __init__(self) -> None:
+                self._embedding_service = _SlowProbeService()
+
+        app = create_app(
+            memory_manager=object(), database=object(), soul_engine=EmbeddingSoulEngine()
+        )
+        client = TestClient(app)
+
+        response = client.get("/api/health")
+
+        assert response.status_code == 200
+        assert response.json()["embedding_ready"] is True
+
     def test_detect_lan_ip_prefers_rfc1918_interface_over_benchmark_tun(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
