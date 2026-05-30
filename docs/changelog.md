@@ -4,6 +4,11 @@
 
 ---
 
+## extension v0.3.60: 「阿B 最近新记住了什么」改为点击加载更多（2026-05-31）
+
+- 修复画像 tab「阿B 最近新记住了什么」区块过长的问题：该区块的认知卡片此前会随页面滚动到底部**自动续页**（`maybeLoadMoreCognitionHistory` 在 profile 加载后、每次续页结束、以及 `.content` 滚动事件里反复触发），实测会把所有历史认知卡片一次性拉满，使区块无限变长、底部「加载更多」按钮形同虚设。现在改为**纯点击驱动**：首屏只展示最近 3 条，仅当用户点击「加载更多」时才按 `cursor` 分页拉取下一页（每页 3 条），不再随滚动自动续页。推荐列表的滚动自动续页（独立的 `maybeLoadMoreRecommendations` + 意图门控）不受影响。
+- 测试：`extension/tests/popup-scroll.test.ts` 新增「画像认知历史仅点击分页、无滚动自动续页」契约用例（断言 `maybeLoadMoreCognitionHistory` 及其全部调用点已移除、加载更多按钮 click 绑定 `loadMoreCognitionHistory`、`.content` 滚动监听不再链式触发认知续页）；扩展端 `node --test` 全绿、`tsc --noEmit` 干净。
+
 ## extension v0.3.59: 画像编辑态布局修复（2026-05-31）
 
 - 修复插件画像页编辑态布局不一致：进入「编辑画像」后，side panel 现在会给画像 tab 加 `is-profile-editing` 页面态，用 CSS 强制让只读画像卡片退出布局、编辑面板占据原位置；避免只读内容仍显示、编辑控件跑到整页底部，行为对齐移动 Web 与桌面 Web 的替换式编辑态。

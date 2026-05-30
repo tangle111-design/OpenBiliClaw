@@ -4484,7 +4484,6 @@ async function loadProfileSummary({ force = false } = {}) {
   void syncScopedChatTurns();
   state.profileLoaded = true;
   renderProfileSummary(state.profile);
-  maybeLoadMoreCognitionHistory();
 }
 
 function hydrateInboxFromProfile(profile) {
@@ -4594,24 +4593,6 @@ async function loadMoreCognitionHistory() {
   }
 
   renderProfileSummary(state.profile);
-  maybeLoadMoreCognitionHistory();
-}
-
-function maybeLoadMoreCognitionHistory() {
-  if (
-    state.activeTab !== "profile" ||
-    !(elements.content instanceof HTMLElement) ||
-    elements.viewProfile.hidden ||
-    !state.profileCognitionHistory.hasMore ||
-    state.profileCognitionHistory.loadingMore
-  ) {
-    return;
-  }
-
-  const remaining = elements.content.scrollHeight - elements.content.scrollTop - elements.content.clientHeight;
-  if (remaining <= 96) {
-    void loadMoreCognitionHistory();
-  }
 }
 
 async function refreshProfileSummaryAfterInteraction({
@@ -4801,7 +4782,6 @@ function bindTabs() {
 function bindProfileHistoryLoading() {
   if (elements.content instanceof HTMLElement) {
     elements.content.addEventListener("scroll", () => {
-      maybeLoadMoreCognitionHistory();
       maybeLoadMoreRecommendations();
     });
   }

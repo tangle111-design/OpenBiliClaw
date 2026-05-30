@@ -26,7 +26,7 @@
 | B 站 Cookie 自动同步 | ✅ | service worker 会读取 `SESSDATA` / `bili_jct` / `DedeUserID` 三件套并推送到本地后端；后端暂未启动时切到 1 分钟重试，成功后恢复 60 分钟兜底刷新；后端 runtime-stream 也可发 `bilibili_cookie_sync_requested` 让扩展立刻回传 |
 | 抖音 Cookie 自动同步 | ✅ | service worker 会读取 douyin.com Cookie header 并推送到 `/api/sources/dy/cookie`；后端保存到 `data/douyin_cookie.json`，供 `discover --source douyin` / `discover-douyin` 在无环境变量覆盖时使用；冷启动、runtime-stream 请求和 alarm 兜底都会触发同步 |
 | 认知变化提醒 | ✅ | service worker 会提示关键认知变化，画像 tab 会显示“阿B 最近新记住了什么” |
-| 认知变化历史分页 | ✅ | 画像 tab 的认知卡片支持展开详情，并可下拉或点击按钮继续查看更早的变化记录 |
+| 认知变化历史分页 | ✅ | 画像 tab 的认知卡片支持展开详情；「阿B 最近新记住了什么」默认只展示最近 3 条，需点击「加载更多」按钮分页查看更早的变化记录（不再随页面滚动自动续页，避免该区块无限变长） |
 | 认知卡片上下文澄清 | ✅ | 画像 tab 的认知卡片默认态现在固定展示“结论 + 上下文 + 状态提示”，用户可直接看出这是对哪条内容/哪轮聊天/哪组聚合信号形成的判断，以及这张卡片是否还能展开 |
 | 画像多层认知展示 | ✅ | 画像 tab 现已把“你怎么处理信息 / 你在内容里长期在找什么 / 这阵子更像在经历什么”单独拆开，不再只显示一段画像 prose 加兴趣 chips |
 | 画像可编辑（编辑模式） | ✅ | 画像页新增「编辑画像」开关：进入后由未截断的 `GET /api/profile/edit-state` 驱动，可增删核心特质 / 深层需求 / 价值观 / 内在驱动 / 认知风格 / 常看 UP 等 chip、增删喜欢 / 不喜欢领域、改写人格素描 / 人生阶段 / 当前阶段等长文、拖动滑杆调探索开放度 / 质量敏感度 / 幽默偏好 / 深度偏好等标量；文本与标量固定项显示「AI 想更新此项」漂移建议，每个改过的字段可「恢复 AI 建议」。每个控件 POST 一次 `/api/profile/edit`（确定性、抗画像重建；chip 增删即时生效，长文与滑杆点「保存」生效）。插件 side panel 进入编辑时会切到 `is-profile-editing` 页面态，强制只读画像卡片退出布局、编辑面板占据原位置；移动 Web（`/m`）与桌面 Web（`/web`）同样是替换式编辑态，三端行为一致 |

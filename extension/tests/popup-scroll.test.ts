@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-test("profile cognition auto-load listens to the shared content scroller", () => {
+test("recommendation auto-load listens to the shared content scroller", () => {
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
 
   assert.match(popupJs, /content:\s*document\.querySelector\("\.content"\)/);
@@ -11,6 +11,28 @@ test("profile cognition auto-load listens to the shared content scroller", () =>
   assert.match(popupJs, /elements\.content\.addEventListener\("scroll"/);
   assert.match(popupJs, /maybeLoadMoreRecommendations\(\)/);
   assert.doesNotMatch(popupJs, /elements\.viewProfile\.addEventListener\("scroll"/);
+});
+
+test("profile cognition history paginates on click only — no scroll auto-load", () => {
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+
+  // The "阿B 最近新记住了什么" section must paginate strictly on an explicit
+  // "加载更多" click. The old eager scroll auto-load pulled every page the
+  // moment the profile neared the bottom, which is exactly what made the
+  // section grow unboundedly long — it has to be gone.
+  assert.doesNotMatch(popupJs, /maybeLoadMoreCognitionHistory/);
+
+  // The load-more button is the only trigger for fetching older cognition.
+  assert.match(
+    popupJs,
+    /elements\.profileRecentMemoryMore\.addEventListener\("click",[\s\S]*?loadMoreCognitionHistory\(\)/,
+  );
+
+  // The shared scroll listener no longer chains cognition pagination.
+  const scrollListener =
+    popupJs.match(/elements\.content\.addEventListener\("scroll",[\s\S]*?\}\);/)?.[0] ?? "";
+  assert.notEqual(scrollListener, "");
+  assert.doesNotMatch(scrollListener, /CognitionHistory/);
 });
 
 test("recommendation auto-load checks again after render and append", () => {
