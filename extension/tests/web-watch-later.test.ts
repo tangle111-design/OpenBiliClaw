@@ -59,5 +59,6 @@ test("extension delight banner has a watch-later star action", () => {
   const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
 
   assert.match(popupJs, /delightWatchLaterButton/);
-  assert.match(popupJs, /addToWatchLater\(delight\.bvid\)/);
+  assert.match(popupJs, /toggleWatchLaterSaved\(delight\.bvid\)/);
+  assert.match(popupJs, /bindWatchLaterToggle\(btn,\s*delight\.bvid\)/);
 });

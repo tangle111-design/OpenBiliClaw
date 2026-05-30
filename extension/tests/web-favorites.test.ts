@@ -83,6 +83,7 @@ test("extension popup has a favorites tab, list, and delight heart", () => {
   assert.match(popupHtml, /id="viewFavorites"/);
   assert.match(popupHtml, /id="favoritesList"/);
   assert.match(popupJs, /delightFavoriteButton/);
-  assert.match(popupJs, /addToFavorite\(delight\.bvid\)/);
+  assert.match(popupJs, /toggleFavoriteSaved\(delight\.bvid\)/);
+  assert.match(popupJs, /bindFavoriteToggle\(btn,\s*delight\.bvid\)/);
   assert.match(popupJs, /function loadFavorites/);
 });

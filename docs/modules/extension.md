@@ -19,7 +19,7 @@
 | 兴趣挑战探针 UI | ✅ | `interest.probe` 和 `speculative_interests` 会保留后端的 `probe_mode` / `challenge` metadata；profile 页确认会向 `/api/interest-probes/respond` 传 `surface="profile"`，写回为 `profile_confirmed`，而 inbox / runtime probe 卡片确认保持默认 `probe_confirmed`。插件 side panel、移动 Web 和桌面 Web 会把普通 `near` 兴趣探针与 `lateral/bridge/wildcard` 挑战探针拆成不同样式和提示：普通兴趣强调继续探索，挑战探针提示“把口味往侧边推一点”，区别于避雷探针。 |
 | 避雷探针 UI | ✅ | popup inbox 支持 `avoidance.probe`，按钮文案为「确实不喜欢 / 不是 / 多聊聊」；画像页显示 `speculative_avoidances` 的待确认避雷方向，确认后通过 `/api/avoidance-probes/respond` 写回后端。插件 side panel、移动 Web 和桌面 Web 会用避雷专属样式和“少看这类 / 猜错点不是”提示，区别于正向兴趣试探。移动 Web 在任一探针按钮点击后会锁住同一卡片其它动作，避免一次 active 探针被连续提交 confirm + reject；消息收件箱空态不会重建 header，X 关闭入口保持可用。 |
 | 封面图代理加载 | ✅ | side panel 的推荐卡片、惊喜推荐和消息封面会用当前配置的后端 origin 拼接 `/api/image-proxy?url=...`，不再直连平台 CDN，也不再设置 `referrerPolicy`。 |
-| 收藏夹 / 稍后再看 | ✅ | 推荐卡与 delight banner 提供 ☆ 稍后再看 + ♡ 收藏两个互相独立的 toggle（乐观 UI、失败回退、懒加载状态）；popup 新增「收藏」tab（`viewFavorites/favoritesList`，`loadFavorites` 拉 `/api/favorites` 列表，可打开 / 单条移除）。详见 [收藏夹 spec](../specs/favorites.md) 与 [稍后再看 spec](../specs/watch-later.md)。 |
+| 收藏夹 / 稍后再看 | ✅ | 推荐卡提供 ☆ 稍后再看 toggle，delight banner 提供 ☆ 稍后再看 + ♡ 收藏两个互相独立的 toggle（乐观 UI、失败回退、懒加载状态）；popup 新增「收藏」tab（`viewFavorites/favoritesList`，`loadFavorites` 拉 `/api/favorites` 列表，可打开 / 单条移除）。插件 popup 侧保存状态统一由 `popup-saved-sync.js` 管理：同一 bvid 的推荐卡稍后再看、惊喜横幅按钮、收藏列表移除会同步更新，且用户刚点击后的状态不会被旧的懒加载查询覆盖。详见 [收藏夹 spec](../specs/favorites.md) 与 [稍后再看 spec](../specs/watch-later.md)。 |
 | Firefox 140+ 支持 | ✅ | `manifest.firefox.json` 使用 `sidebar_action` 承载同一套 popup UI，`openExtensionUi()` 按 Chrome sidePanel -> Firefox sidebarAction -> tab 降级；Firefox manifest 在构建时注入主 manifest version，并声明 AMO 所需 `data_collection_permissions` |
 | 持续补货与通知 | ✅ | 运行状态已接入 popup，service worker 会拉取高置信通知并回写发送状态 |
 | 设置页源策略控制 | ✅ | side panel 设置页已按「模型 / 平台源 / 调度 / 通用 / 日志」分 tab；模型 tab 可设置 LLM / embedding 的显式备选 Provider，留空即不 fallback，并明确 embedding 不再跟随默认 LLM；平台源 tab 按 Bilibili / 小红书 / 抖音 / YouTube / 通用网页 / 候选池配比独立分块，可开关四个平台 discovery，编辑各源预算和候选池占比，并按已有事件向后端请求推荐比例；调度 tab 暴露后台暂停、断开宽限、真实 refresh / probe 频率和猜测兴趣参数；日志 tab 用单个「完整日志路径」编辑后端日志文件位置 |
@@ -62,6 +62,7 @@ extension/
 ├── popup/
 │   ├── popup.html
 │   ├── popup.js
+│   ├── popup-saved-sync.js
 │   └── popup-helpers.js
 ├── src/
 │   ├── background/
@@ -271,6 +272,7 @@ CLI 入口：
 - 推荐、惊喜推荐和消息内封面图会通过 `popup-helpers.buildImageProxyPath()` 生成 `/api/image-proxy?url=...`，再用 `popup-backend-config.getBackendOrigin()` 拼成当前后端绝对地址；图片加载失败时保留已有 wrapper fallback，不让卡片布局塌缩
 - `/api/recommendations/refresh` 仍保留为后台补货入口，用于继续往候选池里持续进货
 - popup 推荐卡片现在不会再把空 `expression / topic_label` 补成固定占位文案；后端预生成没完成时，这两块会直接隐藏
+- popup 的收藏 / 稍后再看 toggle 统一走 `createSavedToggleRegistry()`：同一 bvid 可以被多个按钮注册，任一按钮增删成功后所有可见按钮同步 `aria-pressed` / title / 文本；旧的懒加载 `GET /api/watch-later/{bvid}` / `GET /api/favorites/{bvid}` 结果如果发生在用户点击或收藏列表加载 / 移除之后会被忽略，避免状态回跳。收藏列表中移除条目也会反向同步惊喜横幅里的收藏按钮，推荐卡稍后再看也会与惊喜横幅稍后再看同步。注册表会在每次状态同步时剪除已脱离 DOM（`isConnected === false`）的按钮，并在推荐列表 / 惊喜横幅 `replaceChildren` 后调用 `pruneDetached()`，避免按钮随重渲染在注册表里无限堆积。
 - 亮色 side panel 视觉系统：顶部 hero + inline 状态徽标、胶囊 tab、统一卡片体系，整体更贴近 B 站内容产品气质
 - 推荐 tab：展示内容封面、标题、作者 / UP 主、`topic_label`、朋友式推荐文案，并通过“打开内容”跳转到 `content_url`；缺少 URL 时按 `source_platform` 对 B 站 / YouTube 做安全 fallback
 - 如果某条内容暂时没有可用封面，卡片会回退到占位态，不影响换片和反馈

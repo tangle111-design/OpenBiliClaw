@@ -60,6 +60,10 @@ screenshot/
 # Local artifacts / debug output
 output/
 .codex/
+# Scratch dir for local debug screenshots + serve-api.log, and stray
+# root-level probe screenshots from manual UI verification runs
+.tmp/
+/probe-*.png
 
 # Local AI / chat tooling state — runtime attachments (cc-connect),
 # session memory + project plans (Claude Code). Per-developer, never
