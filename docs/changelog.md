@@ -4,6 +4,12 @@
 
 ---
 
+## extension v0.3.64: 保存列表头图与窄宽度头部修复（2026-06-01）
+
+- 浏览器插件版本提升到 `0.3.64`，准备发布 `extension-v0.3.64`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.64.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.64-firefox.zip`。
+- 修复插件 side panel「稍后」和「收藏」列表无头图的问题：保存列表条目现在归一化封面 URL，按固定 16:9 缩略图展示，并继续通过后端 `/api/image-proxy` 加载平台 CDN 图片。
+- 修复插件 side panel 默认窄宽度下顶部工具按钮和左侧标题 / 状态重叠的问题：460px 以下宽度会把 Web、二维码、消息、设置按钮换到品牌区下一行靠右排列。
+
 ## extension v0.3.63: 惊喜推荐正向反馈保留（2026-06-01）
 
 - 浏览器插件版本提升到 `0.3.63`，准备发布 `extension-v0.3.63`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.63.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.63-firefox.zip`。

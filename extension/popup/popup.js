@@ -541,13 +541,18 @@ function buildWatchLaterCard(item) {
   const body = document.createElement("button");
   body.type = "button";
   body.className = "saved-card-open";
+  const media = buildSavedCardMedia(item);
+  const copy = document.createElement("span");
+  copy.className = "saved-card-copy";
   const title = document.createElement("p");
   title.className = "saved-card-title";
   title.textContent = item.title || item.bvid;
   const up = document.createElement("p");
   up.className = "saved-card-up";
   up.textContent = item.up_name || "";
-  body.append(title, up);
+  copy.append(title, up);
+  body.append(copy);
+  body.prepend(media);
   body.addEventListener("click", () => {
     const url = buildContentUrl(item);
     if (url) window.open(url, "_blank");
@@ -577,6 +582,21 @@ function buildWatchLaterCard(item) {
 
   card.append(body, remove);
   return card;
+}
+
+function buildSavedCardMedia(item) {
+  const media = document.createElement("span");
+  media.className = "saved-card-cover";
+  if (item.cover_url) {
+    const image = document.createElement("img");
+    image.alt = "";
+    image.decoding = "async";
+    media.append(image);
+    void setProxyImageSrc(image, item.cover_url);
+  } else {
+    media.classList.add("is-fallback");
+  }
+  return media;
 }
 
 // ── Favorites view (收藏夹) ─────────────────────────────────────
@@ -611,13 +631,18 @@ function buildFavoriteCard(item) {
   const body = document.createElement("button");
   body.type = "button";
   body.className = "saved-card-open";
+  const media = buildSavedCardMedia(item);
+  const copy = document.createElement("span");
+  copy.className = "saved-card-copy";
   const title = document.createElement("p");
   title.className = "saved-card-title";
   title.textContent = item.title || item.bvid;
   const up = document.createElement("p");
   up.className = "saved-card-up";
   up.textContent = item.up_name || "";
-  body.append(title, up);
+  copy.append(title, up);
+  body.append(copy);
+  body.prepend(media);
   body.addEventListener("click", () => {
     const url = buildContentUrl(item);
     if (url) window.open(url, "_blank");

@@ -126,6 +126,19 @@ export function normalizeRecommendation(item) {
   };
 }
 
+export function normalizeSavedItem(item) {
+  const bvid = normalizeText(item?.bvid || item?.content_id);
+  return {
+    ...item,
+    bvid,
+    title: normalizeText(item?.title) || bvid,
+    up_name: normalizeText(item?.up_name),
+    cover_url: normalizeCoverUrl(item?.cover_url),
+    content_url: normalizeText(item?.content_url),
+    source_platform: normalizeText(item?.source_platform) || "bilibili",
+  };
+}
+
 export function normalizeDelightCandidate(item) {
   const normalizedState = normalizeText(item?.state) || "pending";
   return {

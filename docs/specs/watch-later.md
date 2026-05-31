@@ -87,4 +87,4 @@ CREATE INDEX IF NOT EXISTS idx_watch_later_added
 | 移动端 Web | 底部导航「稍后」tab（`initWatchLaterView`） | `fetchWatchLater()` |
 | 桌面端 Web | 侧边栏「稍后再看」(`watchLaterBtn` + `watchLaterPage` + `watchLaterCountBadge`) | `refreshWatchLater()` + `syncWatchLaterButtons()` |
 
-列表项支持点击打开、单条移除；桌面端导航项带数量徽章。GET `/api/watch-later` 现已对 `limit/offset` 做 422 校验。
+列表项支持点击打开、单条移除；插件 popup 列表项会展示固定 16:9 头图缩略图，并复用 `/api/image-proxy` 加载封面。桌面端导航项带数量徽章。GET `/api/watch-later` 现已对 `limit/offset` 做 422 校验。

@@ -1,4 +1,4 @@
-import { normalizeRecommendation } from "./popup-helpers.js";
+import { normalizeRecommendation, normalizeSavedItem } from "./popup-helpers.js";
 import { getBackendBaseUrl } from "./popup-backend-config.js";
 
 export const CONFIG_CACHE_KEY = "openbiliclaw.config_cache";
@@ -464,7 +464,11 @@ export async function watchLaterStatus(bvid) {
 }
 
 export async function fetchWatchLater(limit = 50, offset = 0) {
-  return requestJson(`/watch-later?limit=${limit}&offset=${offset}`);
+  const payload = await requestJson(`/watch-later?limit=${limit}&offset=${offset}`);
+  return {
+    ...payload,
+    items: Array.isArray(payload?.items) ? payload.items.map(normalizeSavedItem) : [],
+  };
 }
 
 // ── Favorites (收藏夹) ────────────────────────────────────────────
@@ -488,5 +492,9 @@ export async function favoriteStatus(bvid) {
 }
 
 export async function fetchFavorites(limit = 50, offset = 0) {
-  return requestJson(`/favorites?limit=${limit}&offset=${offset}`);
+  const payload = await requestJson(`/favorites?limit=${limit}&offset=${offset}`);
+  return {
+    ...payload,
+    items: Array.isArray(payload?.items) ? payload.items.map(normalizeSavedItem) : [],
+  };
 }

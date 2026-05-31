@@ -222,7 +222,19 @@ test("watch-later popup API helpers use the shared backend endpoint", async () =
       ok: true,
       async json() {
         return url.includes("?")
-          ? { items: [{ bvid: "BV1WL" }], total: 1 }
+          ? {
+              items: [
+                {
+                  bvid: "BV1WL",
+                  title: "稍后条目",
+                  up_name: "测试 UP",
+                  cover_url: "//i0.hdslb.com/bfs/archive/watch-later.jpg",
+                  content_url: "",
+                  source_platform: "",
+                },
+              ],
+              total: 1,
+            }
           : { saved: true, total: 1 };
       },
     };
@@ -237,7 +249,19 @@ test("watch-later popup API helpers use the shared backend endpoint", async () =
   await watchLaterStatus("BV1WL");
   const list = await fetchWatchLater(20, 40);
 
-  assert.deepEqual(list, { items: [{ bvid: "BV1WL" }], total: 1 });
+  assert.deepEqual(list, {
+    items: [
+      {
+        bvid: "BV1WL",
+        title: "稍后条目",
+        up_name: "测试 UP",
+        cover_url: "https://i0.hdslb.com/bfs/archive/watch-later.jpg",
+        content_url: "",
+        source_platform: "bilibili",
+      },
+    ],
+    total: 1,
+  });
   assert.equal(calls[0].url, "http://127.0.0.1:8420/api/watch-later");
   assert.equal(calls[0].options.method, "POST");
   assert.equal(calls[0].options.body, JSON.stringify({ bvid: "BV1WL" }));
@@ -255,7 +279,19 @@ test("favorites popup API helpers use the shared backend endpoint", async () => 
       ok: true,
       async json() {
         return url.includes("?")
-          ? { items: [{ bvid: "BV1FAV" }], total: 1 }
+          ? {
+              items: [
+                {
+                  bvid: "BV1FAV",
+                  title: "收藏条目",
+                  up_name: "测试 UP",
+                  cover_url: "http://i0.hdslb.com/bfs/archive/favorite.jpg",
+                  content_url: "",
+                  source_platform: "",
+                },
+              ],
+              total: 1,
+            }
           : { saved: true, total: 1 };
       },
     };
@@ -270,7 +306,19 @@ test("favorites popup API helpers use the shared backend endpoint", async () => 
   await favoriteStatus("BV1FAV");
   const list = await fetchFavorites(20, 40);
 
-  assert.deepEqual(list, { items: [{ bvid: "BV1FAV" }], total: 1 });
+  assert.deepEqual(list, {
+    items: [
+      {
+        bvid: "BV1FAV",
+        title: "收藏条目",
+        up_name: "测试 UP",
+        cover_url: "https://i0.hdslb.com/bfs/archive/favorite.jpg",
+        content_url: "",
+        source_platform: "bilibili",
+      },
+    ],
+    total: 1,
+  });
   assert.equal(calls[0].url, "http://127.0.0.1:8420/api/favorites");
   assert.equal(calls[0].options.method, "POST");
   assert.equal(calls[0].options.body, JSON.stringify({ bvid: "BV1FAV" }));

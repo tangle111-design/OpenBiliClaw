@@ -31,6 +31,20 @@ test("popup header exposes a local mobile web QR entry", () => {
   assert.doesNotMatch(popupHtml, /api\.qrserver|chart\.googleapis/);
 });
 
+test("popup header moves utility icons below the brand on narrow side-panel widths", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const narrowHeaderQuery =
+    popupHtml.match(/@media \(max-width: 460px\)\s*\{[\s\S]*?\.hero-actions[\s\S]*?\}/)?.[0] ?? "";
+
+  assert.match(narrowHeaderQuery, /\.hero-top\s*\{/);
+  assert.match(narrowHeaderQuery, /grid-template-columns:\s*1fr;/);
+  assert.match(narrowHeaderQuery, /\.hero-actions\s*\{/);
+  assert.match(narrowHeaderQuery, /width:\s*100%;/);
+  assert.match(narrowHeaderQuery, /justify-content:\s*flex-end;/);
+  assert.match(narrowHeaderQuery, /\.brand-title-row\s*\{/);
+  assert.match(narrowHeaderQuery, /flex-wrap:\s*wrap;/);
+});
+
 test("recommendation header uses a compact top row with status chips", () => {
   const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
   const headerCardBlock =
@@ -178,6 +192,21 @@ test("recommendation card layout reserves a media cover slot", () => {
   assert.match(coverBlock, /aspect-ratio:\s*16\s*\/\s*9;/);
   assert.match(coverBlock, /width:\s*100%;/);
   assert.match(coverImageBlock, /object-fit:\s*cover;/);
+});
+
+test("saved cards reserve a thumbnail slot and load covers through the backend proxy", () => {
+  const popupHtml = readFileSync(resolve("popup", "popup.html"), "utf8");
+  const popupJs = readFileSync(resolve("popup", "popup.js"), "utf8");
+  const coverBlock = popupHtml.match(/\.saved-card-cover\s*\{[\s\S]*?\}/)?.[0] ?? "";
+  const coverImageBlock = popupHtml.match(/\.saved-card-cover img\s*\{[\s\S]*?\}/)?.[0] ?? "";
+
+  assert.match(coverBlock, /width:\s*84px;/);
+  assert.match(coverBlock, /aspect-ratio:\s*16\s*\/\s*9;/);
+  assert.match(coverBlock, /flex:\s*0\s+0\s+84px;/);
+  assert.match(coverImageBlock, /object-fit:\s*cover;/);
+  assert.match(popupJs, /function buildSavedCardMedia/);
+  assert.match(popupJs, /setProxyImageSrc\(image,\s*item\.cover_url\)/);
+  assert.match(popupJs, /body\.prepend\(media\)/);
 });
 
 test("footer activity card keeps two lines and expandable history area", () => {
