@@ -2399,9 +2399,14 @@
           message: ""
         })
       });
-      state.delights = state.delights.filter((item) => item.bvid !== delight.bvid);
-      setActiveDelight(Math.min(state.delightIndex, state.delights.length - 1));
-      if (el) el.remove();
+      if (response === "like") {
+        updateDelightState(delight.bvid, { response_message: "好，这类多来点。" });
+      }
+      if (response === "dislike" || response === "dismiss") {
+        state.delights = state.delights.filter((item) => item.bvid !== delight.bvid);
+        setActiveDelight(Math.min(state.delightIndex, state.delights.length - 1));
+        if (el) el.remove();
+      }
       if (!toastImmediately) showToast(feedbackToast);
     }
 

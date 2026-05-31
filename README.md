@@ -27,11 +27,11 @@
 
 ---
 
-## 📌 插件收藏 / 稍后再看三端对齐（2026-05-31）
+## 📌 惊喜推荐正向反馈三端保留（2026-06-01）
 
-- **插件 side panel 新增「稍后」页** —— 与移动 Web / 桌面 Web 一样可以直接浏览稍后再看列表，并支持单条移除。
-- **推荐卡与惊喜横幅保存动作统一** —— 「时钟=稍后再看」「星星=收藏」两个独立 SVG toggle，选中态和同一 bvid 的多个按钮会实时同步。
-- **补浏览器端到端验证** —— 真实 Chrome 检查 420px side panel 下五 tab 等宽、无横向溢出、保存按钮样式和列表移除同步。
+- **正向反馈不再误删惊喜推荐** —— 三端点击「喜欢 / 收藏 / 稍后再看 / 聊一聊 / 去看看」都会保留当前卡片并更新状态。
+- **负向反馈仍即时收起** —— 只有「不感兴趣 / 忽略 / 关闭」会立即移出当前惊喜队列。
+- **补浏览器端到端验证** —— 桌面 Web、移动 Web、扩展 popup 都已验证正向保留和负向移除行为。
 
 完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
@@ -185,6 +185,8 @@
 2. Chrome / Edge / Brave 下载 `openbiliclaw-extension-v*.zip`；Firefox 下载 `openbiliclaw-extension-v*-firefox.zip`
 3. 打开扩展管理页面（Chrome：`chrome://extensions/` · Edge：`edge://extensions/` · Brave：`brave://extensions/`），开启右上角「开发者模式」
 4. 将下载的 `.zip` 文件拖入页面安装
+
+插件更新取决于安装渠道：Chrome Web Store / Edge Add-ons / AMO 安装的版本由浏览器自动更新；从 GitHub Release 下载 zip、开发者模式加载或 Firefox 临时加载的用户，需要下载新版 zip 并按同样方式重新加载。后端设置里的“自动更新”开关只更新本地后端源码，不会更新浏览器插件。
 
 <details>
 <summary>Firefox 用户：下载 Firefox 包临时加载（Firefox 140+）</summary>
@@ -581,7 +583,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.91 / extension v0.3.62: Chrome Web Store 权限收窄（2026-05-31）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
+最新版本：**v0.3.91 / extension v0.3.63: 惊喜推荐正向反馈保留（2026-06-01）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
 
 ## 🗺️ 后续规划
 

@@ -392,7 +392,7 @@ class TestMobileWebViewModels:
             const view = getDelightActionState("view");
             assert.equal(view.apiResponse, "view");
             assert.equal(view.uiState, "viewed");
-            assert.equal(view.permanent, true);
+            assert.equal(view.permanent, false);
 
             const reject = getDelightActionState("reject");
             assert.equal(reject.apiResponse, "dislike");
@@ -402,7 +402,7 @@ class TestMobileWebViewModels:
             const like = getDelightActionState("like");
             assert.equal(like.apiResponse, "like");
             assert.equal(like.uiState, "liked");
-            assert.equal(like.permanent, true);
+            assert.equal(like.permanent, false);
 
             const chat = getDelightActionState("chat");
             assert.equal(chat.apiResponse, null);

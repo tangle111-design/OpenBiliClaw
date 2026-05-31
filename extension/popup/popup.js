@@ -1850,7 +1850,10 @@ function buildDelightCard(delight) {
     const url = buildContentUrl(delight);
     window.open(url, "_blank");
     respondToDelight(delight.bvid, "view", delight.title).catch(() => {});
-    dismissMessageByBvid(delight.bvid);
+    const status = document.createElement("p");
+    status.className = "message-result";
+    status.textContent = "已打开，阿B 会把这次点击当成强信号。";
+    item.append(status);
   });
 
   const likeBtn = document.createElement("button");
@@ -1885,17 +1888,23 @@ async function handleDelightResponse(delight, responseType) {
     await respondToDelight(delight.bvid, responseType, delight.title);
     const item = elements.messagesList?.querySelector(`[data-bvid="${CSS.escape(delight.bvid)}"]`);
     if (item) {
-      item.replaceChildren();
-      const msg = document.createElement("p");
-      msg.className = "message-result";
-      msg.textContent =
-        responseType === "like"
-          ? "\u597D\uFF0C\u8FD9\u7C7B\u591A\u6765\u70B9\u3002"
-          : "\u597D\uFF0C\u8FD9\u7C7B\u5148\u4E0D\u63A8\u4E86\u3002";
-      item.append(msg);
-      setTimeout(() => { item.remove(); renderMessagesEmptyIfNeeded(); }, 2000);
+      if (responseType === "like") {
+        const msg = document.createElement("p");
+        msg.className = "message-result";
+        msg.textContent = "\u597D\uFF0C\u8FD9\u7C7B\u591A\u6765\u70B9\u3002";
+        item.append(msg);
+      } else {
+        item.replaceChildren();
+        const msg = document.createElement("p");
+        msg.className = "message-result";
+        msg.textContent = "\u597D\uFF0C\u8FD9\u7C7B\u5148\u4E0D\u63A8\u4E86\u3002";
+        item.append(msg);
+        setTimeout(() => { item.remove(); renderMessagesEmptyIfNeeded(); }, 2000);
+      }
     }
-    dismissMessageByBvid(delight.bvid, false);
+    if (responseType !== "like") {
+      dismissMessageByBvid(delight.bvid, false);
+    }
   } catch (err) {
     console.error("Delight response failed:", err);
   }
@@ -1944,7 +1953,6 @@ function expandDelightChat(itemEl, delight) {
         itemEl.append(replyEl);
         applyTurnToMessage(nextTurn);
         applyTurnToDelight(nextTurn);
-        setTimeout(() => { dismissMessageByBvid(delight.bvid); itemEl.remove(); renderMessagesEmptyIfNeeded(); }, 4000);
       };
       if (turn.status === "completed" || turn.status === "failed") {
         showReply(turn);
@@ -3839,8 +3847,6 @@ function renderDelightSlot() {
       "action-button action-primary delight-banner-action",
       async () => {
         await openRecommendation(delight.bvid, delight);
-        // Mark viewed but keep in queue so user can see the response
-        // before the next one slides in. Auto-advance after 800ms.
         updateDelightHead({
           state: "viewed",
           response_message: "已打开，阿B 会把这次点击当成强信号。",
@@ -3848,12 +3854,6 @@ function renderDelightSlot() {
           expanded: true,
         });
         renderDelightSlot();
-        setTimeout(() => {
-          if (state.activeDelights[state.delightCurrentIndex]?.bvid === delight.bvid) {
-            shiftDelightQueue();
-            renderDelightSlot();
-          }
-        }, 800);
       },
     );
 
@@ -3867,8 +3867,12 @@ function renderDelightSlot() {
           console.error("Delight like failed:", err);
         }
         setHint("好，这类多来点。", "success");
-        rememberDismissedDelight(delight.bvid);
-        removeCurrentDelight();
+        updateDelightHead({
+          state: "liked",
+          response_message: "好，这类多来点。",
+          composer_open: false,
+          expanded: true,
+        });
         renderDelightSlot();
       },
     );

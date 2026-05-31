@@ -362,9 +362,9 @@ export function getDelightUiState(delight, { highlightBvid = "" } = {}) {
 export function getDelightActionState(action) {
   switch (action) {
     case "view":
-      return { apiResponse: "view", uiState: "viewed", permanent: true };
+      return { apiResponse: "view", uiState: "viewed", permanent: false };
     case "like":
-      return { apiResponse: "like", uiState: "liked", permanent: true };
+      return { apiResponse: "like", uiState: "liked", permanent: false };
     case "reject":
       return { apiResponse: "dislike", uiState: "rejected", permanent: true };
     case "chat":

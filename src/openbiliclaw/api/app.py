@@ -2720,10 +2720,9 @@ def create_app(
         """User responds to a delight (surprise) recommendation.
 
         Body:
-        ``{ "bvid": "...", "title": "...", "response": "view"|"dislike"|"chat",
-        "message": "..." }``. ``dismiss`` is accepted as a response so clients
-        can consume a delight recommendation without also calling
-        ``/api/delight/sent``.
+        ``{ "bvid": "...", "title": "...", "response": "view"|"like"|"dislike"|"chat",
+        "message": "..." }``. Positive responses update learning signals but keep
+        the delight visible; ``dismiss`` and ``dislike`` consume the candidate.
         """
         from fastapi.responses import JSONResponse
 
@@ -2768,7 +2767,6 @@ def create_app(
                     "WHERE bvid = ?",
                     (bvid,),
                 )
-                mark_delight_consumed()
             except Exception:
                 logger.debug("Failed to record delight like for %s", bvid)
             label = title or bvid
@@ -2861,8 +2859,6 @@ def create_app(
             "delight_chat",
             detail=f"你的反馈：{raw_message}\n阿b的回复：{reply}",
         )
-        with suppress(Exception):
-            mark_delight_consumed()
         await _publish_probe_event("delight.chat", f"关于「{label}」你说：{raw_message}", bvid)
         return JSONResponse(content={"ok": True, "action": "chat", "bvid": bvid, "reply": reply})
 

@@ -450,11 +450,26 @@ function renderOverlay() {
       }
       if (permanent) {
         markDelightSent(bvid).catch(() => {});
+        delightMsgs = delightMsgs.filter((d) => d.bvid !== bvid);
+        updateBadgeCount();
+        renderOverlay();
+      } else {
+        delightMsgs = delightMsgs.map((d) =>
+          d.bvid === bvid
+            ? {
+                ...d,
+                state: action === "like" ? "liked" : action === "view" ? "viewed" : d.state,
+                response_message: action === "like"
+                  ? "好，这类多来点。"
+                  : action === "view"
+                    ? "已打开，阿B 会把这次点击当成强信号。"
+                    : d.response_message,
+              }
+            : d
+        );
+        updateBadgeCount();
+        renderOverlay();
       }
-
-      delightMsgs = delightMsgs.filter((d) => d.bvid !== bvid);
-      updateBadgeCount();
-      renderOverlay();
 
       if (action === "view") {
         const item = normalizeDelightCandidate({ bvid, title });
@@ -571,9 +586,20 @@ export function onStreamEvent(payload) {
       notifications.push({ ...item, type });
       updateBadgeCount();
     }
-  } else if (type === "delight.liked" || type === "delight.disliked") {
-    // Delight dismissed by another client — no longer shown in messages
-    const bvid = (payload.data || payload)?.bvid;
+  } else if (type === "delight.liked") {
+    const data = payload.data || payload;
+    const bvid = data?.bvid || data?.domain;
+    if (bvid) {
+      delightMsgs = delightMsgs.map((d) =>
+        d.bvid === bvid
+          ? { ...d, state: "liked", response_message: data?.message || "好，这类多来点。" }
+          : d
+      );
+      if (overlayOpen) renderOverlay();
+    }
+  } else if (type === "delight.disliked") {
+    // Negative feedback from another client removes the message locally.
+    const bvid = (payload.data || payload)?.bvid || (payload.data || payload)?.domain;
     if (bvid) {
       const before = delightMsgs.length;
       delightMsgs = delightMsgs.filter((d) => d.bvid !== bvid);
@@ -669,7 +695,6 @@ function expandInlineChatOnCard(card, { scope, subjectId, subjectTitle, placehol
         replyEl.className = "inline-chat-reply";
         replyEl.textContent = t.reply || t.response || "收到了，我会结合这个方向继续观察。";
         chatArea.appendChild(replyEl);
-        // Remove card after delay
         setTimeout(() => {
           const domain = subjectId;
           const isAvoidance = scope === "avoidance_probe";
@@ -678,9 +703,6 @@ function expandInlineChatOnCard(card, { scope, subjectId, subjectTitle, placehol
             const sameKind = ((n.type || "") === "avoidance.probe") === isAvoidance;
             return !(sameDomain && sameKind);
           });
-          if (scope === "delight") {
-            delightMsgs = delightMsgs.filter((d) => d.bvid !== subjectId);
-          }
           updateBadgeCount();
           renderOverlay();
         }, 3500);

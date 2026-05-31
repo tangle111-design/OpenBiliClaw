@@ -4256,7 +4256,7 @@ class TestBackendAPI:
         # But layers_updated should be empty because ingest raised.
         assert response.json()["layers_updated"] == []
 
-    def test_delight_like_marks_candidate_consumed(self) -> None:
+    def test_delight_like_records_feedback_without_consuming_candidate(self) -> None:
         from fastapi.testclient import TestClient
 
         class FakeDatabase:
@@ -4281,8 +4281,56 @@ class TestBackendAPI:
 
         assert response.status_code == 200
         assert response.json()["action"] == "liked"
-        assert database.notified == ["BV1DL"]
+        assert database.notified == []
         assert any("feedback_type='like'" in query for query, _params in database.writes)
+
+    def test_delight_chat_records_context_without_consuming_candidate(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.notified: list[str] = []
+
+            def mark_delight_notified(self, bvid: str) -> None:
+                self.notified.append(bvid)
+
+        class FakeMemory:
+            def __init__(self) -> None:
+                self.updates: list[dict[str, object]] = []
+
+            def load_cognition_updates(self) -> list[dict[str, object]]:
+                return self.updates
+
+            def save_cognition_updates(self, updates: list[dict[str, object]]) -> None:
+                self.updates = updates
+
+        class FakeDialogue:
+            async def respond(self, message: str) -> str:
+                assert "惊喜推荐" in message
+                return "继续聊"
+
+        database = FakeDatabase()
+        app = create_app(
+            memory_manager=FakeMemory(),
+            database=database,
+            soul_engine=object(),
+            dialogue=FakeDialogue(),
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/delight/respond",
+            json={
+                "bvid": "BV1DL",
+                "title": "惊喜",
+                "response": "chat",
+                "message": "这个方向挺有意思",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "chat"
+        assert database.notified == []
 
     def test_delight_dislike_marks_candidate_consumed(self) -> None:
         from fastapi.testclient import TestClient

@@ -1341,9 +1341,22 @@ export function onStreamEvent(payload) {
       });
       rerenderDelightOnly();
     }
-  } else if (type === "delight.liked" || type === "delight.disliked") {
-    // Another client (e.g. extension) dismissed this delight — remove from local queue
-    const bvid = (payload.data || payload)?.bvid;
+  } else if (type === "delight.liked") {
+    // Positive feedback should keep the card visible across clients.
+    const data = payload.data || payload;
+    const bvid = data?.bvid || data?.domain;
+    if (bvid) {
+      const updated = state.activeDelights.map((d) =>
+        (d.bvid || normalizeDelightCandidate(d).bvid) === bvid
+          ? { ...d, state: "liked", response_message: data?.message || "好，这类多来点。" }
+          : d
+      );
+      patchState({ activeDelights: updated });
+      rerenderDelightOnly();
+    }
+  } else if (type === "delight.disliked") {
+    // Negative feedback from another client removes this delight locally.
+    const bvid = (payload.data || payload)?.bvid || (payload.data || payload)?.domain;
     if (bvid) {
       const filtered = state.activeDelights.filter(
         (d) => (d.bvid || normalizeDelightCandidate(d).bvid) !== bvid

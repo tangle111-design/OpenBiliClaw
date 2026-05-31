@@ -4,11 +4,18 @@
 
 ---
 
+## extension v0.3.63: 惊喜推荐正向反馈保留（2026-06-01）
+
+- 浏览器插件版本提升到 `0.3.63`，准备发布 `extension-v0.3.63`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.63.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.63-firefox.zip`。
+- 修复惊喜推荐正向反馈被三端立刻移除的问题：喜欢、收藏、稍后再看、聊一聊和去看看都会保留当前卡片并更新状态；只有不感兴趣、忽略或显式关闭会立即移出队列。
+- 补充后端 API、移动 Web、桌面 Web、插件 popup 的回归测试，并用浏览器端到端测试验证桌面 Web、移动 Web、扩展 popup 的正向保留和负向移除行为。
+
 ## extension v0.3.62: Chrome Web Store 权限收窄（2026-05-31）
 
 - 浏览器插件版本提升到 `0.3.62`，准备发布 `extension-v0.3.62`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.62.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.62-firefox.zip`。
 - Chrome / Firefox manifest 移除 `http://*/*` 宽泛主机权限，发布包只声明 Bilibili / 小红书 / 抖音 / YouTube 内容平台和 `127.0.0.1` / `localhost` 本机后端权限，降低 Chrome Web Store “所有网站权限”深入审核风险。
 - 同步隐私政策、README、插件模块文档和设置页提示：商店版默认连接本机后端；局域网 / 远程后端需要带对应 host 权限的开发者构建，或后续补充 `optional_host_permissions` 用户授权流程。
+- 收窄 `docs/specs/auto-update.md` 为后端-only 自动更新 SPEC，并同步 README / runtime / extension 文档边界：插件更新不再由后端查询 `extension-v*` 或显示更新横幅，Chrome Web Store / Edge Add-ons / AMO 交给浏览器原生更新，GitHub zip / sideload 保持手动 fallback。
 
 ## extension v0.3.61: 插件收藏 / 稍后再看三端对齐（2026-05-31）
 

@@ -17,11 +17,11 @@
 
 ---
 
-## 📌 Extension Saved Surfaces Aligned Across Clients (2026-05-31)
+## 📌 Delight Positive Feedback Stays Visible Across Clients (2026-06-01)
 
-- **The extension side panel now has a Watch Later tab** — matching mobile web and desktop web, with a browsable list and per-item removal.
-- **Recommendation cards and delight banners share the same save actions** — clock = Watch Later, star = Favorites, both as independent SVG toggles with synchronized state for the same bvid.
-- **Browser E2E now covers the saved surfaces** — real Chrome checks the 420px side panel layout, five equal tabs, no horizontal overflow, selected styles, and list removal sync.
+- **Positive delight feedback no longer removes the card** — Like, Favorite, Watch Later, Chat, and Open keep the current card visible across all three clients.
+- **Negative feedback still removes immediately** — Not Interested, Dismiss, and explicit close actions remove the current delight from the queue.
+- **Browser E2E covers the behavior** — desktop web, mobile web, and the extension popup were all checked for positive retention and negative removal.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
@@ -119,6 +119,8 @@ Built on Manifest V3, the extension works in any Chrome-compatible browser — *
 2. Chrome / Edge / Brave users download `openbiliclaw-extension-v*.zip`; Firefox users download `openbiliclaw-extension-v*-firefox.zip`
 3. Open the extensions page (Chrome: `chrome://extensions/` · Edge: `edge://extensions/` · Brave: `brave://extensions/`), enable "Developer mode" in the top right
 4. Drag the downloaded `.zip` file into the page to install
+
+Extension updates depend on the install channel: Chrome Web Store / Edge Add-ons / AMO builds are updated by the browser; GitHub zip, developer-mode, and Firefox temporary installs must download the new zip and reload it manually. The backend "auto update" switch only updates the local backend source checkout, not the browser extension.
 
 <details>
 <summary>Firefox users: download the Firefox package and sideload (Firefox 140+)</summary>
@@ -510,7 +512,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.91 / extension v0.3.62: Chrome Web Store host permissions narrowed (2026-05-31)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
+Latest: **v0.3.91 / extension v0.3.63: delight positive feedback retention (2026-06-01)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
 
 ## 🗺️ Roadmap
 
