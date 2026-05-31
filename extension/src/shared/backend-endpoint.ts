@@ -2,10 +2,11 @@
  * OpenBiliClaw — configurable local-backend endpoint.
  *
  * The popup settings page can override the backend host and port
- * (default 127.0.0.1:8420), so the extension can talk to either the local
- * daemon or a daemon exposed on the LAN. Every fetch and WebSocket in the
- * extension goes through this module so a single source of truth resolves
- * the current host + port at call time.
+ * (default 127.0.0.1:8420). Store-distributed builds only declare loopback
+ * backend host permissions; custom LAN/self-hosted origins require a build or
+ * future optional-permission flow that grants that origin. Every fetch and
+ * WebSocket in the extension goes through this module so a single source of
+ * truth resolves the current host + port at call time.
  *
  * Storage:
  *   chrome.storage.local key ``popup_backend_endpoint`` =

@@ -6,10 +6,12 @@
  * sides read & write the same chrome.storage.local key, so a change in
  * the popup is picked up by the service worker via chrome.storage.onChanged.
  *
- * Default endpoint is 127.0.0.1:8420. Users can override the host to reach a
- * LAN daemon, or override the port to dodge local port conflicts on Windows
- * (Hyper-V / WSL / Docker reserve random local ports — 18080, 19090, 13000
- * are common safe choices).
+ * Default endpoint is 127.0.0.1:8420. Store-distributed builds only declare
+ * loopback backend host permissions; custom LAN/self-hosted origins require a
+ * build or future optional-permission flow that grants that origin. Users can
+ * still override the port to dodge local port conflicts on Windows (Hyper-V /
+ * WSL / Docker reserve random local ports — 18080, 19090, 13000 are common safe
+ * choices).
  */
 
 export const DEFAULT_BACKEND_HOST = "127.0.0.1";

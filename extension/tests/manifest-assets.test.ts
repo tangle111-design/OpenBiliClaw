@@ -100,7 +100,7 @@ test("Firefox manifest declares required data collection categories", () => {
   );
 });
 
-test("Chrome and Firefox manifests allow remote HTTP backend hosts", () => {
+test("Chrome and Firefox manifests avoid all-sites host permission", () => {
   const root = process.cwd();
   const chromeManifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")) as {
     host_permissions?: string[];
@@ -111,6 +111,15 @@ test("Chrome and Firefox manifests allow remote HTTP backend hosts", () => {
     host_permissions?: string[];
   };
 
-  assert.equal(chromeManifest.host_permissions?.includes("http://*/*"), true);
-  assert.equal(firefoxManifest.host_permissions?.includes("http://*/*"), true);
+  for (const manifest of [chromeManifest, firefoxManifest]) {
+    assert.equal(manifest.host_permissions?.includes("http://*/*"), false);
+    assert.equal(manifest.host_permissions?.includes("https://*/*"), false);
+    assert.equal(manifest.host_permissions?.includes("<all_urls>"), false);
+    assert.equal(manifest.host_permissions?.includes("http://127.0.0.1/*"), true);
+    assert.equal(manifest.host_permissions?.includes("http://localhost/*"), true);
+    assert.equal(manifest.host_permissions?.includes("*://*.bilibili.com/*"), true);
+    assert.equal(manifest.host_permissions?.includes("*://*.xiaohongshu.com/*"), true);
+    assert.equal(manifest.host_permissions?.includes("*://*.douyin.com/*"), true);
+    assert.equal(manifest.host_permissions?.includes("*://*.youtube.com/*"), true);
+  }
 });

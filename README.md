@@ -222,7 +222,7 @@ npm run build:firefox          # 产出 dist-firefox/
 
 AI 助手会克隆仓库、安装依赖、用局域网可访问的默认绑定启动后端（`0.0.0.0:8420`）、做健康检查，并问几个有默认值的问题。自动初始化前会真实验证 LLM provider 和 embedding 服务；有一个不通就先停下让你修配置，不会硬跑出空画像。看不懂就选默认；小红书、抖音和 YouTube 数据只有你明确同意才会进入初始画像。
 
-如果后端跑在局域网另一台机器上，用 `openbiliclaw start --host 0.0.0.0 --port 8420` 启动后端，并在插件设置页把「后端地址」改成那台机器的局域网 IP（例如 `192.168.1.100`）。
+Chrome Web Store / AMO 发布包默认只声明本机后端权限，插件侧建议保持 `127.0.0.1` / `localhost`。如果要让手机访问移动端 Web，可继续用 `openbiliclaw start --host 0.0.0.0 --port 8420` 启动后端，插件二维码会优先展示电脑的局域网 IP。让插件直接连接局域网另一台机器或远程域名，需要带对应 host 权限的开发者构建，或等待后续可选授权开关。
 
 ### 3. 在同一个浏览器登录内容平台
 
@@ -581,7 +581,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.91 / extension v0.3.61: 插件收藏 / 稍后再看三端对齐（2026-05-31）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
+最新版本：**v0.3.91 / extension v0.3.62: Chrome Web Store 权限收窄（2026-05-31）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
 
 ## 🗺️ 后续规划
 

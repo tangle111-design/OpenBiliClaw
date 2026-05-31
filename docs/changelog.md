@@ -4,6 +4,12 @@
 
 ---
 
+## extension v0.3.62: Chrome Web Store 权限收窄（2026-05-31）
+
+- 浏览器插件版本提升到 `0.3.62`，准备发布 `extension-v0.3.62`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.62.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.62-firefox.zip`。
+- Chrome / Firefox manifest 移除 `http://*/*` 宽泛主机权限，发布包只声明 Bilibili / 小红书 / 抖音 / YouTube 内容平台和 `127.0.0.1` / `localhost` 本机后端权限，降低 Chrome Web Store “所有网站权限”深入审核风险。
+- 同步隐私政策、README、插件模块文档和设置页提示：商店版默认连接本机后端；局域网 / 远程后端需要带对应 host 权限的开发者构建，或后续补充 `optional_host_permissions` 用户授权流程。
+
 ## extension v0.3.61: 插件收藏 / 稍后再看三端对齐（2026-05-31）
 
 - 对齐插件端收藏 / 稍后再看与 PC Web、移动 Web：side panel tab bar 新增独立「稍后」页，推荐卡和 delight banner 都提供「时钟=稍后再看」「星星=收藏」两个互相独立的 SVG toggle；列表移除、推荐卡和惊喜横幅继续共用 `popup-saved-sync.js` 同步同一 bvid 的状态。
