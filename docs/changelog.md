@@ -4,6 +4,11 @@
 
 ---
 
+## extension v0.3.65: Chrome Web Store tabs 权限拒审修复（2026-06-02）
+
+- 浏览器插件版本提升到 `0.3.65`，准备发布 `extension-v0.3.65`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.65.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.65-firefox.zip`。
+- 用独立版本重新提交 Chrome Web Store 审核，包内 manifest 不再声明 `tabs` permission，仅保留 `activeTab`、`scripting`、`sidePanel`、`cookies`、`notifications`、`alarms`、`storage` 与受支持平台 / 本机后端 host 权限。
+
 ## extension v0.3.64: 保存列表头图与窄宽度头部修复（2026-06-01）
 
 - 浏览器插件版本提升到 `0.3.64`，准备发布 `extension-v0.3.64`；Chrome / Edge / Brave 走 `openbiliclaw-extension-v0.3.64.zip`，Firefox 140+ 走 `openbiliclaw-extension-v0.3.64-firefox.zip`。
