@@ -536,6 +536,7 @@ function renderDelightTray() {
   if (d.composer_open) {
     const composer = document.createElement("div");
     composer.className = "delight-composer";
+    let sendInitiated = false;
 
     const input = document.createElement("textarea");
     input.className = "delight-composer-input";
@@ -556,7 +557,28 @@ function renderDelightTray() {
     sendBtn.addEventListener("click", () => {
       const text = input.value.trim();
       if (!text) { input.focus(); return; }
+      sendInitiated = true;
       sendDelightChat(d, text);
+    });
+
+    // Collapse the composer back to the action buttons when focus leaves it (the
+    // user opened it then changed their mind). The draft is saved to state so
+    // reopening restores it; a real send is guarded so tapping send isn't lost.
+    input.addEventListener("blur", (e) => {
+      if (e.relatedTarget && composer.contains(e.relatedTarget)) return;
+      setTimeout(() => {
+        if (sendInitiated) return;
+        if (composer.contains(document.activeElement)) return;
+        const cur = state.activeDelights[state.delightCurrentIndex];
+        if (!cur || normalizeDelightCandidate(cur).bvid !== d.bvid) return;
+        if (!normalizeDelightCandidate(cur).composer_open) return;
+        const updated = state.activeDelights.map((item) => {
+          if (normalizeDelightCandidate(item).bvid !== d.bvid) return item;
+          return { ...item, composer_open: false, draft: input.value };
+        });
+        patchState({ activeDelights: updated });
+        rerenderDelightOnly();
+      }, 120);
     });
 
     // Allow Enter to send (Shift+Enter for newline)

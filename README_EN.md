@@ -572,7 +572,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.91 / extension v0.3.65: Chrome Web Store tabs permission rejection fix (2026-06-02)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
+Latest: **v0.3.91 / extension v0.3.66: recommendation chat composer auto-collapses on blur (three surfaces) (2026-06-03)**. The top highlight callout keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags and do not publish backend desktop packages.
 
 ## 🗺️ Roadmap
 

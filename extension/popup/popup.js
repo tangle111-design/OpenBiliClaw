@@ -3992,6 +3992,7 @@ function renderDelightSlot() {
     if (delight.composer_open) {
       const composer = document.createElement("div");
       composer.className = "delight-chat-composer";
+      let sendInitiated = false;
 
       const input = document.createElement("textarea");
       input.className = "chat-input";
@@ -4002,6 +4003,22 @@ function renderDelightSlot() {
         if (state.activeDelights[state.delightCurrentIndex]?.bvid === delight.bvid) {
           updateDelightHead({ chat_draft: input.value });
         }
+      });
+
+      // Collapse the composer back to the action buttons when focus leaves it
+      // (the user opened 聊一聊 then changed their mind). The draft is kept in
+      // chat_draft so reopening restores it; a real send is guarded so tapping
+      // 发出去 isn't lost (its blur fires before the click in some browsers).
+      input.addEventListener("blur", (event) => {
+        if (event.relatedTarget && composer.contains(event.relatedTarget)) return;
+        setTimeout(() => {
+          if (sendInitiated) return;
+          if (composer.contains(document.activeElement)) return;
+          const cur = state.activeDelights[state.delightCurrentIndex];
+          if (!cur || cur.bvid !== delight.bvid || !cur.composer_open) return;
+          updateDelightHead({ composer_open: false, chat_draft: input.value });
+          renderDelightSlot();
+        }, 120);
       });
 
       const status = document.createElement("p");
@@ -4017,6 +4034,7 @@ function renderDelightSlot() {
             input.focus();
             return;
           }
+          sendInitiated = true;
           submit.disabled = true;
           const turnId = createClientTurnId("delight");
           // Optimistically append to turns array

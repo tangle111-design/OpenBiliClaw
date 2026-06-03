@@ -306,6 +306,7 @@ CLI 入口：
 - 推荐卡片现已进一步改成更偏编辑式的内容流：封面、标题、推荐理由和操作区的层级被重新拉开，头部信息不会再和首张内容卡抢视觉主角
 - 惊喜推荐卡会直接展示封面、hook、标题和惊喜理由，并提供 `看看 / 喜欢 / 不感兴趣 / 聊一聊 / 稍后看` 动作
 - `看看` 会打开对应内容并把这次点击保留成稳定的本地已处理态；`聊一聊` 会在卡内展开 composer，通过 durable `/api/chat/turns` 写入 `scope=delight` turn，不再强制把用户切去聊天 tab
+- `聊一聊` composer 在输入框失焦（焦点离开 composer）后会自动收起回操作按钮，省得展开后没法还原；已输入的草稿保留在 `chat_draft`，下次展开自动还原，正在发送的那条由 `sendInitiated` 守卫，点「发出去」时输入框先失焦也不会被收起误伤。桌面 Web `/web` 推荐卡 / 惊喜卡、移动 Web `/m` 惊喜卡同样支持失焦自动收起
 - 惊喜推荐内聊使用 per-delight `turns` 作为权威 UI 历史，提交后乐观追加用户气泡和 thinking 气泡，后端完成后就地替换为 AI 回复；`chat_reply` 仅保留为兼容 last reply 字段
 - 画像 tab：调用 `/api/profile-summary` 展示轻量人格画像、核心特质、深层需求、更完整的近期兴趣关键词，以及单独的“最近明显会避开”分组
 - 画像 tab 现在还会单独展示 `cognitive_style / motivational_drivers / current_phase` 三层认知摘要，让“这会儿的你”更像对用户的理解，而不是兴趣标签润色

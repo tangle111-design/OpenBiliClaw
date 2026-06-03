@@ -1047,6 +1047,9 @@
           if (event.key === "Enter") handleCardAction("send-comment", item, card);
           if (event.key === "Escape") closeCardComposer(card);
         });
+        card.querySelector(".comment-field input").addEventListener("blur", (event) => {
+          autoCollapseComposer(card.querySelector(".card-actions"), event, () => closeCardComposer(card));
+        });
         // Lazy-load watch-later state
         const wlBtn = card.querySelector('[data-action="watch-later"]');
         if (wlBtn) {
@@ -1137,6 +1140,21 @@
       button.textContent = "聊一聊";
       button.removeAttribute("aria-label");
       button.removeAttribute("title");
+    }
+
+    // Collapse an open composer back to the 聊一聊 button when focus leaves it
+    // (user clicked 聊一聊 then changed their mind). The typed draft stays in the
+    // input, so reopening restores it. Deferred so a click on the send / cancel
+    // button — which blurs the input first in some browsers — still wins.
+    function autoCollapseComposer(container, event, closeFn) {
+      if (!container || !container.classList.contains("is-composing")) return;
+      const next = event.relatedTarget;
+      if (next && container.contains(next)) return;
+      window.setTimeout(() => {
+        if (!container.classList.contains("is-composing")) return;
+        if (container.contains(document.activeElement)) return;
+        closeFn();
+      }, 120);
     }
 
     function openDelightComposer() {
@@ -3346,6 +3364,9 @@
     safeBind("#delightCommentInput", "keydown", (event) => {
       if (event.key === "Enter") respondDelight(state.delight, "send-comment");
       if (event.key === "Escape") closeDelightComposer();
+    });
+    safeBind("#delightCommentInput", "blur", (event) => {
+      autoCollapseComposer(document.querySelector(".delight-main-actions"), event, closeDelightComposer);
     });
     safeBind("#resetFiltersBtn", "click", () => { state.query = ""; state.filter = "全部"; const input = $("#searchInput"); if (input) input.value = ""; renderAll(); });
     safeBind("#searchInput", "input", (event) => { state.query = event.target.value || ""; renderAll(); });

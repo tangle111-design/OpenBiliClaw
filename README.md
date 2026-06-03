@@ -583,7 +583,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.91 / extension v0.3.65: Chrome Web Store tabs 权限拒审修复（2026-06-02）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
+最新版本：**v0.3.91 / extension v0.3.66: 推荐「聊一聊」输入框失焦自动收起（三端）（2026-06-03）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
 
 ## 🗺️ 后续规划
 
