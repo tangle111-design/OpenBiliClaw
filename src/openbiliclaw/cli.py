@@ -19,6 +19,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from openbiliclaw.runtime.ollama_supervisor import (
+    _ollama_is_running,
+    _ollama_start_serve_background,
+)
+
 
 def _force_utf8_stdout_on_windows() -> None:
     """Reconfigure stdout/stderr to UTF-8 on Windows.
@@ -1105,22 +1110,6 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
 )
 
 
-def _ollama_is_running(host: str = "http://localhost:11434") -> bool:
-    """Probe Ollama's HTTP API; return True only on a healthy 200 response."""
-    import httpx
-
-    try:
-        # trust_env=False — same rationale as OllamaProvider.embed: a
-        # localhost Ollama probe must not be hijacked by the user's
-        # HTTP_PROXY env (e.g. 127.0.0.1:7897 VPN client), or the CLI
-        # falsely concludes "Ollama isn't running" while it's healthy.
-        with httpx.Client(timeout=2.0, trust_env=False) as client:
-            response = client.get(f"{host}/api/version")
-            return response.status_code == 200
-    except Exception:
-        return False
-
-
 def _ollama_has_model(model: str, host: str = "http://localhost:11434") -> bool:
     """Return True if Ollama already has the named model pulled."""
     import httpx
@@ -1245,54 +1234,6 @@ def _ollama_install_if_missing() -> bool:
     console.print(
         "[red]安装似乎没成功。请从 https://ollama.com/download 手动装一下，再重新跑本命令。[/red]"
     )
-    return False
-
-
-def _ollama_start_serve_background() -> bool:
-    """Start `ollama serve` in the background, wait up to 15s for it
-    to start responding to /api/version. Returns whether the daemon is
-    healthy at exit.
-    """
-    import shutil
-    import subprocess
-
-    if _ollama_is_running():
-        return True
-
-    ollama = shutil.which("ollama")
-    if ollama is None:
-        return False
-
-    try:
-        if os.name == "nt":
-            creationflags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | getattr(
-                subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200
-            )
-            subprocess.Popen(
-                [ollama, "serve"],
-                creationflags=creationflags,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-            )
-        else:
-            subprocess.Popen(
-                [ollama, "serve"],
-                start_new_session=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-            )
-    except Exception as exc:
-        console.print(f"[red]启动 ollama serve 失败: {exc}[/red]")
-        return False
-
-    import time
-
-    for _ in range(30):
-        if _ollama_is_running():
-            return True
-        time.sleep(0.5)
     return False
 
 
