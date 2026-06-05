@@ -1,5 +1,6 @@
 """Tests for boot autostart runtime helpers."""
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -68,3 +69,62 @@ def test_autostart_shadowed_false_when_effective_matches_intent(
     save_config(cfg, autostart_authoritative=True)
 
     assert autostart_shadowed(True) is False
+
+
+def test_build_launch_spec_uses_python_module_and_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openbiliclaw.runtime.autostart.command import build_launch_spec
+
+    ollama_bin = tmp_path / "bin" / "ollama"
+    ollama_bin.parent.mkdir()
+    ollama_bin.write_text("", encoding="utf-8")
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr("shutil.which", lambda name: str(ollama_bin) if name == "ollama" else None)
+
+    spec = build_launch_spec(Config())
+
+    assert spec.argv == [sys.executable, "-m", "openbiliclaw.cli", "start"]
+    assert spec.working_dir == tmp_path
+    assert spec.env["OPENBILICLAW_PROJECT_ROOT"] == str(tmp_path)
+    assert str(ollama_bin.parent) in spec.env["PATH"].split(":")
+
+
+def test_resolve_pythonw_falls_back_when_missing(tmp_path: Path) -> None:
+    from openbiliclaw.runtime.autostart.command import resolve_pythonw
+
+    python_exe = tmp_path / "python.exe"
+    python_exe.write_text("", encoding="utf-8")
+
+    assert resolve_pythonw(python_exe) == python_exe
+
+
+def test_unsupported_autostart_status_has_none_mechanism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.runtime import autostart
+
+    monkeypatch.setattr(autostart.sys, "platform", "aix")
+    monkeypatch.setattr(autostart.docker_runtime, "is_running_in_container", lambda: False)
+
+    status = autostart.status()
+
+    assert status.supported is False
+    assert status.registered is False
+    assert status.platform == "aix"
+    assert status.mechanism == "none"
+    assert status.reason == "unsupported_platform"
+
+
+def test_docker_autostart_status_is_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openbiliclaw.runtime import autostart
+
+    monkeypatch.setattr(autostart.docker_runtime, "is_running_in_container", lambda: True)
+
+    status = autostart.status()
+
+    assert status.supported is False
+    assert status.mechanism == "none"
+    assert status.reason == "unsupported_docker_runtime"
