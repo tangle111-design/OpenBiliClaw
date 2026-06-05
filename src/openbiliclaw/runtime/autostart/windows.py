@@ -17,7 +17,7 @@ _SCRIPT_NAME = "openbiliclaw-autostart.pyw"
 
 
 def _load_winreg() -> Any:
-    import winreg  # type: ignore[import-not-found]
+    import winreg
 
     return winreg
 
