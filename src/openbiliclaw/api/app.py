@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from openbiliclaw.api.models import (
     ActivityFeedItemOut,
     ActivityFeedResponse,
+    AutostartApplyIn,
     AutostartConfigOut,
     AutostartStatusOut,
     BackendUpdateStatusOut,
@@ -841,6 +842,7 @@ def create_app(
             or path == "/api/health"
             or path == "/api/runtime-status"
             or path == "/api/autostart-status"
+            or path == "/api/autostart/apply"
             or (path == "/api/config" and method in {"GET", "PUT"})
             or path.startswith("/api/auth")
             or path.startswith("/m")
@@ -5119,9 +5121,13 @@ def create_app(
                 await publish({"type": "extension_reload", "source": "dev"})
         return {"ok": True}
 
-    @app.get("/api/autostart-status", response_model=AutostartStatusOut)
-    def autostart_status(request: Request) -> AutostartStatusOut:
-        from openbiliclaw.config import load_config
+    def _autostart_status_out(
+        request: Request,
+        cfg: Any,
+        *,
+        reason_override: str | None = None,
+        detail_override: str | None = None,
+    ) -> AutostartStatusOut:
         from openbiliclaw.runtime import autostart
         from openbiliclaw.runtime.autostart.guards import (
             active_env_managed_inputs,
@@ -5133,7 +5139,6 @@ def create_app(
             ollama_required,
         )
 
-        cfg = load_config()
         state = autostart.status()
         managed_env = active_env_managed_inputs(cfg)
         shadowed = autostart_shadowed(cfg.autostart.enabled)
@@ -5149,6 +5154,8 @@ def create_app(
             reason = "shadowed"
         elif not trusted_local:
             reason = "local_only"
+        if reason_override is not None:
+            reason = reason_override
 
         detail = ""
         if not state.supported:
@@ -5165,6 +5172,8 @@ def create_app(
             detail = "开机自启动已开启。"
         else:
             detail = "尚未开启开机自启动。"
+        if detail_override is not None:
+            detail = detail_override
 
         if requires_ollama:
             endpoint = effective_ollama_endpoint(cfg)
@@ -5183,6 +5192,53 @@ def create_app(
             reason=reason,
             detail=detail,
         )
+
+    @app.get("/api/autostart-status", response_model=AutostartStatusOut)
+    def autostart_status(request: Request) -> AutostartStatusOut:
+        from openbiliclaw.config import load_config
+
+        cfg = load_config()
+        return _autostart_status_out(request, cfg)
+
+    @app.post("/api/autostart/apply", response_model=AutostartStatusOut)
+    async def autostart_apply(
+        payload: AutostartApplyIn, request: Request
+    ) -> AutostartStatusOut | JSONResponse:
+        from openbiliclaw.config import load_config
+        from openbiliclaw.runtime import autostart
+        from openbiliclaw.runtime.autostart.guards import active_env_managed_inputs
+
+        cfg = load_config()
+        if not _get_auth_gate().is_trusted_local(request):
+            body = _autostart_status_out(
+                request,
+                cfg,
+                reason_override="local_only",
+                detail_override="仅本机可信请求可以修改开机自启动。",
+            )
+            return JSONResponse(status_code=403, content=body.model_dump(mode="json"))
+
+        current = autostart.status()
+        if not current.supported:
+            body = _autostart_status_out(
+                request,
+                cfg,
+                reason_override=current.reason,
+                detail_override="当前运行环境不支持注册开机自启动。",
+            )
+            return JSONResponse(status_code=409, content=body.model_dump(mode="json"))
+
+        managed = active_env_managed_inputs(cfg)
+        if payload.enabled and managed:
+            body = _autostart_status_out(
+                request,
+                cfg,
+                reason_override="env_managed",
+                detail_override="检测到环境变量配置，自启动登录会话可能缺失：" + ", ".join(managed),
+            )
+            return JSONResponse(status_code=409, content=body.model_dump(mode="json"))
+
+        return _autostart_status_out(request, cfg)
 
     # ── Configuration management endpoints ──────────────────────────
 

@@ -836,6 +836,10 @@ class AutostartStatusOut(BaseModel):
     detail: str = ""
 
 
+class AutostartApplyIn(BaseModel):
+    enabled: bool
+
+
 class ConfigIssueOut(BaseModel):
     field: str
     message: str
