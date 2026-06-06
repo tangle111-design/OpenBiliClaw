@@ -97,6 +97,16 @@ class InitCoordinator:
     def is_owned_bootstrap_task(self, task_id: str) -> bool:
         return self.init_active() and str(task_id) in self._enqueued_task_ids
 
+    def owned_task_ids(self) -> set[str]:
+        """Bootstrap task ids enqueued by the active run (empty if idle).
+
+        ``next-task`` consults this so the extension is only handed init's own
+        bootstrap work while a run is active — never a stale pending task that
+        would otherwise starve the run's collectors (gui-init review)."""
+        if not self.init_active():
+            return set()
+        return set(self._enqueued_task_ids)
+
     # ── background task handle (for cancel) ────────────────────────────────
     def attach_task(self, run_id: str, task: asyncio.Task[Any]) -> None:
         self._current_task = task

@@ -881,6 +881,20 @@ def create_app(
         except Exception:
             return False
 
+    def _init_owned_ids_filter() -> set[str] | None:
+        """``next-task`` filter: during an active init, restrict the dispatcher
+        to init-owned bootstrap task ids (so a stale pending task can't be
+        claimed and starve the run's collectors); None = no restriction."""
+        if not _init_active_now():
+            return None
+        coord = getattr(ctx, "init_coordinator", None)
+        if coord is None:
+            return None
+        try:
+            return set(coord.owned_task_ids())
+        except Exception:
+            return None
+
     # gui-init D1 — DENY-BY-DEFAULT writer gating. While a guided init is active,
     # every mutating request (POST/PUT/PATCH/DELETE) is rejected with 409 unless
     # it is on the small allowlist of init-essential writers below. An allowlist
@@ -909,15 +923,16 @@ def create_app(
         if path in _init_write_allowlist or path.startswith("/api/auth"):
             return True
         # Exact-segment match for the bootstrap protocol: only
-        # /api/sources/<source>/{kick,task-result} (3 segments after /api).
-        # A bare endswith() would let recipe CRUD like PUT/DELETE
-        # /api/sources/kick (recipe_id="kick") slip past the gate.
-        segments = path.strip("/").split("/")
+        # /api/sources/<source>/{kick,task-result}. Split WITHOUT stripping so a
+        # trailing slash ("/api/sources/xhs/kick/") yields 6 parts and is NOT
+        # allowed, and recipe CRUD like /api/sources/kick (recipe_id="kick")
+        # yields 4 parts and is NOT allowed.
+        segments = path.split("/")  # "/api/sources/xhs/kick" → ['', api, sources, xhs, kick]
         return (
-            len(segments) == 4
-            and segments[0] == "api"
-            and segments[1] == "sources"
-            and segments[3] in ("kick", "task-result")
+            len(segments) == 5
+            and segments[1] == "api"
+            and segments[2] == "sources"
+            and segments[4] in ("kick", "task-result")
         )
 
     @app.middleware("http")
@@ -5046,7 +5061,7 @@ def create_app(
         # check on every poll. Use a body-less Response instead.
         if _xhs_task_queue is None:
             return Response(status_code=204)
-        task = _xhs_task_queue.next_pending()
+        task = _xhs_task_queue.next_pending(only_ids=_init_owned_ids_filter())
         if task is None:
             return Response(status_code=204)
 
@@ -5224,7 +5239,7 @@ def create_app(
 
         if _dy_task_queue is None:
             return Response(status_code=204)
-        task = _dy_task_queue.next_pending()
+        task = _dy_task_queue.next_pending(only_ids=_init_owned_ids_filter())
         if task is None:
             return Response(status_code=204)
 
@@ -5375,7 +5390,7 @@ def create_app(
 
         if _yt_task_queue is None:
             return Response(status_code=204)
-        task = _yt_task_queue.next_pending()
+        task = _yt_task_queue.next_pending(only_ids=_init_owned_ids_filter())
         if task is None:
             return Response(status_code=204)
 
