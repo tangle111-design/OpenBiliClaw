@@ -6798,3 +6798,50 @@ class TestGuidedInitEndpoints:
             resp = client.post("/api/init/cancel", json={})
         assert resp.status_code == 403
         assert resp.json()["error"] == "local_only"
+
+    def test_write_endpoint_gated_during_init(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        app, _ = self._make_app(tmp_path)
+        with TestClient(app) as client:
+            app.state.runtime_context.init_coordinator.try_start("active")
+            resp = client.post("/api/events", json={})
+        assert resp.status_code == 409
+        assert resp.json()["error"] == "init_running"
+
+    def test_write_endpoint_allowed_when_idle(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        app, _ = self._make_app(tmp_path)
+        with TestClient(app) as client:
+            resp = client.post("/api/events", json={})
+        # No active init → the init gate must NOT fire (a bad payload is 422,
+        # never the 409 init_running short-circuit).
+        assert not (resp.status_code == 409 and resp.json().get("error") == "init_running")
+
+    def test_cookie_is_noop_during_init(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        app, _ = self._make_app(tmp_path)
+        with TestClient(app) as client:
+            app.state.runtime_context.init_coordinator.try_start("active")
+            resp = client.post(
+                "/api/bilibili/cookie", json={"cookie": "SESSDATA=x", "source": "test"}
+            )
+        # Cookie sync is a silent no-op during init (not 409): the extension
+        # auto-syncs and must not error or trigger a mid-init rebuild.
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert "初始化" in body["message"]
+
+    def test_task_result_not_gated_during_init(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        app, _ = self._make_app(tmp_path)
+        with TestClient(app) as client:
+            app.state.runtime_context.init_coordinator.try_start("active")
+            resp = client.post("/api/sources/xhs/task-result", json={})
+        # Init's own bootstrap collectors depend on task-results landing —
+        # the writer gate must let them through (never 409 init_running).
+        assert not (resp.status_code == 409 and resp.json().get("error") == "init_running")

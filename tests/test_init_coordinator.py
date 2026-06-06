@@ -219,3 +219,16 @@ def test_init_status_endpoint_shape(tmp_path: Path) -> None:
     assert body["prerequisites"]["bilibili_check"] == "failed"
     assert body["can_start"] is False
     assert body["reason"] in ("bilibili_not_logged_in", "unsupported_runtime", "llm_not_ready")
+
+
+def test_background_llm_work_paused_during_init(tmp_path: Path) -> None:
+    """D1: all daemon-owned background LLM loops pause while init is active."""
+    from openbiliclaw.api.runtime_context import RuntimeContext
+
+    db = Database(tmp_path / "d1.db")
+    db.initialize()
+    ctx = RuntimeContext(database=db)
+    # Idle baseline is whatever presence/scheduler gating decides; the contract
+    # under test is the init short-circuit forcing False.
+    ctx.init_coordinator.try_start("r1")
+    assert ctx.background_llm_work_allowed() is False

@@ -285,7 +285,20 @@ class RuntimeContext:
         return self._init_prereqs
 
     def background_llm_work_allowed(self) -> bool:
-        """Return whether daemon-owned background LLM / embedding work may run."""
+        """Return whether daemon-owned background LLM / embedding work may run.
+
+        While a guided init is active, ALL daemon-owned background loops
+        (account_sync, continuous refresh, soul pipeline ticks) pause so they
+        can't race init's explicit analyze/build/backfill or double-process
+        signals (gui-init D1). Init's own work bypasses this gate — it calls
+        ``soul_engine`` / ``run_init_backfill`` directly, neither of which
+        consults ``llm_work_allowed``.
+        """
+        try:
+            if self.database is not None and self.init_coordinator.init_active():
+                return False
+        except Exception:
+            pass
         scheduler = getattr(getattr(self, "config", None), "scheduler", None)
         return _gate(scheduler, self.presence)
 

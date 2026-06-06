@@ -855,6 +855,45 @@ def create_app(
             return await call_next(request)
         return JSONResponse(status_code=503, content=_degraded_body())
 
+    # Writers that mutate the soul profile or trigger a runtime rebuild — these
+    # must not run concurrently with guided init (gui-init D1). EXCLUDED on
+    # purpose: /api/bilibili/cookie (handled in-handler as a no-op so the
+    # extension's auto-sync doesn't error), and /api/sources/*/task-result
+    # (init's own bootstrap collectors depend on those landing).
+    _init_gated_write_paths = frozenset(
+        {
+            "/api/events",
+            "/api/feedback",
+            "/api/profile/edit",
+            "/api/config",
+            "/api/recommendations/refresh",
+            "/api/interest-probes/trigger",
+            "/api/avoidance-probes/trigger",
+            "/api/sources",
+        }
+    )
+
+    @app.middleware("http")
+    async def _init_active_write_guard(request: Request, call_next: Any) -> Any:
+        method = request.method.upper()
+        if method in {"POST", "PUT"}:
+            path = request.url.path
+            gated = path in _init_gated_write_paths or (
+                method == "PUT" and path.startswith("/api/sources/")
+            )
+            if gated:
+                coord = getattr(ctx, "init_coordinator", None)
+                try:
+                    active = coord is not None and coord.init_active()
+                except Exception:
+                    active = False
+                if active:
+                    return JSONResponse(
+                        {"error": "init_running", "detail": "初始化进行中，请稍后再试"},
+                        status_code=409,
+                    )
+        return await call_next(request)
+
     # Register AFTER the degraded guard so the auth gate is the outermost http
     # middleware (runs first): unauthenticated requests are rejected before any
     # downstream handling. CORS stays inner; 401/403 echo a permissive header.
@@ -1475,6 +1514,25 @@ def create_app(
                 authenticated=False,
                 message="cookie payload is empty",
                 error_code="empty_cookie",
+            )
+
+        # gui-init D1.2: while guided init runs, the extension keeps auto-syncing
+        # the cookie. Don't validate (~30s round-trip) or rebuild the runtime
+        # (which would swap the BilibiliAPIClient mid-init) — init already
+        # holds a validated cookie. Silent no-op so the extension neither errors
+        # nor disturbs the in-flight run; a changed cookie applies post-init.
+        _init_coord = getattr(ctx, "init_coordinator", None)
+        _init_busy = False
+        if _init_coord is not None:
+            try:
+                _init_busy = _init_coord.init_active()
+            except Exception:
+                _init_busy = False
+        if _init_busy:
+            return BilibiliCookieResponse(
+                ok=True,
+                authenticated=True,
+                message="初始化进行中，Cookie 已收到，将在初始化完成后生效。",
             )
 
         config, diagnostics = load_config_with_diagnostics()
