@@ -32,6 +32,14 @@ import {
 } from "./popup-helpers.js";
 import { createRuntimeStreamClient } from "./popup-stream.js";
 import {
+  buildInitChecklist,
+  describeInitReason,
+  describeInitStartError,
+  initProgressView,
+  initStartButtonState,
+  isInitTerminal,
+} from "./popup-init-control.js";
+import {
   getBackendBaseUrl,
   getBackendEndpointConfig,
   getBackendOrigin,
@@ -62,6 +70,7 @@ import {
   fetchChatTurns,
   fetchConfig,
   fetchHealth,
+  fetchInitStatus,
   fetchPendingDelight,
   fetchPendingDelightBatch,
   fetchProfileSummary,
@@ -69,6 +78,7 @@ import {
   fetchRuntimeStatus,
   fetchSourceShareSuggestion,
   markDelightSent,
+  startInit,
   readCachedConfigSnapshot,
   reportRecommendationClick,
   reshuffleRecommendations,
@@ -156,6 +166,13 @@ const elements = {
   emptyState: document.getElementById("emptyState"),
   emptyTitle: document.getElementById("emptyTitle"),
   emptyText: document.getElementById("emptyText"),
+  initPanel: document.getElementById("initPanel"),
+  initChecklist: document.getElementById("initChecklist"),
+  initProgress: document.getElementById("initProgress"),
+  initProgressBar: document.getElementById("initProgressBar"),
+  initProgressLabel: document.getElementById("initProgressLabel"),
+  initStartBtn: document.getElementById("initStartBtn"),
+  initStartReason: document.getElementById("initStartReason"),
   list: document.getElementById("recommendationList"),
   refreshRecommendationsButton: document.getElementById("refreshRecommendationsButton"),
   poolStatus: document.getElementById("poolStatus"),
@@ -689,12 +706,139 @@ function showRecommendationEmptyState(title, message) {
   elements.emptyState.hidden = false;
   elements.emptyTitle.textContent = title;
   elements.emptyText.textContent = message;
+  // The guided-init panel is only for the uninitialized state; the
+  // uninitialized branch re-shows it via refreshInitPanel().
+  if (elements.initPanel instanceof HTMLElement) {
+    elements.initPanel.hidden = true;
+  }
 }
 
 function hideRecommendationEmptyState() {
   if (elements.emptyState instanceof HTMLElement) {
     elements.emptyState.hidden = true;
   }
+  if (elements.initPanel instanceof HTMLElement) {
+    elements.initPanel.hidden = true;
+  }
+  clearInitPolling();
+}
+
+// ── Guided init (gui-init F1) ──────────────────────────────────────────────
+let initPollTimer = null;
+
+function clearInitPolling() {
+  if (initPollTimer != null) {
+    clearTimeout(initPollTimer);
+    initPollTimer = null;
+  }
+}
+
+function renderInitPanel(status) {
+  if (!(elements.initPanel instanceof HTMLElement)) {
+    return;
+  }
+  elements.initPanel.hidden = false;
+
+  if (elements.initChecklist instanceof HTMLElement) {
+    elements.initChecklist.replaceChildren();
+    for (const row of buildInitChecklist(status)) {
+      const li = document.createElement("li");
+      li.className = `${row.ok ? "init-ok" : "init-missing"} ${row.hard ? "init-hard" : "init-soft"}`;
+      const head = document.createElement("div");
+      head.className = "init-row";
+      const mark = document.createElement("span");
+      mark.className = "init-mark";
+      mark.textContent = row.ok ? "✓" : row.hard ? "✗" : "•";
+      const label = document.createElement("span");
+      label.textContent = row.label;
+      head.append(mark, label);
+      li.append(head);
+      if (!row.ok && row.hint) {
+        const hint = document.createElement("p");
+        hint.className = "init-hint";
+        hint.textContent = row.hint;
+        li.append(hint);
+      }
+      elements.initChecklist.append(li);
+    }
+  }
+
+  const progress = initProgressView(status);
+  if (elements.initProgress instanceof HTMLElement) {
+    elements.initProgress.hidden = !(progress.active || progress.pct >= 100 || progress.failed);
+    if (elements.initProgressBar instanceof HTMLElement) {
+      elements.initProgressBar.style.width = `${progress.pct}%`;
+    }
+    if (elements.initProgressLabel instanceof HTMLElement) {
+      elements.initProgressLabel.textContent = progress.failed
+        ? `初始化未完成：${describeInitReason(status && status.reason) || progress.failedReason || "请稍后重试"}`
+        : progress.active
+          ? `${progress.stageLabel || "正在初始化"}（${progress.pct}%）`
+          : progress.pct >= 100
+            ? "初始化完成！"
+            : "";
+    }
+  }
+
+  const btnState = initStartButtonState(status);
+  if (elements.initStartBtn instanceof HTMLButtonElement) {
+    elements.initStartBtn.textContent = btnState.label;
+    elements.initStartBtn.disabled = !btnState.enabled;
+    if (!elements.initStartBtn.dataset.bound) {
+      elements.initStartBtn.dataset.bound = "1";
+      elements.initStartBtn.addEventListener("click", () => {
+        void handleStartInitClick();
+      });
+    }
+  }
+  if (elements.initStartReason instanceof HTMLElement) {
+    elements.initStartReason.textContent = btnState.reason;
+    elements.initStartReason.hidden = !btnState.reason;
+  }
+}
+
+async function refreshInitPanel() {
+  let status = null;
+  try {
+    status = await fetchInitStatus();
+  } catch {
+    return null;
+  }
+  renderInitPanel(status);
+  if (status.running) {
+    clearInitPolling();
+    initPollTimer = setTimeout(() => {
+      void refreshInitPanel();
+    }, 3000);
+  } else {
+    clearInitPolling();
+    if (isInitTerminal(status) && status.initialized) {
+      // Init finished → recommendations + profile are ready; reload them.
+      state.profileLoaded = false;
+      setHint("初始化完成！正在加载画像和推荐…", "success");
+      scheduleRecommendationsRefresh();
+      void loadProfileSummary({ force: true });
+    }
+  }
+  return status;
+}
+
+async function handleStartInitClick() {
+  if (!(elements.initStartBtn instanceof HTMLButtonElement)) {
+    return;
+  }
+  elements.initStartBtn.disabled = true;
+  try {
+    await startInit({ force: false });
+    setHint("初始化已开始，正在拉取数据…", "info");
+  } catch (error) {
+    const message = describeInitStartError(error);
+    if (elements.initStartReason instanceof HTMLElement) {
+      elements.initStartReason.textContent = message;
+      elements.initStartReason.hidden = false;
+    }
+  }
+  void refreshInitPanel();
 }
 
 function renderPoolStatus(runtimeStatus) {
@@ -1033,6 +1177,11 @@ function connectRuntimeStream() {
         event.type === "delight.chat"
       ) {
         setHint(String(event.message || ""), "success");
+      }
+      // Live guided-init progress (gui-init F1): refresh the recommend-tab
+      // init panel so the checklist/progress bar tracks the run.
+      if (event.type === "init_progress" || event.type === "init_failed") {
+        void refreshInitPanel();
       }
       // Init completed: re-fetch everything including profile
       if (event.type === "init_completed") {
@@ -2810,7 +2959,8 @@ function renderProfileSummary(summary) {
     elements.profileCard.hidden = true;
     elements.profileEmpty.hidden = false;
     elements.profileEmptyTitle.textContent = "画像还没攒起来";
-    elements.profileEmptyText.textContent = "先跑一遍 openbiliclaw init，再回来看看。";
+    elements.profileEmptyText.textContent =
+      "还没初始化。去「推荐」页点『开始初始化』，攒好画像再回来看。";
     renderCognitionHistoryControls({
       items: [],
       hasMore: false,
@@ -3226,7 +3376,8 @@ function renderEditPanel(container, editState) {
   if (!editState || !editState.initialized || !editState.fields) {
     const note = document.createElement("p");
     note.className = "profile-edit-note";
-    note.textContent = "画像还没攒起来，先跑一遍 openbiliclaw init 再回来编辑。";
+    note.textContent =
+      "还没初始化。去「推荐」页点『开始初始化』，画像攒好后再来编辑。";
     container.append(note);
     return;
   }
@@ -4590,8 +4741,12 @@ function renderRecommendationState(stateShape) {
   }
 
   if (stateShape.kind === "uninitialized") {
-    showRecommendationEmptyState("还没完成初始化", stateShape.message);
-    setHint("先跑一遍 openbiliclaw init，把画像和候选池攒起来。");
+    showRecommendationEmptyState(
+      "还没完成初始化",
+      "点下面的按钮就能在这里一步步完成初始化（也可以用命令行 openbiliclaw init）。",
+    );
+    setHint("先完成初始化，把画像和候选池攒起来。");
+    void refreshInitPanel();
     return;
   }
 

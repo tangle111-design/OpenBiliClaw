@@ -2728,6 +2728,111 @@
       color: var(--text-secondary);
     }
 
+    .init-panel {
+      margin-top: 16px;
+      text-align: left;
+    }
+
+    .init-checklist {
+      list-style: none;
+      margin: 0 0 12px;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .init-checklist li {
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text-main);
+    }
+
+    .init-checklist li .init-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+    }
+
+    .init-checklist li .init-mark {
+      flex: none;
+      width: 16px;
+      text-align: center;
+    }
+
+    .init-checklist li.init-ok .init-mark {
+      color: #1a9b6c;
+    }
+
+    .init-checklist li.init-missing.init-hard .init-mark {
+      color: #e0245e;
+    }
+
+    .init-checklist li.init-missing.init-soft .init-mark {
+      color: #c98a00;
+    }
+
+    .init-checklist li .init-hint {
+      margin: 2px 0 0 24px;
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .init-start-btn {
+      width: 100%;
+      padding: 10px 14px;
+      border: none;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 800;
+      color: #fff;
+      background: linear-gradient(135deg, #fb7299, #5aa9ff);
+      cursor: pointer;
+    }
+
+    .init-start-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .init-start-reason {
+      margin-top: 8px;
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      text-align: center;
+    }
+
+    .init-progress {
+      margin-bottom: 12px;
+    }
+
+    .init-progress-track {
+      height: 8px;
+      border-radius: 6px;
+      background: rgba(90, 169, 255, 0.16);
+      overflow: hidden;
+    }
+
+    .init-progress-bar {
+      height: 100%;
+      width: 0;
+      border-radius: 6px;
+      background: linear-gradient(90deg, #fb7299, #5aa9ff);
+      transition: width 0.4s ease;
+    }
+
+    .init-progress-label {
+      margin-top: 6px;
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      text-align: center;
+    }
+
     .chat-shell {
       padding: 14px;
       min-height: 0;
@@ -4103,6 +4208,17 @@
         <div id="emptyState" class="empty-state" hidden>
           <h3 id="emptyTitle">还没刷出新东西</h3>
           <p id="emptyText">稍等一下，新的推荐马上来。</p>
+          <div id="initPanel" class="init-panel" hidden>
+            <ul id="initChecklist" class="init-checklist"></ul>
+            <div id="initProgress" class="init-progress" hidden>
+              <div class="init-progress-track">
+                <div id="initProgressBar" class="init-progress-bar"></div>
+              </div>
+              <p id="initProgressLabel" class="init-progress-label"></p>
+            </div>
+            <button id="initStartBtn" type="button" class="init-start-btn">开始初始化</button>
+            <p id="initStartReason" class="init-start-reason" hidden></p>
+          </div>
         </div>
         <div id="recommendationList" class="recommendation-list"></div>
       </section>
