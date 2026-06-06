@@ -4,6 +4,16 @@
 
 ---
 
+## v0.3.102 / extension v0.3.68: 图形化引导初始化（GUI guided init）（2026-06-07）
+
+- 抽出共享异步初始化流水线 `cli.run_guided_init`：`openbiliclaw init` 的四阶段（拉取 + 入库 / 分析偏好 / 生成画像 ‖ 发现补池）原先内联在 CLI 命令里、被四处独立 `asyncio.run` 包着，无法被后端复用。现在合并为一个协程，CLI 用单次 `asyncio.run(run_guided_init(...))` 驱动、后端在服务事件循环里直接 `await`，互不嵌套 loop。bootstrap 采集器仍是同步实现但改走 `asyncio.to_thread`，不冻结 API loop；唯一与路径相关的发现补池步骤以 `discover_backfill` 注入（CLI 传一次性引擎、后端传持锁的 `controller.run_init_backfill`）。CLI 行为 / 输出 / 退出码零回归。
+- 新增 `InitCoordinator`（`runtime/init_coordinator.py`）+ `init_runs` 持久化状态机（`storage/database.py`）：单飞启动用 `BEGIN IMMEDIATE` CAS 预定（TOCTOU 收口在 DB），单写者串行化状态写入 + 进度事件（`_write_lock` 保证并行 stage 3/4 的 `sequence` 不丢更新），协作式取消，启动 reconcile 把崩溃残留的 `starting/running` 行判失败，避免 `/api/init-status` 永远报 running。
+- 新增 `GET /api/init-status`：权威进度 + 前置清单（B站登录 / LLM / embedding / 已启用平台 + `is_profile_ready`），远程可读、降级可读、远程 `can_manage=false`；前置探测 `InitPrereqs`（`runtime/init_prereqs.py`）TTL 缓存 + 单飞，避免轮询打爆 chat provider / `validate_cookie`。
+- 新增 `POST /api/init` + `POST /api/init/cancel`（仅本机）：占坑前先做廉价拒绝（`unsupported_runtime` / `already_initialized`），再 `try_start` 单飞、临界区内复验前置（缺则复位 idle、不留 stuck `starting` 行），经任务注册表后台跑 wrapper；wrapper 是唯一状态 / 事件写者，终态落 `completed/failed/cancelled` 并发 `init_progress/completed/failed` 事件。
+- init 期间写者门控：`background_llm_work_allowed()` 在 init 活跃时返回 False，一处暂停所有 daemon 后台 LLM 循环（account_sync / 连续 refresh / soul pipeline tick）；HTTP 写端（`/api/events`、`/api/feedback`、`/api/profile/edit`、`PUT /api/config`、手动 refresh、兴趣 / 避雷探针触发、source 配方 CRUD）由中间件返回 `409 init_running`；`/api/bilibili/cookie` 在 init 期间静默 no-op（不 validate、不 rebuild，避免换组件），`/api/sources/*/task-result` 放行（init 自己的 bootstrap 采集器要用）；init 任务豁免热重载取消（`cancel_all(exclude={"guided_init"})`）。
+- 插件推荐 tab 引导初始化：未初始化空状态不再叫用户去命令行，而是渲染前置清单（硬 / 软项 + 去补指引）+「开始初始化」按钮（镜像后端 `can_start` 置灰）+ 进度条（订阅 `runtime-stream` 的 `init_progress/failed/completed` + 3s 轮询兜底，完成自动加载推荐 / 画像）；DOM 无关逻辑抽到 `popup-init-control.js` 并单测。画像 / 画像编辑空状态文案改为指向推荐页初始化。
+- 真号端到端验证：隔离数据目录跑真 B站 Cookie + 真 LLM + 本机 ollama embedding，CLI `openbiliclaw init` 与 API `POST /api/init` 均退出码 0 / `completed`、画像生成、发现项落 `content_cache`，`sequence` 在并行 stage 3/4 下严格递增。
+
 ## v0.3.101 / extension v0.3.67: 开机自启动与本机 Ollama 预检（2026-06-05）
 
 - 新增当前用户作用域开机自启动能力：macOS 写 `~/Library/LaunchAgents/com.openbiliclaw.daemon.plist`，Windows 写 HKCU Run + `openbiliclaw-autostart.pyw`，Linux 写 XDG `~/.config/autostart/openbiliclaw.desktop`；不写系统级服务、不要求 root / 管理员权限，Docker / 未知平台明确返回不支持。

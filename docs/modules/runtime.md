@@ -59,7 +59,12 @@ result = await controller.drain_discovery_candidates_once(batch_size=30)
 
 - `refresh_if_needed()` / `force_refresh()`：按 pool available 缺口、source share 和 raw-material headroom 构建补货计划；如果正式可换池已经达到 `pool_target_count`，返回 `pool_at_cap` 并跳过 discovery。
 - `drain_discovery_candidates_once(batch_size=...)`：由 XHS task-result / 被动采集等外部来源入队后触发，也可由 refresh plan 内部调用；它会先检查 `count_pool_candidates() >= pool_target_count`，池满时直接返回 `{"evaluated": 0, "cached": 0, "rejected": 0}`。profile 未就绪或已有 drain 在跑时同样 no-op，底层 `DiscoveryCandidatePipeline.drain_pending()` 也有同一共享锁，避免 refresh / XHS / Douyin / YouTube 多入口并发 admission。
+- `run_init_backfill(profile, target_pool_count, *, fully_parallel=True)`：图形化引导初始化（gui-init）stage 4 的发现补池。持 `_refresh_lock` 与连续 refresh 串行，绝不与之争 `content_cache`；`async with` 在 `CancelledError` 时释放锁。不查 `_llm_work_allowed()`，因此 init 期间后台门控暂停不会自锁 init 自己的补池。
 - `_pool_count_payload()`：统一生成 runtime status / runtime stream 的池子字段，包含 pending eval 与 evaluated pending 拆分。
+
+### InitCoordinator + InitPrereqs（引导初始化）
+
+`InitCoordinator`（`runtime/init_coordinator.py`，惰性挂在 `RuntimeContext.init_coordinator`）是图形化引导初始化的生命周期所有者：`init_runs` 持久化状态机、单写者进度事件（`_write_lock` 串行化，并行 stage 3/4 的 `sequence` 不丢更新）、`BEGIN IMMEDIATE` 单飞预定、启动 `reconcile_on_boot()`（崩溃残留 `starting/running` 判失败）、协作取消、bootstrap task 归属（供写者门控放行 init 自己的 task-result）。`InitPrereqs`（`runtime/init_prereqs.py`）提供 TTL 缓存 + 单飞的 `chat_ready()` / `bilibili_check()` / `enabled_platforms()` 前置探测。共享流水线 `cli.run_guided_init`、`/api/init*` 端点和 init 期间写者门控详见 [init 模块文档](init.md)。
 
 ### Degraded RuntimeContext
 

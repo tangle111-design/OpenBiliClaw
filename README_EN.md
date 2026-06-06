@@ -470,6 +470,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 - 💬 **Warm Recommendations** — Not "because you watched similar videos", but friend-like explanations of why you'd enjoy something
 - 🔄 **Continuous Learning** — Socratic dialogue + behavioral analysis + instant feedback, understands you better over time
 - 🧩 **Browser Extension (Chrome / Edge / Brave / Arc and more)** — Side panel for recommendations, cross-site behavior collection (Bilibili + Xiaohongshu + Douyin + YouTube), chat, and cognition update cards — install and go
+- 🚀 **Guided init in the UI** — No terminal required: the extension's "Recommend" tab shows a prerequisite checklist (Bilibili login / LLM / embedding) and a "Start init" button that builds your profile and first content pool right in the panel (the CLI `openbiliclaw init` remains an equivalent entry point)
 - 🔬 **Self-Optimizing Eval Loops** — Five modules each have an LLM-as-judge SGD/RL loop that automatically improves prompt quality over rounds — no manual tuning needed
 - 🔒 **Fully Private** — All data in local SQLite; LLM calls use your own key; each instance is built for exactly one person
 - 🔌 **Local Embedding Provider** — Optional Ollama + bge-m3, no extra embedding API key required for similarity computation (CPU-only, runs on Mac/Win/Linux)
