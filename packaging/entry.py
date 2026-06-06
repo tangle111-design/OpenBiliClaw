@@ -146,6 +146,43 @@ def _enable_ollama_embedding_default(config_path: Path) -> None:
         print("[OpenBiliClaw] 已默认启用本地 Ollama embedding (bge-m3)")
 
 
+def _default_ollama_to_embedding_only(config_path: Path) -> None:
+    """Blank a preset ``[llm.ollama] model`` so local Ollama is embedding-only.
+
+    config.example.toml ships ``[llm.ollama] model = "qwen2.5:7b"``. Per
+    ``registry._ollama_is_chat_capable``, a non-empty model marks Ollama
+    chat-capable, so the chat chain probes qwen2.5:7b — which the packaged user
+    hasn't pulled — flooding the console with ``ollama request failed: 404``.
+    The packaged app defaults chat to a cloud provider and only wants Ollama for
+    bge-m3 embedding, so clear the chat model. Skipped when the user actually
+    defaulted chat to ollama; the wizard sets the model back if they pick it.
+    """
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    provider = re.search(r'(?m)^\s*default_provider\s*=\s*"([^"]*)"', text)
+    if provider and provider.group(1).strip().lower() == "ollama":
+        return
+    lines = text.splitlines(keepends=True)
+    in_block = False
+    changed = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_block = stripped == "[llm.ollama]"
+            continue
+        if in_block:
+            match = re.match(r'(\s*model\s*=\s*)"[^"]*"(.*)$', line)
+            if match:
+                lines[i] = f'{match.group(1)}""{match.group(2)}\n'
+                changed = True
+                break
+    if changed:
+        config_path.write_text("".join(lines), encoding="utf-8")
+        print("[OpenBiliClaw] 本地 Ollama 默认仅用于 embedding(已清空预设 chat 模型)")
+
+
 def _packaged_ollama_preflight() -> None:
     """Ensure a loopback ``ollama serve`` is up when chat/embedding needs it.
 
@@ -226,6 +263,7 @@ def main() -> None:
     seeded = _seed_default_config(project_root, bundled_resources)
     if seeded and has_bundled_ollama:
         _enable_ollama_embedding_default(project_root / "config.toml")
+        _default_ollama_to_embedding_only(project_root / "config.toml")
 
     host = os.environ.get("OPENBILICLAW_HOST", "127.0.0.1")
     port = int(os.environ.get("OPENBILICLAW_PORT", "8420"))

@@ -222,6 +222,10 @@
       if (apiKey) pcfg.api_key = apiKey;
       if (baseUrl) pcfg.base_url = baseUrl;
       if (model) pcfg.model = model;
+      // Local Ollama chat needs an explicit model (the packaged default blanks
+      // it so it stays embedding-only). Default to the recommended one; the
+      // user still has to `ollama pull` it.
+      if (provider === "ollama" && !model) pcfg.model = "qwen2.5:7b";
       const payload = { llm: { default_provider: provider, [provider]: pcfg } };
 
       const btn = $("#saveLlm");
