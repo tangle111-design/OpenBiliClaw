@@ -242,6 +242,128 @@ def build_frame(active: int | None = None) -> Image.Image:
     return base
 
 
+def draw_slide_header(
+    draw: ImageDraw.ImageDraw,
+    step: str,
+    title: str,
+    subtitle: str,
+    accent: str,
+) -> None:
+    draw.rounded_rectangle((52, 44, 146, 100), radius=28, fill=accent)
+    draw.text((79, 57), step, font=font(28, bold=True), fill="white")
+    draw.text((172, 38), title, font=font(46, bold=True), fill=INK)
+    draw_wrapped(draw, subtitle, (174, 94), 58, font(22), MUTED, line_gap=7)
+
+
+def build_gif_slide(index: int) -> Image.Image:
+    base = Image.new("RGB", CANVAS, BG)
+    draw = ImageDraw.Draw(base)
+
+    slides = [
+        {
+            "step": "1",
+            "title": "Signals stay local",
+            "subtitle": "Your browser extension connects Bilibili, Xiaohongshu, Douyin, YouTube, and the open web to your own backend.",
+            "accent": BLUE,
+            "screenshot": IMAGE_DIR / "desktop-home.png",
+            "screen_size": (548, 330),
+            "chips": [("Bilibili", BLUE), ("Xiaohongshu", RED), ("Douyin", INK), ("YouTube", RED), ("Web", PURPLE)],
+            "callouts": [("Extension", BLUE), ("Local backend", GREEN), ("SQLite", ORANGE)],
+        },
+        {
+            "step": "2",
+            "title": "A private taste profile",
+            "subtitle": "OpenBiliClaw turns usage, feedback, and dialogue into interests, cognitive style, MBTI signals, and deeper needs.",
+            "accent": PURPLE,
+            "screenshot": IMAGE_DIR / "desktop-profile.png",
+            "screen_size": (590, 350),
+            "chips": [("Interests", PURPLE), ("MBTI", BLUE), ("Needs", ORANGE), ("Style", GREEN)],
+            "callouts": [("No platform account", INK), ("Local SQLite", ORANGE)],
+        },
+        {
+            "step": "3",
+            "title": "Recommendations with reasons",
+            "subtitle": "Cards explain why each item fits you, so recommendations feel like a thoughtful friend instead of a black-box feed.",
+            "accent": ORANGE,
+            "screenshot": IMAGE_DIR / "desktop-cards.png",
+            "screen_size": (590, 350),
+            "chips": [("Why this fits", ORANGE), ("Mixed sources", BLUE), ("Surprise", PURPLE)],
+            "callouts": [("Reasoned card", ORANGE), ("Open the source", BLUE)],
+        },
+        {
+            "step": "4",
+            "title": "Feedback trains the next batch",
+            "subtitle": "Like, not interested, save, and chat feedback immediately shape what OpenBiliClaw explores next.",
+            "accent": GREEN,
+            "screenshot": IMAGE_DIR / "mobile-recommend.png",
+            "screen_size": (270, 430),
+            "chips": [("Like", GREEN), ("Not interested", RED), ("Chat", PURPLE), ("Save", ORANGE)],
+            "callouts": [("Feedback loop", GREEN), ("Better next batch", PURPLE)],
+        },
+    ]
+    data = slides[index]
+    draw_slide_header(draw, data["step"], data["title"], data["subtitle"], data["accent"])
+
+    left_x = 62
+    chip_y = 190
+    for label, color in data["chips"]:
+        left_x, _ = draw_chip(draw, (left_x, chip_y), label, color)
+        left_x += 10
+
+    flow_y = 276
+    x = 76
+    for i, (label, color) in enumerate(data["callouts"]):
+        x, _ = draw_chip(draw, (x, flow_y), label, color)
+        if i < len(data["callouts"]) - 1:
+            draw_arrow(draw, (x + 12, flow_y + 16), (x + 74, flow_y + 16), "#94a3b8")
+            x += 88
+
+    bullets = [
+        "Cross-source signals become your own memory.",
+        "Your profile and recommendation pool stay under your control.",
+        "Every feedback action changes the next discovery cycle.",
+    ]
+    if index == 1:
+        bullets = [
+            "Profile evolves from actual behavior, not manual tags.",
+            "LLM and embedding providers follow your configuration.",
+            "The SQLite database remains on your machine by default.",
+        ]
+    elif index == 2:
+        bullets = [
+            "Each card carries a plain-language reason.",
+            "The pool mixes platforms and topics instead of narrowing down.",
+            "You can open, save, dismiss, or discuss a recommendation.",
+        ]
+    elif index == 3:
+        bullets = [
+            "Positive feedback reinforces a direction.",
+            "Negative feedback clears what you do not want.",
+            "Chat feedback teaches nuanced taste over time.",
+        ]
+    bullet_y = 378
+    for bullet in bullets:
+        draw.ellipse((78, bullet_y + 7, 88, bullet_y + 17), fill=data["accent"])
+        draw_wrapped(draw, bullet, (104, bullet_y), 45, font(21), INK, line_gap=6)
+        bullet_y += 58
+
+    screenshot_size = data["screen_size"]
+    thumb = rounded_thumbnail(data["screenshot"], screenshot_size)
+    screen_x = 1280 - screenshot_size[0] - 72
+    screen_y = 210 if index != 3 else 178
+    draw.rounded_rectangle(
+        (screen_x - 16, screen_y - 16, screen_x + screenshot_size[0] + 16, screen_y + screenshot_size[1] + 16),
+        radius=28,
+        fill="#ffffff",
+        outline="#dbe5ef",
+        width=2,
+    )
+    base.paste(thumb, (screen_x, screen_y))
+
+    draw.text((68, 660), "OpenBiliClaw: local-first, cross-platform, self-improving discovery", font=FONT_SMALL, fill=MUTED)
+    return base
+
+
 def save_gif(frames: list[Image.Image], output: Path) -> None:
     quantized = [frame.quantize(colors=192) for frame in frames]
     quantized[0].save(
@@ -264,7 +386,7 @@ def main() -> None:
     static.save(OUTPUT_PNG, optimize=True)
 
     if not args.png_only:
-        frames = [build_frame(active=i) for i in range(4)]
+        frames = [build_gif_slide(i) for i in range(4)]
         save_gif(frames, OUTPUT_GIF)
 
     print(f"Wrote {OUTPUT_PNG.relative_to(ROOT)}")
