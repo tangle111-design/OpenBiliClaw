@@ -16,30 +16,49 @@
 
 </div>
 
-> 名字起源于 B 站（`Bili` = Bilibili，`Claw` = 爪子），项目最早只支持 B 站。从 v0.3.0 起已扩展为通用跨平台 Agent —— 已落地 B 站 / 小红书 / 抖音 / YouTube 初始化信号、抖音 search / hot / feed 内容发现和通用 Web 多类源，持续接入更多内容平台。
+## 10 秒看懂 OpenBiliClaw
 
----
-
-## 💬 用户交流群
+一个只为你一个人工作的本地 AI 推荐 Agent：把 B 站、小红书、抖音、YouTube 等平台的兴趣信号连起来，主动帮你找更有惊喜的内容。
 
 <p align="center">
-  <img src="docs/images/user-community-qrcode.png" width="200" alt="用户交流群二维码" />
+  <img src="docs/images/hero-demo.gif" width="820" alt="OpenBiliClaw 跨平台本地推荐 Agent 演示：信号进入本地后端、生成画像、解释推荐理由、根据反馈继续学习" />
 </p>
 
----
+| 跨平台 | 本地优先 | 可调教 |
+|---|---|---|
+| B 站 / 小红书 / 抖音 / YouTube / Web | 数据默认留在本机 SQLite | 喜欢、不感兴趣、聊天反馈都会改变后续推荐 |
 
-## 📌 开机自启动 + 本机 Ollama 预检（2026-06-05）
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg"><b>安装浏览器插件</b></a>
+  ·
+  <a href="#快速开始"><b>让 AI 助手部署后端</b></a>
+</p>
 
-- **插件设置页可直接开启登录自启动** —— 通用设置里新增「开机自启动」开关，调用本地 API 注册当前用户登录项。
-- **三平台当前用户作用域** —— macOS LaunchAgent、Windows HKCU Run、Linux XDG autostart；不写系统级服务，不需要管理员权限。
-- **启动前自动照顾本机 Ollama** —— 若当前配置需要默认 `localhost:11434` Ollama，`openbiliclaw start` 会探测并在未运行时尝试后台拉起。
-- **防误写配置** —— 环境变量管理、`config.local.toml` 覆盖和不支持平台会明确提示，避免自启动后拿不到 API Key / Cookie。
+<p align="center">
+  <sub>喜欢这个方向？<a href="https://github.com/whiteguo233/OpenBiliClaw">欢迎 Star 支持项目继续适配更多平台</a>。</sub>
+</p>
 
-完整变更详见 [docs/changelog.md](docs/changelog.md)。
+### 隐私速览
 
----
+默认数据流向：浏览器插件 → 你配置的本地 OpenBiliClaw 后端 → 本机 SQLite。插件不会把数据发送到 OpenBiliClaw 开发者运营的服务器。若你配置云端 LLM / embedding，相关内容会按你的配置发送给对应服务商。详见 [隐私政策](docs/privacy.md)。
+
+## 快速开始
+
+普通用户先走这四步；Firefox、Docker 和手动部署等备用路径保留在后面的 [安装与部署详情](#安装与部署详情)。
+
+1. **安装浏览器插件**：从 [Chrome 应用商店安装 OpenBiliClaw](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)。
+2. **让 AI 助手部署后端**：把下面整句粘给 Claude Code、Codex CLI、Cursor、Windsurf 或其他 AI 编程助手。
+
+```text
+请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
+```
+
+3. **在同一个浏览器登录内容平台**：至少登录 [B 站](https://www.bilibili.com)，需要多源信号时再登录 [小红书](https://www.xiaohongshu.com) / [抖音](https://www.douyin.com) / [YouTube](https://www.youtube.com)。
+4. **打开桌面端或移动端 Web**：后端启动后访问 `http://127.0.0.1:8420/web`；手机可扫插件二维码打开 `http://<电脑局域网 IP>:8420/m/`。
 
 ## 为什么需要 OpenBiliClaw？
+
+> 名字起源于 B 站（`Bili` = Bilibili，`Claw` = 爪子），项目最早只支持 B 站。从 v0.3.0 起已扩展为通用跨平台 Agent —— 已落地 B 站 / 小红书 / 抖音 / YouTube 初始化信号、抖音 search / hot / feed 内容发现和通用 Web 多类源，持续接入更多内容平台。
 
 推荐系统本质上是一个**中间商**——平台站在海量内容和海量用户之间做匹配分发。现代推荐系统远比「优化点击率」复杂：它同时权衡点击率、完播率、点赞/投币概率、停留时长、用户留存、创作者生态健康、广告收入等十几个目标，把它们加权压成一个分数来排序。听起来很科学，但问题在于：**这些权重是平台定的，优化目标归根结底是平台的**——用户满意度只是被当作留存和变现的手段，而非目的本身。你以为你在挑内容，其实是中间商在替你决定你能看到什么。结果就是：推荐越来越像你已经看过的东西，偶尔的惊喜全靠运气。
 
@@ -173,7 +192,21 @@
 
 </details>
 
-## 🚀 快速开始
+## 最近更新
+
+最新版本：**v0.3.102 / extension v0.3.68: 图形化引导初始化（2026-06-07）**。完整历史见 [docs/changelog.md](docs/changelog.md)。
+
+- **插件内可直接初始化** —— 推荐 tab 会展示 B 站登录 / LLM / embedding 前置清单，满足条件后可点「开始初始化」，在界面里跟进画像和首轮内容池进度。
+- **初始化期间写入门控** —— 后端会暂停会干扰画像构建的写操作和后台刷新，避免首次画像被并发任务打乱。
+- **开机自启动 + 本机 Ollama 预检** —— 插件设置页可开启登录自启动；`openbiliclaw start` 会在需要默认本机 Ollama 时做启动前探测。
+
+## 用户交流群
+
+<p align="center">
+  <img src="docs/images/user-community-qrcode.png" width="200" alt="用户交流群二维码" />
+</p>
+
+## 安装与部署详情
 
 普通用户的正常流程是：先安装浏览器插件，再把一句话发给 AI 助手安装后端，在同一个浏览器登录内容平台；如果要在手机上使用，再打开移动端 Web。脚本、Docker 和手动部署只作为备用路径，放在下面折叠区。
 
@@ -594,7 +627,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.101 / extension v0.3.67: 开机自启动与本机 Ollama 预检（2026-06-05）**。README 顶部保留最新重要更新；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
+最新版本：**v0.3.102 / extension v0.3.68: 图形化引导初始化（2026-06-07）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag，不发布后端桌面包。
 
 ## 🗺️ 后续规划
 
