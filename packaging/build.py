@@ -235,7 +235,10 @@ def make_macos_dmg(*, app_bundle: Path, output_dir: Path, version: str) -> Path:
                 last_err = ""
                 break
             last_err = (result.stderr or "").strip()
-            print(f"[build] hdiutil create failed (attempt {attempt}/3, rc={result.returncode}): {last_err}")
+            print(
+                f"[build] hdiutil create failed "
+                f"(attempt {attempt}/3, rc={result.returncode}): {last_err}"
+            )
             dmg_path.unlink(missing_ok=True)
             time.sleep(3 * attempt)
         if last_err:
