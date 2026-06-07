@@ -61,6 +61,11 @@ packaging = [
     # Desktop installer builds (packaging/build.py). Bundles the backend into a
     # macOS .app/.dmg or Windows onedir for the Inno Setup installer.
     "pyinstaller>=6.11",
+    # Windows system-tray desktop mode (packaging/entry.py): tray icon + menu so
+    # the app runs without a console window. Windows-only at runtime; harmless to
+    # install elsewhere (the spec excludes pystray from non-Windows builds).
+    "pystray>=0.19",
+    "Pillow>=10.0",
 ]
 
 [project.scripts]

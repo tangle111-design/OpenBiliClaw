@@ -248,5 +248,32 @@ def test_migrate_survives_unmovable_entry(tmp_path: Path, monkeypatch) -> None:
     assert (install_dir / "logs").exists()  # the one that failed to move
 
 
+# --------------------------------------------------------------------------- #
+# System-tray desktop mode gating (Windows-only, frozen-only)
+# --------------------------------------------------------------------------- #
+
+
+def test_should_use_tray_false_when_not_frozen() -> None:
+    # The test process isn't frozen → tray mode is never selected (dev keeps its
+    # foreground/console server).
+    assert entry._should_use_tray() is False
+
+
+def test_should_use_tray_false_on_non_windows(monkeypatch) -> None:
+    # Frozen but not Windows → no tray (macOS .app already runs without a console;
+    # its tray backend would need pyobjc). Short-circuits before importing pystray.
+    monkeypatch.setattr(entry.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(entry.os, "name", "posix")
+
+    assert entry._should_use_tray() is False
+
+
+def test_redirect_output_to_logfile_noop_when_not_frozen(tmp_path: Path) -> None:
+    # Dev (not frozen) keeps its real stdout/stderr — the redirect is a no-op and
+    # must not create a log file.
+    assert entry._redirect_output_to_logfile(tmp_path) is None
+    assert not (tmp_path / "logs" / "desktop.log").exists()
+
+
 if __name__ == "__main__":  # pragma: no cover - convenience
     raise SystemExit(pytest.main([__file__, "-q"]))

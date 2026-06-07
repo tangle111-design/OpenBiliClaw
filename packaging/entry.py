@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import webbrowser
@@ -36,6 +37,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from typing import Any
 
 
 def _is_macos_app_bundle(exe_dir: Path) -> bool:
@@ -331,8 +333,142 @@ def _ensure_embedding_model_async() -> None:
     threading.Thread(target=_worker, name="obc-embed-pull", daemon=True).start()
 
 
+def _redirect_output_to_logfile(project_root: Path) -> Path | None:
+    """Point stdout/stderr at a log file for the windowed (no-console) build.
+
+    A PyInstaller windowed app has no console: ``sys.stdout`` / ``sys.stderr``
+    are ``None``, so stray ``print`` / traceback writes raise. Send them to
+    ``logs/desktop.log`` so nothing crashes and the tray's "view logs" entry has
+    live output to show. No-op when not frozen (dev keeps its console).
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    log_dir = project_root / "logs"
+    with suppress(OSError):
+        log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "desktop.log"
+    try:
+        # Long-lived on purpose: this stream IS stdout/stderr for the whole
+        # process, so it must stay open (no context manager).
+        stream = open(log_path, "a", buffering=1, encoding="utf-8", errors="replace")  # noqa: SIM115
+    except OSError:
+        return None
+    sys.stdout = stream
+    sys.stderr = stream
+    return log_path
+
+
+def _open_in_default_app(path: Path) -> None:
+    """Open a file / folder with the OS default handler (best-effort)."""
+    try:
+        if os.name == "nt":
+            os.startfile(str(path))  # type: ignore[attr-defined]  # noqa: S606
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])  # noqa: S603,S607
+        else:
+            subprocess.Popen(["xdg-open", str(path)])  # noqa: S603,S607
+    except Exception as exc:  # noqa: BLE001 — best-effort UX, never crash the tray
+        print(f"[OpenBiliClaw] 打开失败 {path}: {exc}")
+
+
+def _view_runtime_logs(log_path: Path) -> None:
+    """Show the running log. On Windows, open a live-tailing console window
+    (closest to the original console the user had); elsewhere open the file."""
+    if os.name == "nt":
+        try:
+            ps_cmd = f"Get-Content -LiteralPath '{log_path}' -Wait -Tail 200"
+            subprocess.Popen(  # noqa: S603
+                ["powershell", "-NoExit", "-NoProfile", "-Command", ps_cmd],
+                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 — fall back to opening the file
+            print(f"[OpenBiliClaw] 打开实时日志失败: {exc}")
+    _open_in_default_app(log_path)
+
+
+def _tray_icon_image() -> Any:
+    """Build a small in-memory tray icon (no bundled asset needed)."""
+    from PIL import Image, ImageDraw
+
+    size = 64
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    # Pink rounded square + a white ring + a blue dot — echoes the brand mark.
+    draw.rounded_rectangle([2, 2, size - 3, size - 3], radius=16, fill=(251, 114, 153, 255))
+    draw.ellipse([16, 18, 44, 46], outline=(255, 255, 255, 255), width=5)
+    draw.ellipse([40, 12, 54, 26], fill=(90, 169, 255, 255))
+    return image
+
+
+def _should_use_tray() -> bool:
+    """Tray mode = frozen Windows build with pystray + Pillow importable.
+
+    Gated to Windows: the macOS tray backend needs heavyweight pyobjc deps and
+    the ``.app`` already runs without a console, so it keeps the simple
+    foreground server.
+    """
+    if not getattr(sys, "frozen", False) or os.name != "nt":
+        return False
+    try:
+        import PIL  # noqa: F401
+        import pystray  # noqa: F401
+    except Exception:  # noqa: BLE001 — any import failure → foreground fallback
+        return False
+    return True
+
+
+def _run_server_in_tray(server: Any, host: str, port: int, project_root: Path) -> None:
+    """Run uvicorn in a background thread and a system-tray icon in the
+    foreground (Windows). There is no console / window, so the only way to stop
+    the backend is the tray menu's quit — which sets ``server.should_exit`` so
+    uvicorn unwinds cleanly. The menu also opens the Web UI and the live logs.
+    """
+    import pystray
+
+    browser_host = "127.0.0.1" if host == "0.0.0.0" else host  # noqa: S104
+    web_url = f"http://{browser_host}:{port}/web/"
+    log_path = project_root / "logs" / "desktop.log"
+
+    server_thread = threading.Thread(target=server.run, name="obc-uvicorn", daemon=True)
+    server_thread.start()
+
+    def _open_web(icon: Any, item: Any) -> None:
+        with suppress(Exception):
+            webbrowser.open(web_url)
+
+    def _open_logs(icon: Any, item: Any) -> None:
+        _view_runtime_logs(log_path)
+
+    def _quit(icon: Any, item: Any) -> None:
+        server.should_exit = True
+        with suppress(Exception):
+            icon.visible = False
+        icon.stop()
+
+    menu = pystray.Menu(
+        pystray.MenuItem("打开 Web 界面", _open_web, default=True),
+        pystray.MenuItem("查看运行日志", _open_logs),
+        pystray.MenuItem("退出 OpenBiliClaw", _quit),
+    )
+    icon = pystray.Icon("OpenBiliClaw", _tray_icon_image(), "OpenBiliClaw", menu)
+    try:
+        icon.run()  # blocks on the main thread until _quit calls icon.stop()
+    finally:
+        server.should_exit = True
+        with suppress(Exception):
+            server_thread.join(timeout=5)
+
+
 def main() -> None:
     project_root, bundled_resources = _resolve_runtime_paths()
+    # Windowed (no-console) build: route output to a log file FIRST, before any
+    # print() runs (a windowed app's stdout is None and would raise). Creating
+    # logs/ here also means legacy migration won't relocate the old logs/ dir
+    # (disposable) — config.toml + data/ still migrate.
+    with suppress(OSError):
+        (project_root / "logs").mkdir(parents=True, exist_ok=True)
+    _redirect_output_to_logfile(project_root)
     # Windows onedir upgrades: relocate any user data older builds left in the
     # install dir into the per-user root, BEFORE we create fresh data/ + logs/
     # (a whole-dir move must not land inside a freshly-made empty dir).
@@ -394,8 +530,29 @@ def main() -> None:
     import uvicorn
 
     app = create_app()
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    config = uvicorn.Config(app, host=host, port=port, log_level="info")
+    server = uvicorn.Server(config)
+
+    if _should_use_tray():
+        # Windowed Windows build: uvicorn runs in the background and a system-tray
+        # icon owns the foreground. No console window appears; closing nothing
+        # stops it — only the tray menu's "退出" quits the backend.
+        print("[OpenBiliClaw] 已最小化到系统托盘（右下角）；右键托盘图标可查看日志或退出。")
+        _run_server_in_tray(server, host, port, project_root)
+    else:
+        # Dev / non-Windows / tray unavailable: run in the foreground (console).
+        server.run()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # Windowed builds have no console — persist the crash so it isn't silent.
+        with suppress(Exception):
+            import traceback
+
+            crash_dir = _user_data_root() / "logs"
+            crash_dir.mkdir(parents=True, exist_ok=True)
+            (crash_dir / "crash.log").write_text(traceback.format_exc(), encoding="utf-8")
+        raise
