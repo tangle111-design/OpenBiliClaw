@@ -423,6 +423,30 @@ test("getPopupState does not show init prompt while refresh or pool signals are 
   );
 });
 
+test("getPopupState shows the init CTA when uninitialized despite pending pre-init signals", () => {
+  // Regression (gui-init): a fresh backend that is collecting behavior signals
+  // but has no profile/pool yet must surface the guided-init CTA, not mask it as
+  // "补货". pending_signal_events alone must NOT win over the uninitialized check.
+  assert.deepEqual(
+    getPopupState({
+      online: true,
+      items: [],
+      runtimeStatus: {
+        initialized: false,
+        pending_signal_events: 657,
+        manual_refresh_state: "idle",
+        pool_available_count: 0,
+        recommendation_count: 0,
+      },
+    }),
+    {
+      kind: "uninitialized",
+      message: "还没完成初始化，先运行 openbiliclaw init",
+      items: [],
+    },
+  );
+});
+
 test("normalizeRuntimeStatus fills stable fallback fields", () => {
   assert.deepEqual(normalizeRuntimeStatus({ initialized: true, unread_count: "2" }), {
     initialized: true,

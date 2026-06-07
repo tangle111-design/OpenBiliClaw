@@ -956,8 +956,6 @@ export function getPopupState({ online, items = [], error = null, runtimeStatus 
 
   const normalizedItems = items.map(normalizeRecommendation);
   const runtime = normalizeRuntimeStatus(runtimeStatus);
-  const refreshInProgress =
-    runtime.manual_refresh_state === "running" || runtime.pending_signal_events > 0;
   const hasPostInitRuntimeSignals =
     runtime.recommendation_count > 0 ||
     runtime.pool_available_count > 0 ||
@@ -966,20 +964,30 @@ export function getPopupState({ online, items = [], error = null, runtimeStatus 
     runtime.last_discovered_count > 0;
 
   if (normalizedItems.length === 0) {
-    if (refreshInProgress) {
-      return {
-        kind: "refreshing",
-        message: runtime.manual_refresh_message || "正在根据你最近的新行为补货，再刷一会儿就会更新。",
-        items: [],
-      };
+    const refreshMessage =
+      runtime.manual_refresh_message || "正在根据你最近的新行为补货，再刷一会儿就会更新。";
+
+    // An actively-running refresh shows progress, even pre-init.
+    if (runtime.manual_refresh_state === "running") {
+      return { kind: "refreshing", message: refreshMessage, items: [] };
     }
 
+    // Genuinely uninitialized (no profile, empty pool/recommendations) → the
+    // guided-init CTA, EVEN with pending pre-init behavior signals. Those
+    // signals are just queued events; the pool can't fill until init builds a
+    // profile, so treating pending_signal_events as "补货" would mask the
+    // uninitialized state forever and hide the init entry (gui-init review).
     if (!runtime.initialized && !hasPostInitRuntimeSignals) {
       return {
         kind: "uninitialized",
         message: "还没完成初始化，先运行 openbiliclaw init",
         items: [],
       };
+    }
+
+    // Post-init: pending behavior signals mean a replenish is queued.
+    if (runtime.pending_signal_events > 0) {
+      return { kind: "refreshing", message: refreshMessage, items: [] };
     }
 
     return {
