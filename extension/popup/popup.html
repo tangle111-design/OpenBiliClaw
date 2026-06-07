@@ -232,44 +232,63 @@
       gap: 10px;
     }
 
-    /* Compact icon-only "star this repo" button: GitHub Octocat mark for the
-       branding + a small gold ★ badge for "star". No label — kept small. */
-    .github-star-btn {
-      position: relative;
+    /* "Star" button in the familiar GitHub-Buttons two-part style (the look big
+       repos use): an action chip (Octocat + "Star") joined to a live star-count
+       box. Clicking opens the repo (direct-starring needs GitHub auth, so even
+       GitHub's own widget links out). The count is fetched + cached by popup.js. */
+    .gh-star {
       flex-shrink: 0;
-      width: 32px;
-      height: 32px;
-      border-radius: 10px;
+      display: inline-flex;
+      align-items: stretch;
+      height: 26px;
+      padding: 0;
       border: 1px solid rgba(208, 215, 222, 0.95);
-      background: linear-gradient(180deg, #ffffff, #f1f4f7);
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      border-radius: 7px;
+      overflow: hidden;
+      background: none;
       cursor: pointer;
+      font-size: 11.5px;
+      font-weight: 700;
       box-shadow: 0 1px 2px rgba(27, 31, 36, 0.06);
-      transition: background 0.15s, border-color 0.15s, transform 0.15s;
+      transition: border-color 0.15s, transform 0.15s;
     }
 
-    .github-star-btn:hover {
-      background: linear-gradient(180deg, #ffffff, #e8edf1);
-      border-color: rgba(247, 181, 0, 0.7);
+    .gh-star:hover {
+      border-color: rgba(247, 181, 0, 0.8);
       transform: translateY(-1px);
     }
 
-    .github-star-mark {
-      width: 17px;
-      height: 17px;
+    .gh-star-left {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 0 9px;
+      color: #24292f;
+      background: linear-gradient(180deg, #ffffff, #eef1f4);
+    }
+
+    .gh-star:hover .gh-star-left {
+      background: linear-gradient(180deg, #ffffff, #e6ebef);
+    }
+
+    .gh-star-mark {
+      width: 14px;
+      height: 14px;
       color: #24292f;
     }
 
-    .github-star-badge {
-      position: absolute;
-      top: -5px;
-      right: -5px;
-      font-size: 11px;
-      line-height: 1;
-      color: #f7b500;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+    .gh-star-count {
+      display: inline-flex;
+      align-items: center;
+      padding: 0 9px;
+      color: #24292f;
+      background: #ffffff;
+      border-left: 1px solid rgba(208, 215, 222, 0.95);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .gh-star-count[hidden] {
+      display: none;
     }
 
     .status-badge {
@@ -4282,9 +4301,12 @@
       </div>
       <div class="hero-sub">
         <p class="hero-copy">首页先放一边，这里是你最近更可能点开的。</p>
-        <button id="starButton" class="github-star-btn" type="button" title="在 GitHub 给 OpenBiliClaw 点个 Star" aria-label="在 GitHub 给项目点 Star">
-          <svg class="github-star-mark" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.02-1.49-2.22.48-2.69-1.07-2.69-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.89.88 2.35.67.07-.52.28-.88.51-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
-          <span class="github-star-badge" aria-hidden="true">★</span>
+        <button id="starButton" class="gh-star" type="button" title="在 GitHub 给 OpenBiliClaw 点个 Star" aria-label="在 GitHub 给项目点 Star">
+          <span class="gh-star-left">
+            <svg class="gh-star-mark" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.02-1.49-2.22.48-2.69-1.07-2.69-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.89.88 2.35.67.07-.52.28-.88.51-1.08-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+            <span>Star</span>
+          </span>
+          <span id="starCount" class="gh-star-count" hidden></span>
         </button>
       </div>
     </header>
