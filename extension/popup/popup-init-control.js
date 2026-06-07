@@ -79,6 +79,38 @@ export function getEnabledPlatforms(status) {
   return Array.isArray(prereq.enabled_platforms) ? prereq.enabled_platforms.slice() : [];
 }
 
+// Platform sources the user can include in a guided-init run. Bilibili is the
+// always-on base (the whole pipeline starts from B站 history + cookie), so it's
+// required — rendered checked + disabled; the rest are opt-in per run.
+export const INIT_SOURCE_OPTIONS = [
+  { key: "bilibili", label: "B 站", required: true },
+  { key: "xiaohongshu", label: "小红书", required: false },
+  { key: "douyin", label: "抖音", required: false },
+  { key: "youtube", label: "YouTube", required: false },
+];
+
+// Reminder under the source checkboxes: each selected platform is pulled THROUGH
+// this browser, so the user must be logged into it here (and have enabled it).
+export const INIT_SOURCE_LOGIN_HINT =
+  "勾选要纳入初始化的平台。使用某个平台前，请先在当前浏览器登录该平台账号——否则这个来源拿不到你的数据。未在设置里开启的平台，需先到设置开启。";
+
+// Human labels for a list of platform keys (unknown keys pass through).
+export function initSourceLabels(keys) {
+  const byKey = new Map(INIT_SOURCE_OPTIONS.map((o) => [o.key, o.label]));
+  return (Array.isArray(keys) ? keys : []).map((k) => byKey.get(k) || k);
+}
+
+// Optional sources the user checked that aren't enabled in backend config, so
+// the UI can tell them to enable those in settings instead of silently skipping
+// (the backend would intersect them away). ``selected`` is the checked keys.
+export function initSelectedSourcesNeedingEnable(selected, status) {
+  const checked = new Set(Array.isArray(selected) ? selected : []);
+  const enabled = new Set(getEnabledPlatforms(status));
+  return INIT_SOURCE_OPTIONS.filter(
+    (opt) => !opt.required && checked.has(opt.key) && !enabled.has(opt.key),
+  ).map((opt) => opt.key);
+}
+
 // True only when every HARD prerequisite is satisfied.
 export function hardPrereqsSatisfied(status) {
   return buildInitChecklist(status)

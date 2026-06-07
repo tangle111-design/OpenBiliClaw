@@ -44,7 +44,7 @@
 | 端点 | 方法 | 访问 | 说明 |
 |---|---|---|---|
 | `/api/init-status` | GET | 远程可读 / 降级可读 | 权威进度 + 前置清单 + `can_start`（trusted-local && 硬前置 && 非 running && supported）/ `can_manage`（trusted-local）。远程不 403、`can_manage=false`。 |
-| `/api/init` | POST | 仅本机 | 占坑前廉价拒绝（403 local_only / 409 unsupported_runtime / 409 already_initialized）→ `try_start`（409 already_running）→ 临界区复验前置（缺则复位 idle + 409，不留 stuck `starting` 行）→ 后台跑 wrapper → 202 + 初始 status。 |
+| `/api/init` | POST | 仅本机 | 占坑前廉价拒绝（403 local_only / 409 unsupported_runtime / 409 already_initialized）→ `try_start`（409 already_running）→ 临界区复验前置（缺则复位 idle + 409，不留 stuck `starting` 行）→ 后台跑 wrapper → 202 + 初始 status。可选 body `sources`（平台来源数组）：经 `_select_init_platforms` 收窄为 `选择 ∩ 配置已开启`（无法初始化未配置来源），B 站恒为基座；不传则用全部已开启平台（CLI / 旧客户端行为）。 |
 | `/api/init/cancel` | POST | 仅本机 | 协作取消在跑的 run；无运行中 → 409 not_running。 |
 
 `_init_wrapper`（`api/app.py`）是某次 API run 的**唯一**状态 / 事件写者：`mark_running` → `run_guided_init(coordinator=...)` → `complete(partial_success=...)`；`CancelledError` → shield `cancel`，`GuidedInitError` → `fail(reason)`，其它异常 → `fail("internal_error")`。三个 path 都在 `auth.py` 公共集 + 降级白名单。
@@ -64,7 +64,7 @@
 
 ## 插件 UI（extension）
 
-推荐 tab 未初始化空状态给「开始初始化」按钮（点击驱动校验：点击时拉 `/api/init-status`，前置未通过则展示前置清单 + 原因、不启动初始化；全通过才启动）+ 启动后进度条，详见 [extension 模块文档](extension.md)。DOM 无关逻辑在 `extension/popup/popup-init-control.js`，单测在 `extension/tests/init-control.test.ts`。
+推荐 tab 未初始化空状态给「开始初始化」面板：数据来源勾选（B 站必选基座 + 小红书 / 抖音 / YouTube 可选，配「需在本浏览器登录目标平台」文案）+ 按钮（点击驱动校验：点击时拉 `/api/init-status`，勾了未开启的平台 → 提示去设置，前置未通过 → 展示前置清单 + 原因、不启动；全通过才带所选 `sources` 启动）+ 启动后进度条，详见 [extension 模块文档](extension.md)。DOM 无关逻辑在 `extension/popup/popup-init-control.js`，单测在 `extension/tests/init-control.test.ts`。
 
 ## 测试
 

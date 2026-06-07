@@ -36,6 +36,10 @@ import {
   describeInitReason,
   describeInitStartError,
   initProgressView,
+  INIT_SOURCE_OPTIONS,
+  INIT_SOURCE_LOGIN_HINT,
+  initSourceLabels,
+  initSelectedSourcesNeedingEnable,
 } from "./popup-init-control.js";
 import {
   getBackendBaseUrl,
@@ -165,6 +169,7 @@ const elements = {
   emptyTitle: document.getElementById("emptyTitle"),
   emptyText: document.getElementById("emptyText"),
   initPanel: document.getElementById("initPanel"),
+  initSources: document.getElementById("initSources"),
   initChecklist: document.getElementById("initChecklist"),
   initProgress: document.getElementById("initProgress"),
   initProgressBar: document.getElementById("initProgressBar"),
@@ -781,14 +786,65 @@ function _renderInitChecklist(status) {
   }
 }
 
-// Idle entry: just the actionable button + a one-line note. Conditions are
-// checked ON CLICK (no slow upfront probe / blank panel); failures are surfaced
-// only after a click that doesn't pass.
+// Render the platform-source checkboxes (gui-init: per-run source selection).
+// Bilibili is the required base (checked + disabled); the rest are opt-in. The
+// list is static so the idle panel paints instantly — eligibility (config
+// enabled + logged in) is validated on click, not via a slow upfront probe.
+function _renderInitSources() {
+  if (!(elements.initSources instanceof HTMLElement)) {
+    return;
+  }
+  elements.initSources.replaceChildren();
+  const title = document.createElement("p");
+  title.className = "init-sources-title";
+  title.textContent = "选择初始化数据来源";
+  elements.initSources.append(title);
+  for (const opt of INIT_SOURCE_OPTIONS) {
+    const row = document.createElement("label");
+    row.className = `init-source-row${opt.required ? " init-source-required" : ""}`;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = opt.key;
+    box.dataset.initSource = opt.key;
+    box.checked = Boolean(opt.required);
+    box.disabled = Boolean(opt.required);
+    const span = document.createElement("span");
+    span.textContent = opt.required ? `${opt.label}（必选）` : opt.label;
+    row.append(box, span);
+    elements.initSources.append(row);
+  }
+  const hint = document.createElement("p");
+  hint.className = "init-sources-hint";
+  hint.textContent = INIT_SOURCE_LOGIN_HINT;
+  elements.initSources.append(hint);
+  elements.initSources.hidden = false;
+}
+
+// Read the currently-checked source keys (bilibili always included as the base).
+function _readSelectedInitSources() {
+  const selected = [];
+  if (elements.initSources instanceof HTMLElement) {
+    for (const box of elements.initSources.querySelectorAll("input[data-init-source]")) {
+      if (box.checked) {
+        selected.push(box.value);
+      }
+    }
+  }
+  if (!selected.includes("bilibili")) {
+    selected.push("bilibili");
+  }
+  return selected;
+}
+
+// Idle entry: source checkboxes + the actionable button + a one-line note.
+// Conditions are checked ON CLICK (no slow upfront probe / blank panel);
+// failures are surfaced only after a click that doesn't pass.
 function renderInitPanelIdle() {
   if (!(elements.initPanel instanceof HTMLElement)) {
     return;
   }
   elements.initPanel.hidden = false;
+  _renderInitSources();
   if (elements.initChecklist instanceof HTMLElement) {
     elements.initChecklist.replaceChildren();
     const li = document.createElement("li");
@@ -808,6 +864,10 @@ function renderInitProgress(status) {
     return;
   }
   elements.initPanel.hidden = false;
+  // Source selection is an idle-only affordance; hide it once a run is shown.
+  if (elements.initSources instanceof HTMLElement) {
+    elements.initSources.hidden = true;
+  }
   if (elements.initChecklist instanceof HTMLElement) {
     elements.initChecklist.replaceChildren();
   }
@@ -878,6 +938,8 @@ function _startInitProgressPoll() {
 // surface the checklist + reason and do NOT initialize; only start init when
 // every condition passes (gui-init: user-requested click-driven gating).
 async function handleStartInitClick() {
+  // Snapshot the source selection BEFORE we replace the panel contents.
+  const selectedSources = _readSelectedInitSources();
   _setInitStartButton("检查中…", false);
   _setInitReason("");
   if (elements.initChecklist instanceof HTMLElement) {
@@ -904,6 +966,18 @@ async function handleStartInitClick() {
     return;
   }
 
+  // The user checked a platform that isn't enabled in settings — the backend
+  // would silently drop it, so guide them to enable it (or uncheck) instead.
+  const needEnable = initSelectedSourcesNeedingEnable(selectedSources, status);
+  if (needEnable.length > 0) {
+    _renderInitChecklist(status);
+    _setInitStartButton("开始初始化", true);
+    _setInitReason(
+      `你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；到设置开启对应平台，或取消勾选后再点一次。`,
+    );
+    return;
+  }
+
   // Conditions not met → show exactly what failed; do NOT initialize.
   if (!status.can_start) {
     _renderInitChecklist(status);
@@ -914,10 +988,11 @@ async function handleStartInitClick() {
     return;
   }
 
-  // All conditions pass → start. The backend re-validates in its critical
-  // section, so a race can still 409 — surface that and let the user retry.
+  // All conditions pass → start with the chosen sources. The backend
+  // re-validates in its critical section, so a race can still 409 — surface
+  // that and let the user retry.
   try {
-    await startInit({ force: false });
+    await startInit({ force: false, sources: selectedSources });
   } catch (error) {
     _renderInitChecklist(status);
     _setInitStartButton("开始初始化", true);

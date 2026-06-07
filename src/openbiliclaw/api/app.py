@@ -341,6 +341,21 @@ def _count_events_by_source_platform(database: Any) -> dict[str, int]:
     return {source: counter.get(source, 0) for source in _SOURCE_SHARE_ORDER}
 
 
+def _select_init_platforms(enabled: set[str], selected: set[str] | None) -> set[str]:
+    """Effective optional platform sources for a guided-init run.
+
+    ``enabled`` is the config-enabled set; ``selected`` is the extension's
+    per-run checkbox choice (``None`` when no selection was sent — CLI / legacy
+    clients — meaning "use everything enabled"). A selection can only NARROW the
+    set: you can't init a source that isn't configured, so the result is the
+    intersection. Bilibili is the always-on base (pulled via the client, not an
+    ``include_*`` flag), so it doesn't need to appear here.
+    """
+    if selected is None:
+        return set(enabled)
+    return set(enabled) & selected
+
+
 def _normalize_source_platform(source: object) -> str:
     source_key = str(source or "").strip().lower()
     if source_key in {"xhs", "rednote"}:
@@ -1393,12 +1408,18 @@ def create_app(
                 pass
         return True, ""
 
-    async def _run_guided_init_wrapper(run_id: str) -> None:
+    async def _run_guided_init_wrapper(
+        run_id: str, selected_sources: set[str] | None = None
+    ) -> None:
         """Sole status/event writer for an API-launched guided init (gui-init
         §5f). Drives the shared ``run_guided_init`` through the coordinator and
         persists the terminal state here — completed / failed / cancelled —
         never via a side path. Imported lazily to avoid an import cycle with
         the CLI module that owns the shared pipeline.
+
+        ``selected_sources`` is the extension's per-run platform choice; it can
+        only narrow the config-enabled set (see :func:`_select_init_platforms`).
+        ``None`` keeps the legacy behaviour of using everything enabled.
         """
         from openbiliclaw.cli import (
             _INIT_BILIBILI_FAVORITE_LIMIT,
@@ -1424,15 +1445,16 @@ def create_app(
         try:
             await coord.mark_running(run_id)
             enabled = set(ctx.init_prereqs.enabled_platforms())
+            effective = _select_init_platforms(enabled, selected_sources)
             result = await run_guided_init(
                 client=ctx.bilibili_client,
                 memory=ctx.memory_manager,
                 soul_engine=ctx.soul_engine,
                 favorite_limit=_INIT_BILIBILI_FAVORITE_LIMIT,
                 follow_limit=_INIT_BILIBILI_FOLLOW_LIMIT,
-                include_xhs="xiaohongshu" in enabled,
-                include_dy="douyin" in enabled,
-                include_yt="youtube" in enabled,
+                include_xhs="xiaohongshu" in effective,
+                include_dy="douyin" in effective,
+                include_yt="youtube" in effective,
                 target_pool_count=_INIT_POOL_TARGET_COUNT,
                 discover_backfill=_api_discover_backfill,
                 coordinator=coord,
@@ -1469,6 +1491,11 @@ def create_app(
         except Exception:
             body = {}
         force = bool(body.get("force", False)) if isinstance(body, dict) else False
+        # Optional per-run platform selection from the extension checkboxes. A
+        # list (even empty) is an explicit choice; absent → None = use all
+        # enabled (CLI / legacy clients). Narrowed against config-enabled later.
+        raw_sources = body.get("sources") if isinstance(body, dict) else None
+        selected_sources = {str(s) for s in raw_sources} if isinstance(raw_sources, list) else None
 
         coord = ctx.init_coordinator
 
@@ -1499,9 +1526,9 @@ def create_app(
 
         registry = getattr(ctx, "task_registry", None)
         if registry is not None:
-            task = registry.track("guided_init", _run_guided_init_wrapper(run_id))
+            task = registry.track("guided_init", _run_guided_init_wrapper(run_id, selected_sources))
         else:
-            task = asyncio.create_task(_run_guided_init_wrapper(run_id))
+            task = asyncio.create_task(_run_guided_init_wrapper(run_id, selected_sources))
         coord.attach_task(run_id, task)
         return JSONResponse({"run_id": run_id, **coord.get_status()}, status_code=202)
 

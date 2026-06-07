@@ -8,6 +8,10 @@ import {
   getEnabledPlatforms,
   hardPrereqsSatisfied,
   initProgressView,
+  initSelectedSourcesNeedingEnable,
+  initSourceLabels,
+  INIT_SOURCE_LOGIN_HINT,
+  INIT_SOURCE_OPTIONS,
   initStartButtonState,
   isInitTerminal,
 } from "../popup/popup-init-control.js";
@@ -163,4 +167,51 @@ test("reason + start-error text mapping", () => {
     details: { error: "already_running" },
   });
   assert.ok(describeInitStartError(err).includes("进行中"));
+});
+
+// ── Per-run platform source selection ──────────────────────────────────────
+
+test("init source options: bilibili is the required base, others opt-in", () => {
+  const bili = INIT_SOURCE_OPTIONS.find((o) => o.key === "bilibili");
+  assert.ok(bili && bili.required === true);
+  const optional = INIT_SOURCE_OPTIONS.filter((o) => !o.required).map((o) => o.key);
+  assert.deepEqual(optional, ["xiaohongshu", "douyin", "youtube"]);
+  // The login reminder copy mentions logging in on this browser.
+  assert.ok(INIT_SOURCE_LOGIN_HINT.includes("登录"));
+});
+
+test("initSourceLabels maps known keys and passes unknowns through", () => {
+  assert.deepEqual(initSourceLabels(["bilibili", "xiaohongshu", "weibo"]), [
+    "B 站",
+    "小红书",
+    "weibo",
+  ]);
+  assert.deepEqual(initSourceLabels(undefined as unknown as string[]), []);
+});
+
+test("needs-enable: flags checked optional sources missing from config", () => {
+  const status = statusWith({
+    prerequisites: {
+      bilibili_logged_in: true,
+      bilibili_check: "ok",
+      llm_ready: true,
+      embedding_ready: true,
+      enabled_platforms: ["bilibili", "xiaohongshu"],
+    },
+  });
+  // User checked xhs (enabled) + douyin (NOT enabled) → only douyin flagged.
+  assert.deepEqual(
+    initSelectedSourcesNeedingEnable(["bilibili", "xiaohongshu", "douyin"], status),
+    ["douyin"],
+  );
+  // Everything checked is enabled → nothing to flag.
+  assert.deepEqual(
+    initSelectedSourcesNeedingEnable(["bilibili", "xiaohongshu"], status),
+    [],
+  );
+  // Bilibili is never flagged even if absent from enabled_platforms (it's base).
+  const biliOnly = statusWith({
+    prerequisites: { enabled_platforms: [] },
+  });
+  assert.deepEqual(initSelectedSourcesNeedingEnable(["bilibili"], biliOnly), []);
 });

@@ -6691,6 +6691,41 @@ class _FakeInitPrereqs:
         return list(self._platforms)
 
 
+def test_select_init_platforms_none_selection_uses_all_enabled() -> None:
+    from openbiliclaw.api.app import _select_init_platforms
+
+    enabled = {"bilibili", "xiaohongshu", "douyin"}
+    # None = no selection sent (CLI / legacy) → use everything enabled.
+    assert _select_init_platforms(enabled, None) == enabled
+
+
+def test_select_init_platforms_narrows_to_intersection() -> None:
+    from openbiliclaw.api.app import _select_init_platforms
+
+    enabled = {"bilibili", "xiaohongshu", "douyin", "youtube"}
+    assert _select_init_platforms(enabled, {"bilibili", "xiaohongshu"}) == {
+        "bilibili",
+        "xiaohongshu",
+    }
+
+
+def test_select_init_platforms_drops_unconfigured_selection() -> None:
+    from openbiliclaw.api.app import _select_init_platforms
+
+    # A selected source that isn't enabled in config can't be init'd → dropped.
+    assert _select_init_platforms({"bilibili", "xiaohongshu"}, {"bilibili", "douyin"}) == {
+        "bilibili"
+    }
+
+
+def test_select_init_platforms_empty_selection_yields_empty() -> None:
+    from openbiliclaw.api.app import _select_init_platforms
+
+    # Explicit empty selection narrows to nothing optional (bilibili is the base,
+    # pulled separately, so an empty effective set is fine).
+    assert _select_init_platforms({"bilibili", "xiaohongshu"}, set()) == set()
+
+
 class TestGuidedInitEndpoints:
     """E2: POST /api/init + POST /api/init/cancel (local-only, gui-init §2/§5b)."""
 
@@ -6780,6 +6815,89 @@ class TestGuidedInitEndpoints:
         assert resp.json()["error"] == "llm_not_ready"
         assert db.get_latest_init_run()["status"] == "idle"
         assert app.state.runtime_context.init_coordinator.init_active() is False
+
+    def _capture_run_guided_init(self, monkeypatch):
+        """Replace the shared pipeline with an async capture of its kwargs.
+
+        The wrapper imports ``run_guided_init`` lazily from ``openbiliclaw.cli``,
+        so patching it there intercepts the API path without running real work.
+        """
+        captured: dict[str, object] = {}
+
+        async def _fake(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(discovery_error=False)
+
+        monkeypatch.setattr("openbiliclaw.cli.run_guided_init", _fake)
+        return captured
+
+    def _drive_until(self, client, captured, key="include_xhs"):
+        # Pump the portal loop so the background wrapper task reaches the
+        # (mocked) run_guided_init call, then return its captured kwargs.
+        import time
+
+        for _ in range(100):
+            if key in captured:
+                break
+            client.get("/api/init-status")
+            time.sleep(0.02)
+        return captured
+
+    def test_init_honors_source_selection(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        captured = self._capture_run_guided_init(monkeypatch)
+        prereqs = _FakeInitPrereqs(
+            bili="ok", chat=True, platforms=["bilibili", "xiaohongshu", "douyin", "youtube"]
+        )
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            resp = client.post("/api/init", json={"sources": ["bilibili", "xiaohongshu"]})
+            assert resp.status_code == 202
+            self._drive_until(client, captured)
+        # Only the selected optional source is included, even though all 4 are
+        # enabled in config.
+        assert captured["include_xhs"] is True
+        assert captured["include_dy"] is False
+        assert captured["include_yt"] is False
+
+    def test_init_without_sources_uses_all_enabled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        captured = self._capture_run_guided_init(monkeypatch)
+        prereqs = _FakeInitPrereqs(
+            bili="ok", chat=True, platforms=["bilibili", "xiaohongshu", "douyin"]
+        )
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            # No "sources" key → legacy behaviour: everything enabled.
+            resp = client.post("/api/init", json={})
+            assert resp.status_code == 202
+            self._drive_until(client, captured)
+        assert captured["include_xhs"] is True
+        assert captured["include_dy"] is True
+        assert captured["include_yt"] is False  # youtube not enabled in config
+
+    def test_init_drops_selected_source_not_enabled_in_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        captured = self._capture_run_guided_init(monkeypatch)
+        # douyin is selected but NOT enabled in config → backend intersects it
+        # away (the extension separately warns the user; the API stays robust).
+        prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["bilibili", "xiaohongshu"])
+        app, _ = self._make_app(tmp_path, prereqs=prereqs)
+        with TestClient(app) as client:
+            resp = client.post("/api/init", json={"sources": ["bilibili", "douyin"]})
+            assert resp.status_code == 202
+            self._drive_until(client, captured)
+        assert captured["include_dy"] is False
+        assert captured["include_xhs"] is False
 
     def test_cancel_without_active_run_returns_409(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient

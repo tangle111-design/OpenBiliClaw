@@ -2822,6 +2822,50 @@
       text-align: center;
     }
 
+    .init-sources {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      margin-bottom: 12px;
+    }
+
+    .init-sources .init-sources-title {
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--text-primary);
+      margin: 0;
+    }
+
+    .init-sources .init-source-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+      cursor: pointer;
+    }
+
+    .init-sources .init-source-row input {
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+      accent-color: #fb7299;
+    }
+
+    .init-sources .init-source-row.init-source-required {
+      color: var(--text-secondary);
+      cursor: default;
+    }
+
+    .init-sources .init-sources-hint {
+      margin: 2px 0 0;
+      font-size: 11px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
     .init-progress {
       margin-bottom: 12px;
     }
@@ -4225,6 +4269,7 @@
           <h3 id="emptyTitle">还没刷出新东西</h3>
           <p id="emptyText">稍等一下，新的推荐马上来。</p>
           <div id="initPanel" class="init-panel" hidden>
+            <div id="initSources" class="init-sources" hidden></div>
             <ul id="initChecklist" class="init-checklist"></ul>
             <div id="initProgress" class="init-progress" hidden>
               <div class="init-progress-track">
