@@ -37,6 +37,7 @@ OUTPUT_GIF_ZH = IMAGE_DIR / "hero-demo-zh.gif"
 OUTPUT_GIF_EN = IMAGE_DIR / "hero-demo-en.gif"
 
 CANVAS = (1280, 720)
+FRAME_DURATION_MS = 2500
 PANEL_W = 286
 PANEL_H = 452
 PANEL_TOP = 198
@@ -449,7 +450,7 @@ def save_gif(frames: list[Image.Image], output: Path) -> None:
         output,
         save_all=True,
         append_images=quantized[1:],
-        duration=1200,
+        duration=FRAME_DURATION_MS,
         loop=0,
         optimize=True,
     )
