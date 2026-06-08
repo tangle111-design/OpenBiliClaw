@@ -80,6 +80,7 @@ import {
   fetchRecommendations,
   fetchRuntimeStatus,
   fetchSourceShareSuggestion,
+  fetchXSourceStatus,
   markDelightSent,
   startInit,
   readCachedConfigSnapshot,
@@ -5850,6 +5851,37 @@ function bindSettings() {
     return el ? el.checked : fallback;
   };
 
+  // Human label for an X (twitter) source-health state from
+  // GET /api/sources/x/status (mirrors how other sources surface login/status).
+  const X_SOURCE_STATE_TEXT = {
+    ok: "X 来源正常,cookie 有效。",
+    missing_cookie: "X 未检测到登录 —— 在浏览器登录 x.com,扩展会自动同步 cookie。",
+    expired_cookie: "X cookie 已过期 —— 请重新登录 x.com。",
+    rate_limited: "X 被限流,正在退避冷却中,稍后会自动重试。",
+    blocked: "X 请求被拒绝 (403) —— 账号可能受限或需要重新验证。",
+  };
+
+  function describeXSourceState(state) {
+    return X_SOURCE_STATE_TEXT[state] || `X 来源状态:${state || "未知"}。`;
+  }
+
+  // Fetch + render the X source health onto the X settings card. Best-effort:
+  // when the backend is unreachable, leave a neutral hint instead of throwing.
+  async function renderTwitterSourceStatus() {
+    const el = document.getElementById("cfgTwitterStatus");
+    if (!el) return;
+    try {
+      const status = await fetchXSourceStatus();
+      let text = describeXSourceState(status?.state);
+      if (status?.feed_paused) {
+        text += " For-You 因连续失败已自动暂停。";
+      }
+      el.textContent = text;
+    } catch {
+      el.textContent = "X 来源状态暂不可用(后端未连接)。";
+    }
+  }
+
   function populateForm(cfg) {
     applyRuntimeConfig(cfg);
     // LLM
@@ -5937,6 +5969,15 @@ function bindSettings() {
     setVal("cfgYoutubeDailyChannelBudget", cfg.sources?.youtube?.daily_channel_budget);
     setVal("cfgYoutubeRequestInterval", cfg.sources?.youtube?.request_interval_seconds);
     setVal("cfgYoutubeMinInterval", cfg.sources?.youtube?.min_interval_minutes);
+    const twitterEnabled = document.getElementById("cfgTwitterEnabled");
+    if (twitterEnabled) twitterEnabled.checked = cfg.sources?.twitter?.enabled === true;
+    setVal("cfgTwitterCookieEnv", cfg.sources?.twitter?.cookie_env);
+    setVal("cfgTwitterDailySearchBudget", cfg.sources?.twitter?.daily_search_budget);
+    setVal("cfgTwitterDailyFeedBudget", cfg.sources?.twitter?.daily_feed_budget);
+    setVal("cfgTwitterDailyCreatorBudget", cfg.sources?.twitter?.daily_creator_budget);
+    setVal("cfgTwitterRequestInterval", cfg.sources?.twitter?.request_interval_seconds);
+    setVal("cfgTwitterMinInterval", cfg.sources?.twitter?.min_interval_minutes);
+    void renderTwitterSourceStatus();
 
     // General
     const lang = document.getElementById("cfgLanguage");
@@ -5969,6 +6010,7 @@ function bindSettings() {
     setVal("cfgPoolShareXhs", cfg.scheduler?.pool_source_shares?.xiaohongshu);
     setVal("cfgPoolShareDouyin", cfg.scheduler?.pool_source_shares?.douyin);
     setVal("cfgPoolShareYoutube", cfg.scheduler?.pool_source_shares?.youtube);
+    setVal("cfgPoolShareTwitter", cfg.scheduler?.pool_source_shares?.twitter);
     setVal("cfgSpeculationInterval", cfg.scheduler?.speculation_interval_minutes);
     setVal("cfgSpeculationTtl", cfg.scheduler?.speculation_ttl_days);
     setVal("cfgSpeculationCooldown", cfg.scheduler?.speculation_cooldown_days);
@@ -6105,6 +6147,16 @@ function bindSettings() {
           request_interval_seconds: getInt("cfgYoutubeRequestInterval", 2),
           min_interval_minutes: getInt("cfgYoutubeMinInterval", 60),
         },
+        twitter: {
+          enabled: checked("cfgTwitterEnabled"),
+          mode: "cookie",
+          cookie_env: getVal("cfgTwitterCookieEnv"),
+          daily_search_budget: getInt("cfgTwitterDailySearchBudget", 0),
+          daily_feed_budget: getInt("cfgTwitterDailyFeedBudget", 0),
+          daily_creator_budget: getInt("cfgTwitterDailyCreatorBudget", 0),
+          request_interval_seconds: getInt("cfgTwitterRequestInterval", 3),
+          min_interval_minutes: getInt("cfgTwitterMinInterval", 60),
+        },
       },
       scheduler: {
         enabled: !checked("cfgSchedulerEnabled"),
@@ -6125,6 +6177,7 @@ function bindSettings() {
           xiaohongshu: getInt("cfgPoolShareXhs", 1),
           douyin: getInt("cfgPoolShareDouyin", 1),
           youtube: getInt("cfgPoolShareYoutube", 1),
+          twitter: getInt("cfgPoolShareTwitter", 1),
         },
         speculation_interval_minutes: getInt("cfgSpeculationInterval", 10),
         speculation_ttl_days: getInt("cfgSpeculationTtl", 3),
@@ -6240,12 +6293,14 @@ function bindSettings() {
             xiaohongshu: checked("cfgXhsEnabled"),
             douyin: checked("cfgDouyinEnabled"),
             youtube: checked("cfgYoutubeEnabled"),
+            twitter: checked("cfgTwitterEnabled"),
           },
           configured_shares: {
             bilibili: getInt("cfgPoolShareBilibili", 8),
             xiaohongshu: getInt("cfgPoolShareXhs", 1),
             douyin: getInt("cfgPoolShareDouyin", 1),
             youtube: getInt("cfgPoolShareYoutube", 1),
+            twitter: getInt("cfgPoolShareTwitter", 1),
           },
         });
         const shares = suggestion?.suggested_shares || {};
@@ -6253,6 +6308,7 @@ function bindSettings() {
         if (shares.xiaohongshu !== undefined) setVal("cfgPoolShareXhs", shares.xiaohongshu);
         if (shares.douyin !== undefined) setVal("cfgPoolShareDouyin", shares.douyin);
         if (shares.youtube !== undefined) setVal("cfgPoolShareYoutube", shares.youtube);
+        if (shares.twitter !== undefined) setVal("cfgPoolShareTwitter", shares.twitter);
         showToast("已按已有信号填入建议比例，保存后生效。", "success");
       } catch (err) {
         showToast(`生成建议失败: ${err.message}`, "error");

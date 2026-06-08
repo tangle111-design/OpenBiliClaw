@@ -3860,6 +3860,53 @@ def _ask_yt_inclusion() -> bool:
     return True
 
 
+def _ask_x_inclusion() -> bool:
+    """Decide whether to enable the X (Twitter) discovery source on this init.
+
+    Unlike xhs/douyin/youtube, X has no extension bootstrap task — discovery is
+    server-side cookie replay. So this only flips ``[sources.twitter].enabled``;
+    the actual fetch runs later via the backend producer once x.com cookies are
+    synced. Resolution order (first match wins):
+      1. ``OPENBILICLAW_NO_X=1`` env var → False, silent.
+      2. Non-interactive terminal (CI / piped stdin) → **False**, silent.
+      3. Interactive terminal → ask the user with default N (opt-in).
+    """
+    if os.environ.get("OPENBILICLAW_NO_X", "").strip() == "1":
+        console.print("[dim]  跳过 X 数据接入(OPENBILICLAW_NO_X=1)。[/dim]")
+        return False
+    if not _is_interactive_terminal():
+        return False
+
+    console.print()
+    console.print("[bold]𝕏 X (Twitter) 数据接入(可选)[/bold]")
+    console.print(
+        "把 X 内容混进发现池,系统会按你的画像在 X 上"
+        "[bold cyan]搜索 / 拉 For-You / 追订阅作者[/bold cyan],"
+        "推荐里会多出 X 的文字卡片。"
+    )
+    console.print()
+    console.print("启用需要:")
+    console.print("  1. 装好 OpenBiliClaw 浏览器扩展")
+    console.print(
+        "     [link=https://github.com/whiteguo233/OpenBiliClaw/releases]"
+        "https://github.com/whiteguo233/OpenBiliClaw/releases[/link]"
+    )
+    console.print(
+        "  2. 浏览器登录 [link=https://x.com]https://x.com[/link](扩展会自动把 cookie 同步给后端)"
+    )
+    console.print()
+    console.print(
+        "[dim]说 N 也没关系,init 会用 B 站(+其他已启用平台)数据建画像;"
+        "以后想加随时再跑一次 init,或在设置页开启 X 来源,或设 OPENBILICLAW_NO_X=1 永久跳过。[/dim]"
+    )
+    console.print()
+
+    if not typer.confirm("加入 X 数据?", default=False):
+        console.print("[dim]  已选择跳过,本次 init 不会启用 X 来源。[/dim]")
+        return False
+    return True
+
+
 def _ask_network_binding() -> bool:
     """Ask whether the backend should listen on all interfaces (0.0.0.0).
 
@@ -3943,6 +3990,7 @@ def _persist_init_source_enabled_flags(
     include_xhs: bool,
     include_dy: bool,
     include_yt: bool,
+    include_x: bool = False,
 ) -> None:
     """Persist init source choices so background discovery obeys them."""
 
@@ -3959,6 +4007,10 @@ def _persist_init_source_enabled_flags(
             changed = True
         if bool(getattr(cfg.sources.youtube, "enabled", False)) != include_yt:
             cfg.sources.youtube.enabled = include_yt
+            changed = True
+        twitter_cfg = getattr(cfg.sources, "twitter", None)
+        if twitter_cfg is not None and bool(getattr(twitter_cfg, "enabled", False)) != include_x:
+            twitter_cfg.enabled = include_x
             changed = True
         if changed:
             save_config(cfg)
@@ -4672,6 +4724,16 @@ def init(
         "--yes-youtube",
         help="跳过 YouTube 的 y/n 提问,直接启用(适合脚本化场景)。",
     ),
+    no_x: bool = typer.Option(
+        False,
+        "--no-x",
+        help="跳过 X (Twitter) 数据接入(默认非交互模式下就是跳过)。",
+    ),
+    skip_x_prompt: bool = typer.Option(
+        False,
+        "--yes-x",
+        help="跳过 X 的 y/n 提问,直接启用 X 来源(适合脚本化场景)。",
+    ),
     bilibili_favorite_limit: int | None = typer.Option(
         None,
         "--bilibili-favorite-limit",
@@ -4761,10 +4823,25 @@ def init(
     else:
         include_yt = _ask_yt_inclusion()
 
+    # X (Twitter) is server-side cookie replay — no init bootstrap task, so this
+    # only flips [sources.twitter].enabled; the producer fetches later once the
+    # x.com cookie is synced. Same resolution order as the other opt-ins.
+    if no_x:
+        include_x = False
+        console.print("[dim]  跳过 X 数据接入(命令行 --no-x)。[/dim]")
+    elif os.environ.get("OPENBILICLAW_NO_X", "").strip() == "1":
+        include_x = False
+        console.print("[dim]  跳过 X 数据接入(OPENBILICLAW_NO_X=1)。[/dim]")
+    elif skip_x_prompt:
+        include_x = True
+    else:
+        include_x = _ask_x_inclusion()
+
     _persist_init_source_enabled_flags(
         include_xhs=include_xhs,
         include_dy=include_dy,
         include_yt=include_yt,
+        include_x=include_x,
     )
 
     # gui-init (B2): the four init stages now run inside the shared async

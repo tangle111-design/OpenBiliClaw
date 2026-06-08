@@ -5027,6 +5027,40 @@
         <p class="settings-hint">YouTube 通过后端 producer 独立调度；预算按天限制 yt_search / yt_trending / yt_channel 的执行规模。</p>
       </div>
 
+      <div class="settings-section settings-source-card" data-source-card="twitter">
+        <h3><span class="section-icon">&#x1D54F;</span> X (Twitter)</h3>
+        <div class="settings-field-row">
+          <input id="cfgTwitterEnabled" type="checkbox">
+          <label for="cfgTwitterEnabled">启用 X discovery</label>
+        </div>
+        <p class="settings-hint" id="cfgTwitterStatus" data-source-status="twitter">X 来源状态加载中…</p>
+        <div class="settings-field">
+          <label for="cfgTwitterCookieEnv">X Cookie 环境变量</label>
+          <input id="cfgTwitterCookieEnv" type="text" placeholder="OPENBILICLAW_X_COOKIE">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTwitterDailySearchBudget">X 每日搜索任务</label>
+          <input id="cfgTwitterDailySearchBudget" type="number" min="0" step="1" placeholder="0">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTwitterDailyFeedBudget">X 每日 For-You 任务</label>
+          <input id="cfgTwitterDailyFeedBudget" type="number" min="0" step="1" placeholder="0">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTwitterDailyCreatorBudget">X 每日订阅作者任务</label>
+          <input id="cfgTwitterDailyCreatorBudget" type="number" min="0" step="1" placeholder="0">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTwitterRequestInterval">X 请求间隔秒数</label>
+          <input id="cfgTwitterRequestInterval" type="number" min="0" step="1" placeholder="3">
+        </div>
+        <div class="settings-field">
+          <label for="cfgTwitterMinInterval">X 最小调度间隔分钟数</label>
+          <input id="cfgTwitterMinInterval" type="number" min="0" step="1" placeholder="60">
+        </div>
+        <p class="settings-hint">X 通过后端 cookie 回放独立调度；登录 x.com 后扩展会自动同步 auth_token / ct0。</p>
+      </div>
+
       <div class="settings-section settings-source-card" data-source-card="browser">
         <h3><span class="section-icon">&#x1F310;</span> 通用网页源</h3>
         <div class="settings-field">
@@ -5056,6 +5090,10 @@
         <div class="settings-field">
           <label for="cfgPoolShareYoutube">候选池 YouTube 占比</label>
           <input id="cfgPoolShareYoutube" type="number" min="1" step="1" placeholder="1">
+        </div>
+        <div class="settings-field">
+          <label for="cfgPoolShareTwitter">候选池 X 占比</label>
+          <input id="cfgPoolShareTwitter" type="number" min="1" step="1" placeholder="1">
         </div>
         <div class="settings-actions">
           <button id="cfgSuggestPoolShares" class="settings-save" type="button">按已有信号建议比例</button>

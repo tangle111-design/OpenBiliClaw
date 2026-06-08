@@ -2481,7 +2481,7 @@ def test_init_guides_missing_runtime_config_interactively(
     #   5. "n" — skip module overrides
     #   6. "y" — allow LAN access
     #   7-8. "" — accept Bili favorite/follow init limits
-    #   9+. "n" — skip optional source prompts
+    #   9+. "n" — skip optional source prompts (xhs / douyin / youtube / X)
     wizard_input = (
         "\n".join(
             [
@@ -2493,6 +2493,7 @@ def test_init_guides_missing_runtime_config_interactively(
                 "y",
                 "",
                 "",
+                "n",
                 "n",
                 "n",
                 "n",
@@ -2567,9 +2568,9 @@ def test_init_guides_missing_auth_interactively(
     # test exercising the manual-paste path, send "2" first.
     # v0.3.89+: init asks whether to allow LAN access before the source
     # prompts. Answer yes, accept Bili signal-limit defaults, then send "n"
-    # to XHS / Douyin / YouTube so this test stays focused on the
+    # to XHS / Douyin / YouTube / X so this test stays focused on the
     # cookie-prompt path.
-    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\ny\n\n\nn\nn\nn\n")
+    result = runner.invoke(app, ["init"], input="2\nSESSDATA=valid\ny\n\n\nn\nn\nn\nn\n")
 
     assert result.exit_code == 1
     assert fake_auth.saved_cookie == "SESSDATA=valid"
@@ -5348,3 +5349,56 @@ def test_set_password_rotate_secret_rebases_fingerprint(
     )
     assert db2.reconcile_password_fingerprint(expected_fp) is False  # no redundant bump
     db2.close()
+
+
+# ── X (twitter) source enable toggle in init (Task 12) ──────────────────────
+
+
+def test_persist_init_source_enabled_flags_toggles_twitter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--yes-x`` flows into _persist_init_source_enabled_flags(include_x=True)
+    and must flip ``[sources.twitter].enabled`` on (mirror xhs/douyin/youtube)."""
+    from openbiliclaw.config import Config
+
+    cfg = Config()
+    cfg.sources.twitter.enabled = False
+
+    saved: list[Config] = []
+    monkeypatch.setattr(config_module, "load_config", lambda: cfg)
+    monkeypatch.setattr(config_module, "save_config", lambda c: saved.append(c))
+
+    cli_module._persist_init_source_enabled_flags(
+        include_xhs=False,
+        include_dy=False,
+        include_yt=False,
+        include_x=True,
+    )
+
+    assert cfg.sources.twitter.enabled is True
+    assert saved and saved[-1] is cfg
+
+    # And the inverse: include_x=False turns it back off.
+    cfg.sources.twitter.enabled = True
+    saved.clear()
+    cli_module._persist_init_source_enabled_flags(
+        include_xhs=False,
+        include_dy=False,
+        include_yt=False,
+        include_x=False,
+    )
+    assert cfg.sources.twitter.enabled is False
+    assert saved and saved[-1] is cfg
+
+
+def test_init_yes_x_flag_is_registered() -> None:
+    """The ``init`` command must expose ``--yes-x`` (scripted opt-in),
+    mirroring ``--yes-xhs`` / ``--yes-douyin`` / ``--yes-youtube``."""
+    import inspect
+
+    sig = inspect.signature(cli_module.init)
+    assert "skip_x_prompt" in sig.parameters
+    default = sig.parameters["skip_x_prompt"].default
+    # typer.Option(...) carries the flag declarations in param_decls.
+    decls = getattr(default, "param_decls", ())
+    assert "--yes-x" in decls

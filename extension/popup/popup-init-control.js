@@ -87,6 +87,7 @@ export const INIT_SOURCE_OPTIONS = [
   { key: "xiaohongshu", label: "小红书", required: false },
   { key: "douyin", label: "抖音", required: false },
   { key: "youtube", label: "YouTube", required: false },
+  { key: "twitter", label: "X", required: false },
 ];
 
 // Reminder under the source checkboxes: each selected platform is pulled THROUGH

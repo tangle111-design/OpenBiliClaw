@@ -175,9 +175,16 @@ test("init source options: bilibili is the required base, others opt-in", () => 
   const bili = INIT_SOURCE_OPTIONS.find((o) => o.key === "bilibili");
   assert.ok(bili && bili.required === true);
   const optional = INIT_SOURCE_OPTIONS.filter((o) => !o.required).map((o) => o.key);
-  assert.deepEqual(optional, ["xiaohongshu", "douyin", "youtube"]);
+  assert.deepEqual(optional, ["xiaohongshu", "douyin", "youtube", "twitter"]);
   // The login reminder copy mentions logging in on this browser.
   assert.ok(INIT_SOURCE_LOGIN_HINT.includes("登录"));
+});
+
+test("init source options: X (twitter) is present, opt-in, labelled X", () => {
+  const x = INIT_SOURCE_OPTIONS.find((o) => o.key === "twitter");
+  assert.ok(x, "twitter option must exist");
+  assert.equal(x?.required, false);
+  assert.equal(x?.label, "X");
 });
 
 test("initSourceLabels maps known keys and passes unknowns through", () => {
