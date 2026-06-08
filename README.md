@@ -42,7 +42,7 @@
 
 普通用户先走这四步；Firefox、Docker 和手动部署等备用路径保留在后面的 [安装与部署详情](#安装与部署详情)。
 
-1. **安装浏览器插件**：从 [Chrome 应用商店安装 OpenBiliClaw](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)。
+1. **安装浏览器插件**：推荐从 [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) 下载最新 `extension-v*` 的 zip 手动安装（版本最新）；也可从 [Chrome 应用商店](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)一键安装（自动更新，但受审核排期影响，版本可能滞后于 Releases）。
 2. **部署后端（两种方式，按需选一，都推荐）**：
    - 🖥️ **下载桌面安装包（最省事）**：到 [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) 下载 macOS `.dmg` / Windows `.exe`，装好双击即用 —— 自带本地 embedding、常驻菜单栏/托盘。当前为**未签名的实验性预发布**，首次打开需绕过系统拦截，详见 [安装与部署详情](#安装与部署详情)。
    - 🤖 **让 AI 助手部署（想改源码 / 深度定制选它）**：把下面整句粘给 Claude Code、Codex CLI、Cursor、Windsurf 或其他 AI 编程助手。
@@ -214,16 +214,16 @@
 
 插件基于 Manifest V3，支持所有兼容 Chrome 插件的浏览器，包括 **Chrome、Edge、Brave、Arc、Vivaldi、Opera** 等。
 
-**推荐方式 · 从 Chrome 应用商店一键安装**（Chrome / Edge / Brave / Arc 等 Chromium 浏览器，安装后由浏览器自动更新）：
-
-> 👉 **[在 Chrome 应用商店安装 OpenBiliClaw](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)** —— 打开后点「添加至 Chrome」即可。
-
-**手动安装**（Firefox、离线环境，或想固定使用某个 GitHub Release 版本时）：
+**推荐方式 · 从 Releases 下载最新版手动安装**（拿到最新功能与修复 —— Chrome 应用商店受审核排期影响，版本通常会滞后几天到一两周）：
 
 1. 打开 [OpenBiliClaw Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，找到最新的 `extension-v*`
 2. Chrome / Edge / Brave 下载 `openbiliclaw-extension-v*.zip`；Firefox 下载 `openbiliclaw-extension-v*-firefox.zip`
 3. 打开扩展管理页面（Chrome：`chrome://extensions/` · Edge：`edge://extensions/` · Brave：`brave://extensions/`），开启右上角「开发者模式」
 4. 将下载的 `.zip` 文件拖入页面安装
+
+**省事方式 · Chrome 应用商店一键安装**（安装后由浏览器自动更新，适合不想手动升级的人；缺点是版本可能滞后于 Releases）：
+
+> 👉 **[在 Chrome 应用商店安装 OpenBiliClaw](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)** —— 打开后点「添加至 Chrome」即可。
 
 插件更新取决于安装渠道：Chrome Web Store / Edge Add-ons / AMO 安装的版本由浏览器自动更新；从 GitHub Release 下载 zip、开发者模式加载或 Firefox 临时加载的用户，需要下载新版 zip 并按同样方式重新加载。后端设置里的“自动更新”开关只更新本地后端源码，不会更新浏览器插件。
 

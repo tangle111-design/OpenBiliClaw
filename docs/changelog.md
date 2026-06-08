@@ -6,6 +6,7 @@
 
 ## v0.3.102 / extension v0.3.69: 图形化引导初始化（GUI guided init）（2026-06-07）
 
+- 新增 Chrome Web Store 商店页文案源 `docs/chrome-webstore-listing.md`：补齐项目主页、GitHub 项目页、Releases / AI 部署说明、插件安装使用步骤、后端依赖、本地优先隐私说明和提交前检查清单；`docs/index.md` 与插件模块文档同步挂入口，避免商店公开页只剩短概述、缺少安装和使用引导。
 - 抽出共享异步初始化流水线 `cli.run_guided_init`：`openbiliclaw init` 的四阶段（拉取 + 入库 / 分析偏好 / 生成画像 ‖ 发现补池）原先内联在 CLI 命令里、被四处独立 `asyncio.run` 包着，无法被后端复用。现在合并为一个协程，CLI 用单次 `asyncio.run(run_guided_init(...))` 驱动、后端在服务事件循环里直接 `await`，互不嵌套 loop。bootstrap 采集器仍是同步实现但改走 `asyncio.to_thread`，不冻结 API loop；唯一与路径相关的发现补池步骤以 `discover_backfill` 注入（CLI 传一次性引擎、后端传持锁的 `controller.run_init_backfill`）。CLI 行为 / 输出 / 退出码零回归。
 - 新增 `InitCoordinator`（`runtime/init_coordinator.py`）+ `init_runs` 持久化状态机（`storage/database.py`）：单飞启动用 `BEGIN IMMEDIATE` CAS 预定（TOCTOU 收口在 DB），单写者串行化状态写入 + 进度事件（`_write_lock` 保证并行 stage 3/4 的 `sequence` 不丢更新），协作式取消，启动 reconcile 把崩溃残留的 `starting/running` 行判失败，避免 `/api/init-status` 永远报 running。
 - 新增 `GET /api/init-status`：权威进度 + 前置清单（B站登录 / LLM / embedding / 已启用平台 + `is_profile_ready`），远程可读、降级可读、远程 `can_manage=false`；前置探测 `InitPrereqs`（`runtime/init_prereqs.py`）TTL 缓存 + 单飞，避免轮询打爆 chat provider / `validate_cookie`。LLM / embedding 改为严格真实探测：各发一次最小真实请求，超时 / 失败一律判未就绪（不再乐观放行 —— 让“状态检查通过”真正代表服务可用），成功 / 失败分别用长 / 短 TTL 缓存（修好后能快速复检），probe 全程经 `asyncio.gather` 并发以压低首检延迟。
@@ -34,6 +35,7 @@
 - README 把**桌面安装包**提升为与「AI 一句话部署」并列的安装方式:中英文 README 快速开始 + 安装与部署详情各新增「下载桌面安装包」一路(macOS `.dmg` / Windows `.exe`,自带本地 embedding、常驻菜单栏/托盘),并写清未签名应用首次打开的 Gatekeeper / SmartScreen 绕过步骤。配套**部分翻转后端 source-only 策略**:后端源码仍 source-only(`backend-v*` 只是 git tag),但桌面安装包二进制改为发布到 **Releases 的实验性预发布**(`build-installers.yml` 的 Actions 产物 ~90 天过期且需登录,无法做文档长期链接;Releases 才耐久免登录),`build-installers.yml` 头注释同步更新说明现状。
 - 新增桌面安装包**自动发布工作流** `release-desktop.yml`:推 `desktop-v*` tag(如 `desktop-v0.3.102`)即自动构建 macOS arm64 `.dmg` + Windows `.exe` 并发布为 GitHub **实验性预发布**(`permissions: contents: write` + `softprops/action-gh-release`,内置未签名应用绕过说明),不必再手动 `gh release create`。对标插件的 `release-extension.yml`。Intel x64 `.dmg` 不进自动发布(macos-13 runner 排队过久,会拖垮整次 publish 的门控),仍由手动 `build-installers.yml` 按需产出后补挂;`publish` 用 `if: always()` 保证单条构建腿失败也能把另一条发出去。
 - GitHub Pages 项目首页(`docs/index.html`)与 README 对齐:`#install` 区把**桌面安装包**提升为与「AI 一句话部署」并列的安装方式 —— 标题/引导文案改为「下载安装包或交给 AI 部署」二选一,操作区新增「下载桌面安装包」按钮(→ Releases),并加一张「桌面安装包(最省事)」说明卡(自带本地 embedding、托盘常驻、未签名首启绕过)。中英 i18n 同步(`installTitle`/`installLead`/新增 `installDesktop`/`desktopNoteTitle`/`desktopNoteText`),用真实 Chrome 在中英双语下渲染核验按钮与说明卡均正确出现;`docs/index.md` 首页描述同步。
+- README 插件安装改为**优先推荐从 Releases 装**:Chrome 应用商店受审核排期影响,版本通常滞后 Releases 几天到一两周,故中英文 README 的「快速开始」与「安装详情」都把「从 Releases 下载最新 `extension-v*` zip 手动安装」列为推荐(最新),Chrome 应用商店降为「省事/自动更新但可能滞后」的备选。
 
 ## v0.3.101 / extension v0.3.67: 开机自启动与本机 Ollama 预检（2026-06-05）
 
