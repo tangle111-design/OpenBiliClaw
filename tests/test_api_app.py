@@ -45,6 +45,19 @@ def _isolate_runtime_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 class TestBackendAPI:
     """Route-level tests for the plugin backend API."""
 
+    def test_desktop_web_index_cache_busts_static_assets(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.get("/web")
+
+        assert response.status_code == 200
+        assert response.headers.get("cache-control") == "no-store"
+        assert 'href="/web/assets/css/app.css?v=' in response.text
+        assert 'src="/web/assets/js/app.js?v=' in response.text
+
     @pytest.mark.asyncio
     async def test_runtime_context_presence_survives_rebuild(
         self,
@@ -2059,6 +2072,59 @@ class TestBackendAPI:
             ]
         }
 
+    def test_reshuffle_recommendations_short_circuits_when_pool_has_no_available_items(
+        self,
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def count_pool_candidates(self) -> int:
+                return 0
+
+        class FakeSoulEngine:
+            async def get_profile(self) -> dict[str, object]:
+                return {"profile": "ok"}
+
+        class FakeCurator:
+            def needs_replenishment(self) -> bool:
+                return True
+
+        class FakeRecommendationEngine:
+            def __init__(self) -> None:
+                self._curator = FakeCurator()
+
+            async def reshuffle_recommendations(
+                self,
+                *,
+                profile: object,
+                limit: int = 10,
+            ) -> list[object]:
+                raise AssertionError("empty pool should not call recommendation engine")
+
+        class FakeRuntimeController:
+            def __init__(self) -> None:
+                self.trigger_calls = 0
+
+            async def trigger_manual_refresh(self) -> dict[str, object]:
+                self.trigger_calls += 1
+                return {"accepted": True, "state": "running", "reason": "started"}
+
+        runtime = FakeRuntimeController()
+        app = create_app(
+            memory_manager=object(),
+            database=FakeDatabase(),
+            soul_engine=FakeSoulEngine(),
+            recommendation_engine=FakeRecommendationEngine(),
+            runtime_controller=runtime,
+        )
+        client = TestClient(app)
+
+        response = client.post("/api/recommendations/reshuffle")
+
+        assert response.status_code == 200
+        assert response.json() == {"items": []}
+        assert runtime.trigger_calls == 1
+
     def test_append_recommendations_endpoint_excludes_existing_bvids(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -2131,6 +2197,111 @@ class TestBackendAPI:
                 }
             ]
         }
+
+    def test_append_recommendations_debounces_empty_pool_replenishment(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeSoulEngine:
+            async def get_profile(self) -> dict[str, object]:
+                return {"profile": "ok"}
+
+        class FakeCurator:
+            def needs_replenishment(self) -> bool:
+                return True
+
+        class FakeRecommendationEngine:
+            def __init__(self) -> None:
+                self._curator = FakeCurator()
+
+            async def append_recommendations(
+                self,
+                *,
+                profile: object,
+                excluded_bvids: list[str],
+                limit: int = 10,
+            ) -> list[object]:
+                return []
+
+        class FakeRuntimeController:
+            def __init__(self) -> None:
+                self.trigger_calls = 0
+
+            async def trigger_manual_refresh(self) -> dict[str, object]:
+                self.trigger_calls += 1
+                return {"accepted": True, "state": "running", "reason": "started"}
+
+        runtime = FakeRuntimeController()
+        app = create_app(
+            memory_manager=object(),
+            database=object(),
+            soul_engine=FakeSoulEngine(),
+            recommendation_engine=FakeRecommendationEngine(),
+            runtime_controller=runtime,
+        )
+        client = TestClient(app)
+
+        first = client.post("/api/recommendations/append", json={"excluded_bvids": []})
+        second = client.post("/api/recommendations/append", json={"excluded_bvids": []})
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json() == {"items": []}
+        assert second.json() == {"items": []}
+        assert runtime.trigger_calls == 1
+
+    def test_append_recommendations_short_circuits_when_pool_has_no_available_items(
+        self,
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def count_pool_candidates(self) -> int:
+                return 0
+
+        class FakeSoulEngine:
+            async def get_profile(self) -> dict[str, object]:
+                return {"profile": "ok"}
+
+        class FakeCurator:
+            def needs_replenishment(self) -> bool:
+                return True
+
+        class FakeRecommendationEngine:
+            def __init__(self) -> None:
+                self._curator = FakeCurator()
+
+            async def append_recommendations(
+                self,
+                *,
+                profile: object,
+                excluded_bvids: list[str],
+                limit: int = 10,
+            ) -> list[object]:
+                raise AssertionError("empty pool should not call recommendation engine")
+
+        class FakeRuntimeController:
+            def __init__(self) -> None:
+                self.trigger_calls = 0
+
+            async def trigger_manual_refresh(self) -> dict[str, object]:
+                self.trigger_calls += 1
+                return {"accepted": True, "state": "running", "reason": "started"}
+
+        runtime = FakeRuntimeController()
+        app = create_app(
+            memory_manager=object(),
+            database=FakeDatabase(),
+            soul_engine=FakeSoulEngine(),
+            recommendation_engine=FakeRecommendationEngine(),
+            runtime_controller=runtime,
+        )
+        client = TestClient(app)
+
+        response = client.post("/api/recommendations/append", json={"excluded_bvids": []})
+
+        assert response.status_code == 200
+        assert response.json() == {"items": []}
+        assert runtime.trigger_calls == 1
 
     def test_pending_notification_endpoint_returns_single_candidate(self) -> None:
         from fastapi.testclient import TestClient

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from openbiliclaw.config import Config
 
 _DEFAULT_OLLAMA_ENDPOINT = "http://localhost:11434"
+_DEFAULT_MANAGED_OLLAMA_KEEP_ALIVE = "24h"
 
 console = Console()
 
@@ -98,6 +99,12 @@ def _ollama_is_running(host: str = _DEFAULT_OLLAMA_ENDPOINT) -> bool:
         return False
 
 
+def _managed_ollama_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("OLLAMA_KEEP_ALIVE", _DEFAULT_MANAGED_OLLAMA_KEEP_ALIVE)
+    return env
+
+
 def _ollama_start_serve_background() -> bool:
     """Start ``ollama serve`` detached, waiting up to 15s for health."""
     import shutil
@@ -112,6 +119,7 @@ def _ollama_start_serve_background() -> bool:
         return False
 
     try:
+        env = _managed_ollama_env()
         if os.name == "nt":
             # CREATE_NO_WINDOW (not DETACHED_PROCESS): give `ollama serve` a
             # hidden console that its child `ollama runner` inherits, so neither
@@ -127,6 +135,7 @@ def _ollama_start_serve_background() -> bool:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
+                env=env,
             )
         else:
             proc = subprocess.Popen(
@@ -135,6 +144,7 @@ def _ollama_start_serve_background() -> bool:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
+                env=env,
             )
     except Exception as exc:
         console.print(f"[red]启动 ollama serve 失败: {exc}[/red]")

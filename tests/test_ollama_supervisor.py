@@ -190,6 +190,37 @@ def test_start_serve_records_managed_handle(monkeypatch: pytest.MonkeyPatch) -> 
     assert sup._managed_proc.pid == 999
 
 
+def test_start_serve_sets_default_keep_alive_for_managed_ollama(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bundled Ollama should keep bge-m3 warm instead of unloading between UI polls."""
+    from openbiliclaw.runtime import ollama_supervisor as sup
+
+    monkeypatch.delenv("OLLAMA_KEEP_ALIVE", raising=False)
+    monkeypatch.setattr(sup, "_managed_proc", None)
+    monkeypatch.setattr(sup.os, "name", "nt")
+    health = iter([False, True])
+    popen_kwargs: dict[str, object] = {}
+
+    class _FakePopen:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.pid = 1001
+            popen_kwargs.update(kwargs)
+
+        def poll(self) -> None:
+            return None
+
+    monkeypatch.setattr(sup, "_ollama_is_running", lambda *a, **k: next(health))
+    monkeypatch.setattr("shutil.which", lambda name: "C:\\App\\ollama.exe")
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+
+    assert sup._ollama_start_serve_background() is True
+
+    env = popen_kwargs["env"]
+    assert isinstance(env, dict)
+    assert env["OLLAMA_KEEP_ALIVE"] == "24h"
+
+
 def test_start_serve_does_not_record_when_already_running(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

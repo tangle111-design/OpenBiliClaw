@@ -141,6 +141,7 @@ _EMBEDDING_READY_TTL_SECONDS = 30.0
 # pass) if the embedding service never answers.
 _EMBEDDING_FAIL_TTL_SECONDS = 8.0
 _EMBEDDING_PROBE_TIMEOUT_SECONDS = 15.0
+_AUTO_REPLENISHMENT_COOLDOWN_SECONDS = 30.0
 
 SOURCE_LABELS = {
     "feedback": "推荐反馈",
@@ -669,6 +670,8 @@ def create_app(
                 "; ".join(str(getattr(issue, "message", issue)) for issue in ctx.degraded_issues),
             )
     app.state.runtime_context = ctx
+    auto_replenishment_task: asyncio.Task[None] | None = None
+    auto_replenishment_started_at = 0.0
     app.state.degraded = bool(getattr(ctx, "degraded", False))
     app.state.degraded_reason = str(getattr(ctx, "degraded_reason", ""))
     app.state.degraded_issues = list(getattr(ctx, "degraded_issues", []))
@@ -2716,8 +2719,16 @@ def create_app(
         except Exception:
             logger.exception("Background discovery candidate drain failed")
 
+    async def _run_auto_replenishment(trigger: Callable[[], Any]) -> None:
+        try:
+            await trigger()
+        except Exception:
+            logger.exception("Automatic pool replenishment failed")
+
     async def _trigger_replenishment_if_needed() -> None:
         """Fire a background Discovery refresh when the pool runs low."""
+        nonlocal auto_replenishment_started_at, auto_replenishment_task
+
         curator = getattr(ctx.recommendation_engine, "_curator", None)
         if curator is None or not hasattr(curator, "needs_replenishment"):
             return
@@ -2725,12 +2736,36 @@ def create_app(
             return
         trigger = getattr(ctx.runtime_controller, "trigger_manual_refresh", None)
         if callable(trigger):
+            now = time.monotonic()
+            if auto_replenishment_task is not None and not auto_replenishment_task.done():
+                logger.debug("Pool low — automatic replenishment already running; skipping")
+                return
+            if now - auto_replenishment_started_at < _AUTO_REPLENISHMENT_COOLDOWN_SECONDS:
+                logger.debug("Pool low — automatic replenishment recently requested; skipping")
+                return
             logger.info("Pool low — triggering automatic replenishment")
-            asyncio.create_task(trigger())
+            auto_replenishment_started_at = now
+            task = asyncio.create_task(_run_auto_replenishment(trigger))
+            auto_replenishment_task = task
+            _fire_and_forget_tasks.add(task)
+            task.add_done_callback(_fire_and_forget_tasks.discard)
+
+    def _pool_available_count_or_none() -> int | None:
+        count_pool = getattr(ctx.database, "count_pool_candidates", None)
+        if not callable(count_pool):
+            return None
+        try:
+            return max(0, int(count_pool()))
+        except Exception:
+            logger.debug("Pool availability count failed", exc_info=True)
+            return None
 
     @app.post("/api/recommendations/reshuffle", response_model=RecommendationReshuffleResponse)
     async def reshuffle_recommendations() -> RecommendationReshuffleResponse:
         if ctx.recommendation_engine is None or ctx.soul_engine is None:
+            return RecommendationReshuffleResponse(items=[])
+        if _pool_available_count_or_none() == 0:
+            await _trigger_replenishment_if_needed()
             return RecommendationReshuffleResponse(items=[])
         try:
             profile = await ctx.soul_engine.get_profile()
@@ -2745,6 +2780,9 @@ def create_app(
         payload: RecommendationAppendIn,
     ) -> RecommendationReshuffleResponse:
         if ctx.recommendation_engine is None or ctx.soul_engine is None:
+            return RecommendationReshuffleResponse(items=[])
+        if _pool_available_count_or_none() == 0:
+            await _trigger_replenishment_if_needed()
             return RecommendationReshuffleResponse(items=[])
         try:
             profile = await ctx.soul_engine.get_profile()
@@ -6574,6 +6612,49 @@ def create_app(
     # ── Desktop Web UI ───────────────────────────────────────────
     _desktop_dir = _Path(__file__).resolve().parent.parent / "web" / "desktop"
     if _desktop_dir.is_dir():
+        _desktop_index_path = _desktop_dir / "index.html"
+
+        def _desktop_asset_version() -> str:
+            import hashlib
+
+            digest = hashlib.sha256()
+            for relative in ("assets/css/app.css", "assets/js/app.js"):
+                path = _desktop_dir / relative
+                if not path.is_file():
+                    continue
+                stat = path.stat()
+                digest.update(relative.encode("utf-8"))
+                digest.update(str(stat.st_mtime_ns).encode("ascii"))
+                digest.update(str(stat.st_size).encode("ascii"))
+            return digest.hexdigest()[:12]
+
+        def _desktop_index_response() -> Response:
+            if not _desktop_index_path.is_file():
+                raise HTTPException(status_code=404, detail="desktop web index not found")
+            version = _desktop_asset_version()
+            html = _desktop_index_path.read_text(encoding="utf-8")
+            html = html.replace(
+                'href="/web/assets/css/app.css"',
+                f'href="/web/assets/css/app.css?v={version}"',
+            )
+            html = html.replace(
+                'src="/web/assets/js/app.js"',
+                f'src="/web/assets/js/app.js?v={version}"',
+            )
+            return Response(
+                html,
+                media_type="text/html; charset=utf-8",
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @app.get("/web", include_in_schema=False)
+        def _desktop_index_no_slash() -> Response:
+            return _desktop_index_response()
+
+        @app.get("/web/", include_in_schema=False)
+        def _desktop_index_slash() -> Response:
+            return _desktop_index_response()
+
         app.mount("/web", _StaticFiles(directory=_desktop_dir, html=True), name="desktop-web")
 
         @app.get("/", include_in_schema=False)

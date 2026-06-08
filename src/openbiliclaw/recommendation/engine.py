@@ -314,6 +314,36 @@ class RecommendationEngine:
         after_exclude_count = len(candidates)
         candidates = self._exclude_recently_viewed(candidates)
         after_viewed_count = len(candidates)
+        label = "realtime" if expression_mode == "realtime" else "pool"
+        if after_viewed_count == 0:
+            if servable_pool_count > 0:
+                logger.warning(
+                    "serve(/%s) loaded 0 candidates from servable=%d "
+                    "(raw=%d pending=%d) - likely cause: filtered by "
+                    "excluded_bvids (%d -> %d), already viewed (%d -> 0), "
+                    "or rows missing required pool fields.",
+                    label,
+                    servable_pool_count,
+                    raw_pool_count,
+                    pending_pool_count,
+                    loaded_count,
+                    after_exclude_count,
+                    after_viewed_count,
+                )
+            elif servable_pool_count != loaded_count:
+                logger.info(
+                    "serve(/%s) pool/load mismatch: count=%d -> loaded=%d "
+                    "-> after_exclude=%d -> after_viewed=%d "
+                    "(raw=%d pending=%d)",
+                    label,
+                    servable_pool_count,
+                    loaded_count,
+                    after_exclude_count,
+                    after_viewed_count,
+                    raw_pool_count,
+                    pending_pool_count,
+                )
+            return []
 
         # Online supergroup merging — collapses semantically-equivalent
         # topic_groups within this batch (e.g. 动漫/动漫产业/动漫文化) so
@@ -322,7 +352,6 @@ class RecommendationEngine:
         # that no offline precompute can guarantee at serve time.
         await self._merge_topic_supergroups(candidates)
 
-        label = "realtime" if expression_mode == "realtime" else "pool"
         prev_bvids = self._last_served_bvids
 
         # Surface "pool says N but serve loads 0" mismatches with enough
