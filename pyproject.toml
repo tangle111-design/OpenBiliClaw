@@ -51,6 +51,12 @@ dev = [
 local-llm = [
     "ollama>=0.4",
 ]
+x = [
+    # X (Twitter) discovery via server-side cookie replay. Lazily imported on the
+    # [sources.twitter].enabled path only (openbiliclaw.sources.x_client); plain
+    # `pip install openbiliclaw` stays X-free. Apache-2.0, ships its own curl_cffi.
+    "twitter-cli>=0.8.5",
+]
 eval = [
     "claude-agent-sdk>=0.1",
 ]
@@ -116,6 +122,8 @@ module = [
     "claude_agent_sdk",
     "claude_agent_sdk.*",
     "playwright.*",
+    "twitter_cli",
+    "twitter_cli.*",
 ]
 ignore_missing_imports = true
 
