@@ -59,7 +59,11 @@ def test_guided_init_web_docs_belong_to_v03110_release_block() -> None:
     changelog = Path("docs/changelog.md").read_text(encoding="utf-8")
     gui_spec = Path("docs/specs/gui-init.md").read_text(encoding="utf-8")
 
-    assert '__version__ = "0.3.111"' in version_py
+    # Web Phase 2 shipped in v0.3.111 — the project version must never sit
+    # below that (an exact pin here would break on every release bump).
+    match = re.search(r'__version__ = "(\d+)\.(\d+)\.(\d+)"', version_py)
+    assert match is not None
+    assert tuple(int(part) for part in match.groups()) >= (0, 3, 111)
     top_block = changelog.split("## v0.3.109", 1)[0]
     assert "/setup/" in top_block
     assert "/web" in top_block
