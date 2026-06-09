@@ -4,6 +4,13 @@
 
 ---
 
+## v0.3.111 / extension v0.3.73: 图形化初始化入口对齐（2026-06-09）
+
+桌面 Web、安装包首启向导和浏览器插件的首次初始化入口统一到同一套 guided-init 判断与进度流，避免 fresh install 用户被带回命令行。
+
+- 补齐桌面 Web / 安装包首启的图形化初始化入口：`/setup/` 从三步配置向导扩展为「连接 AI → 连接 B站 → 初始化 → 完成」，第 3 步复用 `/api/init-status` / `POST /api/init` / `runtime-stream` 展示来源勾选、前置清单和四阶段进度，不再调用只广播事件的 `/api/init-completed`；`/web` 在 `runtime-status.initialized=false` 且没有推荐数、候选池可用数、待整理数、最近发现 / 补货数等插件同款“初始化后信号”时渲染同款「开始初始化」面板，隐藏示例推荐卡和加载更多按钮，避免后端标记短暂滞后时误回初始化页。补充 Playwright 浏览器流验收（成功进度、前置失败、启动冲突、终态重试、stream 静默 watchdog、PC Web 与插件入口条件对齐）和真实 `/api/init` → `InitCoordinator` → `/api/runtime-stream` 后端契约测试；CI 新增 `web-guided-init-e2e` job（依赖基础 test、缓存 Chromium）后运行。
+- 浏览器插件版本推进到 `extension-v0.3.73`，`manifest.json` / `package.json` / `package-lock.json` 版本重新对齐；插件全量测试补齐桌面 Web init 终态刷新断言，确认 `init_completed` 走权威 init status 刷新而不是重复 broad hydration。
+
 ## v0.3.110 / extension v0.3.72: macOS 安装包签名封印修复（2026-06-09）
 
 macOS 桌面安装包在无 Apple Developer 账号下改为后处理完成后 ad-hoc 重签，避免 Gatekeeper 把封印失效误报为“已损坏”。

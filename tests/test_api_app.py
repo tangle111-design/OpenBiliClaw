@@ -7139,6 +7139,84 @@ class TestGuidedInitEndpoints:
         assert resp.status_code == 403
         assert resp.json()["error"] == "local_only"
 
+    def test_legacy_init_completed_does_not_mark_guided_init_done(
+        self, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        app, _ = self._make_app(tmp_path)
+        with TestClient(app) as client:
+            before = client.get("/api/init-status").json()
+            resp = client.post("/api/init-completed", json={})
+            after = client.get("/api/init-status").json()
+        assert resp.status_code == 200
+        assert before["initialized"] is False
+        assert after["initialized"] is False
+
+    def test_runtime_stream_emits_real_init_coordinator_events(
+        self, tmp_path: Path
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        app, _ = self._make_app(tmp_path)
+        coord = app.state.runtime_context.init_coordinator
+        assert coord.try_start("ws-run")
+
+        with (
+            TestClient(app) as client,
+            client.websocket_connect("/api/runtime-stream") as websocket,
+        ):
+            asyncio.run(coord.stage_started("ws-run", 1))
+            progress = websocket.receive_json()
+            asyncio.run(coord.complete("ws-run"))
+            completed = websocket.receive_json()
+
+        assert progress["type"] == "init_progress"
+        assert progress["run_id"] == "ws-run"
+        assert progress["stage"] == 1
+        assert completed["type"] == "init_completed"
+        assert completed["run_id"] == "ws-run"
+
+    def test_api_init_endpoint_emits_runtime_stream_events(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        class ReadyPrereqs:
+            async def bilibili_check(self) -> str:
+                return "ok"
+
+            async def chat_ready(self) -> bool:
+                return True
+
+            def enabled_platforms(self) -> list[str]:
+                return ["bilibili"]
+
+        async def fake_run_guided_init(**kwargs: object) -> object:
+            coord = kwargs["coordinator"]
+            run_id = str(kwargs["run_id"])
+            await coord.stage_started(run_id, 1)
+            await coord.stage_done(run_id, 1)
+            return SimpleNamespace(discovery_error=False)
+
+        monkeypatch.setattr("openbiliclaw.cli.run_guided_init", fake_run_guided_init)
+        app, _ = self._make_app(tmp_path, prereqs=ReadyPrereqs())
+
+        with (
+            TestClient(app) as client,
+            client.websocket_connect("/api/runtime-stream") as websocket,
+        ):
+            response = client.post("/api/init", json={"sources": ["bilibili"]})
+            progress = websocket.receive_json()
+            stage_done = websocket.receive_json()
+            completed = websocket.receive_json()
+
+        assert response.status_code == 202
+        assert progress["type"] == "init_progress"
+        assert progress["stage"] == 1
+        assert stage_done["type"] == "init_progress"
+        assert completed["type"] == "init_completed"
+
     def test_write_endpoint_gated_during_init(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
 

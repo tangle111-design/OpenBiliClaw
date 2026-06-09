@@ -120,7 +120,7 @@ async def run_guided_init(
   - 按钮调 `GET /api/init-status` 渲染、`POST /api/init` 触发、订阅既有 `/api/runtime-stream` 显示阶段进度;完成后空状态消失、自动加载推荐。
   - 「画像」「编辑」空状态(`popup.js` ~2812/3229):文案由「先跑 openbiliclaw init」改为「还没初始化,去『推荐』页开始」,**不放按钮**。
   - 设置页新增「重新初始化 / 重建画像」入口(带二次确认,调 `POST /api/init {force:true}`)。
-- **Phase 2 — 网页(later)**:`/setup` 向导加第 ④ 步「初始化」(前置清单 + 按钮 + 进度 → 跳 `/web`);`/web` 推荐区未初始化空状态同插件做法。纯网页用户(没装插件)若要连 B站,再考虑网页内扫码(QR API,本期不做)。
+- **Phase 2 — 网页(已落地 v0.3.111)**:`/setup` 向导加第 ④ 步「初始化」(前置清单 + 按钮 + 进度 → 跳 `/web`);`/web` 推荐区未初始化空状态同插件做法:仅在 `initialized=false` 且没有推荐数 / 候选池可用数 / 待整理数 / 最近发现或补货数这些初始化后信号时展示 CTA,避免状态标记短暂滞后时误回初始化页。纯网页用户(没装插件)若要连 B站,再考虑网页内扫码(QR API,本期不做)。
 
 ### 5. 并发与活后端安全 / InitCoordinator（Codex R1+R2 补强 — 核心)
 
@@ -207,7 +207,7 @@ CLI init 独占进程;API init 跑在**活后端**里,后台有连续 refresh、
 
 **In scope** — 分两期(见 §4):
 - **Phase 1(本期)**:共享 init 流水线抽取 + 进度回调;后端 InitCoordinator + `GET /api/init-status` + `POST /api/init` + `POST /api/init/cancel`(本机后台任务 + 进度事件 + 前置校验 + 并发协调);**插件**「推荐」tab CTA + 前置清单 + 进度、画像/编辑被动提示、设置页重建入口;文档/测试同步。
-- **Phase 2(后续)**:网页 `/setup` 第④步 + `/web` 空状态(复用同一组后端端点)。
+- **Phase 2(已落地 v0.3.111)**:网页 `/setup` 第④步 + `/web` 空状态(复用同一组后端端点)。
 
 **Out of scope:**
 - CLI 一句话安装向导(归 `human-install-wizard` 那条线)。

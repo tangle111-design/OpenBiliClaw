@@ -2,7 +2,7 @@
 
 ## 概述
 
-引导初始化（guided init）让用户既能在命令行 `openbiliclaw init`、也能在浏览器插件「推荐」tab 点「开始初始化」完成首轮建模。两条入口共用同一套四阶段流水线，后端再叠加进度状态机、前置检查和写者门控，保证图形化初始化在一个活跃后端上安全运行。
+引导初始化（guided init）让用户既能在命令行 `openbiliclaw init`、也能在浏览器插件「推荐」tab、桌面 Web（`/web`）未初始化空状态、或安装包首启 `/setup/` 向导里点「开始初始化」完成首轮建模。所有图形入口共用同一套四阶段流水线，后端再叠加进度状态机、前置检查和写者门控，保证图形化初始化在一个活跃后端上安全运行。
 
 四阶段（与 CLI 完全一致）：
 
@@ -62,16 +62,20 @@
 
 > 该门控经 9 轮 Codex 对抗验收收敛(2 high + 多 medium 修复),最终 PASS。唯一已知遗留是 bootstrap-key 去重的非原子窗口(load→propagate→mark),为 **gui-init 之前就存在**的共享 task-result 行为、低概率、轻影响,列为独立硬化 follow-up。
 
-## 插件 UI（extension）
+## 图形 UI（extension / web）
 
 推荐 tab 未初始化空状态给「开始初始化」面板：数据来源勾选（B 站必选基座 + 小红书 / 抖音 / YouTube 可选，配「需在本浏览器登录目标平台」文案）+ 按钮（点击驱动校验：点击时拉 `/api/init-status`，勾了未开启的平台 → 提示去设置，前置未通过 → 展示前置清单 + 原因、不启动；全通过才带所选 `sources` 启动）+ 启动后进度条，详见 [extension 模块文档](extension.md)。DOM 无关逻辑在 `extension/popup/popup-init-control.js`，单测在 `extension/tests/init-control.test.ts`。
+
+桌面 Web 对齐同一套交互：安装包首启 `/setup/` 从「连接 AI → 连接 B站」后进入第 3 步「初始化画像和推荐池」，展示同款来源勾选、前置清单、`POST /api/init` 启动和 `runtime-stream`/轮询进度；完成后才跳转 `/web`。用户跳过或后来直接打开 `/web` 时，推荐网格仅在 `runtime-status.initialized=false` 且没有插件同款“初始化后信号”（推荐数、候选池可用数、待整理数、最近发现 / 补货数）时渲染同款「开始初始化」面板，不再提示去命令行跑 init，也不展示示例推荐卡。
 
 ## 测试
 
 - `tests/test_init_coordinator.py` — 协调器生命周期 / 单飞 / 并行 stage / reconcile / 取消 / 接线 / `/api/init-status` 形状 / 门控后台暂停。
 - `tests/test_init_prereqs.py` — 前置探测 TTL / 乐观超时。
 - `tests/test_database.py` — `init_runs` CAS / 白名单列 / reconcile。
-- `tests/test_api_app.py::TestGuidedInitEndpoints` — `/api/init`、`/api/init/cancel` 守门（403 / 409 各路径、复位不留 stuck 行）+ 写者门控（events 409 / cookie no-op / task-result 放行）。
+- `tests/test_api_app.py::TestGuidedInitEndpoints` — `/api/init`、`/api/init/cancel` 守门（403 / 409 各路径、复位不留 stuck 行）+ 写者门控（events 409 / cookie no-op / task-result 放行）+ 真实 `/api/init` handler 通过 `InitCoordinator` 向 `/api/runtime-stream` 发 `init_progress` / `init_completed` 的后端契约。
 - `tests/test_cli.py` — `openbiliclaw init` 全回归（共享流水线零回归）。
 - `extension/tests/init-control.test.ts` — 清单 / 按钮态 / 进度状态机纯函数。
+- `tests/test_web_guided_init.py` — 安装包 `/setup/` 与桌面 `/web` 未初始化空状态的 guided-init 接线静态合约。
+- `tests/test_web_guided_init_e2e.py` — Playwright 驱动真实 `/setup/` 与 `/web` 页面，stub 外部 HTTP 响应来覆盖浏览器交互：成功进度、前置失败、启动冲突、终态重试、runtime-stream 静默 watchdog，以及 PC Web 与插件一致的未初始化入口判断（已有推荐 / 候选池信号时不再弹引导）；CI 的 `web-guided-init-e2e` job 安装 `[browser]` extra + Chromium 后单独运行。
 - 完整真号 GUI init（插件推荐 tab → 前置清单 → 开始 → 进度 → 画像 → 推荐）列入用户手测 DoD。

@@ -2,6 +2,8 @@
     const DEFAULT_API_BASE = "http://127.0.0.1:8420/api";
     const ENDPOINTS = {
       health: "/health",
+      initStatus: "/init-status",
+      startInit: "/init",
       recommendations: "/recommendations",
       refresh: "/recommendations/refresh",
       reshuffle: "/recommendations/reshuffle",
@@ -33,6 +35,10 @@
       profile: null,
       editingProfile: false,
       profileEditState: null,
+      initStatus: null,
+      initReason: "",
+      initBusy: false,
+      initSelectedSources: ["bilibili"],
       activity: null,
       activityItems: [],
       activityCursor: "",
@@ -73,6 +79,27 @@
     const grid = $("#videoGrid");
     const sourceFilterOrder = ["B 站", "YouTube", "抖音", "小红书"];
     const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书" };
+    const INIT_SOURCE_OPTIONS = [
+      { key: "bilibili", label: "B 站", required: true },
+      { key: "xiaohongshu", label: "小红书", required: false },
+      { key: "douyin", label: "抖音", required: false },
+      { key: "youtube", label: "YouTube", required: false },
+      { key: "twitter", label: "X", required: false }
+    ];
+    const INIT_SOURCE_LOGIN_HINT = "勾选要纳入初始化的平台。使用某个平台前，请先在当前浏览器登录该平台账号；未在设置里开启的平台，需先到设置开启。";
+    const INIT_REASON_TEXT = {
+      unsupported_runtime: "当前运行环境不支持图形化初始化，请改用 CLI 初始化入口。",
+      already_running: "初始化正在进行中。",
+      bilibili_not_logged_in: "还没检测到 B 站登录。",
+      llm_not_ready: "AI 服务还没配好或当前不可用。",
+      already_initialized: "已经初始化过了；如需重建，请到设置页。",
+      local_only: "只能在本机发起初始化。",
+      internal_error: "初始化过程中出错了，请稍后重试。",
+      none: ""
+    };
+    const INIT_STATUS_POLL_MS = Number(window.__OBC_TEST_INIT_POLL_MS) || 3000;
+    const INIT_STATUS_START_POLL_MS = Number(window.__OBC_TEST_INIT_START_POLL_MS) || 1200;
+    const INIT_STATUS_WATCHDOG_MS = Number(window.__OBC_TEST_INIT_WATCHDOG_MS) || 15000;
     const CHAT_PLACEHOLDERS = [
       "说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。",
       "比如：我喜欢慢慢讲清楚的长视频，讨厌标题党和故意搞悬念的。",
@@ -88,6 +115,9 @@
     let backendHydrationTimer = null;
     let backendHydrationInFlight = false;
     let backendHydrationPending = false;
+    let initPollTimer = null;
+    let initRefreshInFlight = false;
+    let initRefreshPending = false;
     let activityPageRefreshTimer = null;
     let activityPageRefreshInFlight = false;
     let activityPageRefreshPending = false;
@@ -633,6 +663,322 @@
       window.setTimeout(() => toast.classList.remove("is-open"), 2600);
     }
 
+    function describeInitReason(reason) {
+      if (!reason || reason === "none") return "";
+      return INIT_REASON_TEXT[reason] || `未知初始化状态：${reason}`;
+    }
+
+    function initEnabledPlatforms(status) {
+      const platforms = status?.prerequisites?.enabled_platforms;
+      return Array.isArray(platforms) ? platforms.map(String) : [];
+    }
+
+    function initSourceLabels(keys) {
+      const byKey = new Map(INIT_SOURCE_OPTIONS.map((opt) => [opt.key, opt.label]));
+      return (Array.isArray(keys) ? keys : []).map((key) => byKey.get(key) || key);
+    }
+
+    function buildInitChecklist(status) {
+      const prereq = status?.prerequisites || {};
+      const enabled = initEnabledPlatforms(status);
+      return [
+        {
+          key: "bilibili",
+          label: "B 站已登录",
+          ok: Boolean(prereq.bilibili_logged_in),
+          hard: true,
+          hint: "在浏览器里登录 bilibili.com，扩展会自动把 Cookie 同步给后端。"
+        },
+        {
+          key: "llm",
+          label: "AI 服务可用",
+          ok: Boolean(prereq.llm_ready),
+          hard: true,
+          hint: "到设置页填好 LLM provider 的 API Key，或确认本地 / 远端模型服务可达。"
+        },
+        {
+          key: "embedding",
+          label: "向量模型可用（推荐，非必须）",
+          ok: Boolean(prereq.embedding_ready),
+          hard: false,
+          hint: "本地 Ollama + bge-m3 没就绪也能初始化，但语义检索会弱一些。"
+        },
+        {
+          key: "platforms",
+          label: enabled.length
+            ? `已启用来源：${initSourceLabels(enabled).join("、")}`
+            : "数据来源：仅 B 站（可在设置里开启更多平台）",
+          ok: true,
+          hard: false,
+          hint: ""
+        }
+      ];
+    }
+
+    function initSelectedSourcesNeedingEnable(selected, status) {
+      const checked = new Set(Array.isArray(selected) ? selected : []);
+      const enabled = new Set(initEnabledPlatforms(status));
+      return INIT_SOURCE_OPTIONS
+        .filter((opt) => !opt.required && checked.has(opt.key) && !enabled.has(opt.key))
+        .map((opt) => opt.key);
+    }
+
+    function initProgressView(status) {
+      const total = status?.total_stages || 4;
+      const stages = Array.isArray(status?.stages) ? status.stages : [];
+      const doneCount = stages.filter((stage) => stage.status === "ok").length;
+      const running = Boolean(status?.running);
+      const failedStage = stages.find((stage) => stage.status === "failed" || stage.status === "cancelled");
+      const current = status?.current_stage || 0;
+      const currentStage = stages.find((stage) => stage.n === current);
+      const rawPct = ((doneCount + (running ? 0.5 : 0)) / total) * 100;
+      const pct = Math.max(0, Math.min(100, Math.round(rawPct)));
+      return {
+        active: running,
+        failed: Boolean(failedStage),
+        pct: running ? Math.max(pct, 1) : pct,
+        stageLabel: currentStage ? `${currentStage.n}/${total} ${currentStage.label}` : "",
+        failedReason: failedStage?.reason || ""
+      };
+    }
+
+    function selectedInitSourcesFromDom() {
+      const checked = Array.from(document.querySelectorAll("input[data-init-source]"))
+        .filter((input) => input.checked)
+        .map((input) => input.value);
+      if (!checked.includes("bilibili")) checked.push("bilibili");
+      return checked;
+    }
+
+    function initChecklistMarkup(status) {
+      if (!status) {
+        return '<li class="init-hint-row">点「开始初始化」会先检查 B 站登录 / AI 服务 / 向量模型，全部通过才开始。</li>';
+      }
+      return buildInitChecklist(status)
+        .map((row) => {
+          const mark = row.ok ? "✓" : row.hard ? "✗" : "•";
+          const hint = !row.ok && row.hint ? `<p class="init-hint">${escapeHtml(row.hint)}</p>` : "";
+          return `<li class="${row.ok ? "init-ok" : "init-missing"} ${row.hard ? "init-hard" : "init-soft"}"><div class="init-row"><span class="init-mark">${mark}</span><span>${escapeHtml(row.label)}</span></div>${hint}</li>`;
+        })
+        .join("");
+    }
+
+    function initSourcesMarkup() {
+      const selected = new Set(state.initSelectedSources || ["bilibili"]);
+      const rows = INIT_SOURCE_OPTIONS.map((opt) => {
+        const checked = opt.required || selected.has(opt.key) ? " checked" : "";
+        const disabled = opt.required ? " disabled" : "";
+        const label = opt.required ? `${opt.label}（必选）` : opt.label;
+        return `<label class="init-source-row"><input type="checkbox" value="${escapeHtml(opt.key)}" data-init-source="${escapeHtml(opt.key)}"${checked}${disabled}><span>${escapeHtml(label)}</span></label>`;
+      }).join("");
+      return `<div class="init-sources"><p class="init-sources-title">选择初始化数据来源</p>${rows}<p class="init-sources-hint">${escapeHtml(INIT_SOURCE_LOGIN_HINT)}</p></div>`;
+    }
+
+    function initOnboardingPhase(status, progress) {
+      if (state.initBusy) return "busy";
+      if (Boolean(status?.initialized)) return "completed";
+      if (Boolean(status?.running)) return "running";
+      if (progress.failed) return "failed";
+      return "idle";
+    }
+
+    function updateInitOnboardingStatus(section, status, progress, reason, buttonLabel, buttonDisabled) {
+      const checklist = section.querySelector(".init-checklist");
+      if (checklist) checklist.innerHTML = initChecklistMarkup(status);
+      const progressBox = section.querySelector(".init-progress");
+      const progressFill = section.querySelector(".init-progress-fill");
+      const progressText = progressBox?.querySelector("p");
+      const progressLabel = progress.failed
+        ? (describeInitReason(status?.reason) || progress.failedReason || "初始化未完成，请稍后重试。")
+        : progress.active
+          ? `${progress.stageLabel || "正在初始化"}（${progress.pct}%）`
+          : "等待开始";
+      if (progressBox) progressBox.hidden = !(Boolean(status?.running) || progress.failed);
+      if (progressFill) progressFill.style.width = `${progress.pct}%`;
+      if (progressText) progressText.textContent = progressLabel;
+      const reasonText = section.querySelector(".init-reason");
+      if (reasonText) {
+        reasonText.hidden = !reason;
+        reasonText.textContent = reason;
+      }
+      const startButton = section.querySelector('[data-init-action="start"]');
+      if (startButton) {
+        startButton.disabled = buttonDisabled;
+        startButton.textContent = buttonLabel;
+      }
+    }
+
+    function renderInitOnboarding() {
+      if (!grid) return;
+      const status = state.initStatus;
+      const progress = initProgressView(status);
+      const isRunning = Boolean(status?.running);
+      const alreadyInitialized = Boolean(status?.initialized);
+      const showProgress = isRunning || progress.failed;
+      const reason = state.initReason || describeInitReason(status?.reason) || status?.detail || "";
+      const phase = initOnboardingPhase(status, progress);
+      const buttonLabel = state.initBusy
+        ? "检查中…"
+        : isRunning
+          ? "初始化进行中…"
+          : alreadyInitialized
+            ? "已初始化"
+            : progress.failed
+              ? "重试初始化"
+              : "开始初始化";
+      const buttonDisabled = state.initBusy || isRunning || alreadyInitialized;
+      const existing = grid.querySelector(".init-onboarding");
+      if (existing?.dataset.initPhase === phase && phase !== "idle" && phase !== "busy") {
+        updateInitOnboardingStatus(existing, status, progress, reason, buttonLabel, buttonDisabled);
+        const loadMore = $("#loadMoreBtn");
+        if (loadMore) loadMore.hidden = true;
+        return;
+      }
+      grid.innerHTML = `
+        <section class="init-onboarding" aria-label="引导初始化" data-init-phase="${escapeHtml(phase)}">
+          <div class="init-onboarding-copy">
+            <p class="eyebrow">Guided init</p>
+            <h3>还没完成初始化</h3>
+            <p class="video-meta">先检查 B 站登录和 AI 服务，通过后在这里一步步拉取数据、生成画像、补齐首轮内容池。</p>
+          </div>
+          ${isRunning ? "" : initSourcesMarkup()}
+          <ul class="init-checklist">${initChecklistMarkup(status)}</ul>
+          <div class="init-progress"${showProgress ? "" : " hidden"}>
+            <div class="init-progress-track"><div class="init-progress-fill" style="width:${progress.pct}%"></div></div>
+            <p>${escapeHtml(progress.failed ? (describeInitReason(status?.reason) || progress.failedReason || "初始化未完成，请稍后重试。") : progress.active ? `${progress.stageLabel || "正在初始化"}（${progress.pct}%）` : "等待开始")}</p>
+          </div>
+          <p class="init-reason"${reason ? "" : " hidden"}>${escapeHtml(reason)}</p>
+          <div class="init-actions">
+            <button class="small-btn primary" type="button" data-init-action="start"${buttonDisabled ? " disabled" : ""}>${escapeHtml(buttonLabel)}</button>
+            <button class="small-btn" type="button" data-init-action="settings">打开设置</button>
+          </div>
+        </section>`;
+      const loadMore = $("#loadMoreBtn");
+      if (loadMore) loadMore.hidden = true;
+      grid.querySelector('[data-init-action="start"]')?.addEventListener("click", () => {
+        void handleDesktopStartInitClick();
+      });
+      grid.querySelector('[data-init-action="settings"]')?.addEventListener("click", () => {
+        openSettingsPage("sources");
+      });
+      grid.querySelectorAll("input[data-init-source]").forEach((input) => {
+        input.addEventListener("change", () => {
+          state.initSelectedSources = selectedInitSourcesFromDom();
+        });
+      });
+    }
+
+    function clearInitPolling() {
+      if (initPollTimer !== null) {
+        window.clearTimeout(initPollTimer);
+        initPollTimer = null;
+      }
+    }
+
+    function scheduleInitStatusRefresh(delayMs = INIT_STATUS_POLL_MS) {
+      clearInitPolling();
+      initPollTimer = window.setTimeout(() => {
+        initPollTimer = null;
+        void refreshInitStatus();
+      }, delayMs);
+    }
+
+    async function refreshInitStatus({ schedule = true } = {}) {
+      if (initRefreshInFlight) {
+        initRefreshPending = true;
+        return;
+      }
+      initRefreshInFlight = true;
+      clearInitPolling();
+      const wasInitialized = Boolean(state.initStatus?.initialized);
+      try {
+        const status = await requestJsonStrict(ENDPOINTS.initStatus, { timeoutMs: 60000 });
+        state.initStatus = status;
+        state.initReason = "";
+        renderAll();
+        if (status?.initialized) {
+          clearInitPolling();
+          initRefreshPending = false;
+          if (!wasInitialized) {
+            scheduleBackendHydration();
+            showToast("初始化完成，正在加载推荐");
+          }
+          return;
+        }
+        if (status?.running) {
+          scheduleInitStatusRefresh(schedule ? INIT_STATUS_POLL_MS : INIT_STATUS_WATCHDOG_MS);
+        } else if (!status?.running) {
+          clearInitPolling();
+        }
+      } catch (error) {
+        scheduleInitStatusRefresh(INIT_STATUS_POLL_MS);
+        state.initReason = error?.message || "初始化状态读取失败。";
+        renderAll();
+      } finally {
+        initRefreshInFlight = false;
+        if (initRefreshPending) {
+          initRefreshPending = false;
+          void refreshInitStatus({ schedule });
+        }
+      }
+    }
+
+    async function handleDesktopStartInitClick() {
+      const selected = selectedInitSourcesFromDom();
+      state.initSelectedSources = selected;
+      state.initBusy = true;
+      state.initReason = "";
+      renderAll();
+      let status = null;
+      try {
+        status = await requestJsonStrict(ENDPOINTS.initStatus, { timeoutMs: 60000 });
+        state.initStatus = status;
+      } catch (error) {
+        state.initReason = error?.message || "前置检查没拉到，稍后再试。";
+        state.initBusy = false;
+        renderAll();
+        return;
+      }
+      if (status.running) {
+        state.initBusy = false;
+        renderAll();
+        clearInitPolling();
+        scheduleInitStatusRefresh(INIT_STATUS_START_POLL_MS);
+        return;
+      }
+      const needEnable = initSelectedSourcesNeedingEnable(selected, status);
+      if (needEnable.length > 0) {
+        state.initReason = `你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；先打开设置开启对应平台，或取消勾选后再点一次。`;
+        state.initBusy = false;
+        renderAll();
+        return;
+      }
+      if (!status.can_start) {
+        state.initReason = describeInitReason(status.reason) || status.detail || "以下条件未满足，无法开始初始化。";
+        state.initBusy = false;
+        renderAll();
+        return;
+      }
+      try {
+        const started = await requestJsonStrict(ENDPOINTS.startInit, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sources: selected }),
+          timeoutMs: 60000
+        });
+        state.initStatus = { ...(state.initStatus || {}), ...started };
+        state.initBusy = false;
+        showToast("初始化已开始");
+        renderAll();
+        scheduleInitStatusRefresh(INIT_STATUS_START_POLL_MS);
+      } catch (error) {
+        const code = error?.details?.error || error?.details?.reason;
+        state.initReason = describeInitReason(code) || error?.message || "初始化没能启动，请稍后重试。";
+        state.initBusy = false;
+        renderAll();
+      }
+    }
+
     function openPanel(id) { document.getElementById(id)?.classList.add("is-open"); }
     function closePanel(id) {
       const panel = document.getElementById(id);
@@ -1043,6 +1389,12 @@
     }
 
     function renderVideos() {
+      if (shouldShowInitOnboarding(state.runtimeStatus)) {
+        renderInitOnboarding();
+        return;
+      }
+      const loadMore = $("#loadMoreBtn");
+      if (loadMore) loadMore.hidden = false;
       const items = filteredVideos();
       if (!items.length) {
         const message = state.query.trim()
@@ -1866,7 +2218,7 @@
         return html;
       }
       if (!editState.initialized || !editState.fields) {
-        html += `<p class="video-meta">画像还没攒起来，先跑一遍 openbiliclaw init 再回来编辑。</p>`;
+        html += `<p class="video-meta">画像还没攒起来，回到首页推荐区点「开始初始化」后再回来编辑。</p>`;
         return html;
       }
       html += `<p class="video-meta profile-edit-note">标签 / 兴趣类增删即时生效；文本与滑杆类改完点「保存」才生效。改动都不会被后续自动重建覆盖，删错了点「恢复 AI 建议」即可。</p>`;
@@ -2685,6 +3037,7 @@
         last_notification_at: String(merged.last_notification_at ?? ""),
         unread_count: Number(merged.unread_count ?? state.messages.length ?? 0),
         pool_available_count: Number(merged.pool_available_count ?? merged.pool_available ?? merged.available_count ?? 0),
+        pool_pending_count: Number(merged.pool_pending_count ?? 0),
         pool_target_count: Number(merged.pool_target_count ?? state.config?.scheduler?.pool_target_count ?? 0),
         last_discovered_count: Number(merged.last_discovered_count ?? 0),
         last_replenished_count: Number(merged.last_replenished_count ?? 0),
@@ -2694,6 +3047,21 @@
         runtime_event_type: incomingType || String(merged.runtime_event_type || ""),
         live_summary: String(merged.live_summary || merged.message || merged.state || "")
       };
+    }
+
+    function hasPostInitRuntimeSignals(runtime) {
+      return Boolean(runtime) && (
+        runtime.recommendation_count > 0 ||
+        runtime.pool_available_count > 0 ||
+        runtime.pool_pending_count > 0 ||
+        runtime.last_replenished_count > 0 ||
+        runtime.last_discovered_count > 0
+      );
+    }
+
+    function shouldShowInitOnboarding(status) {
+      const runtime = normalizeRuntimeStatus(status);
+      return Boolean(status) && runtime.initialized === false && !hasPostInitRuntimeSignals(runtime);
     }
 
     function getPoolStatusSummary(status) {
@@ -3259,7 +3627,10 @@
       // (/api/recommendations only returns the latest top window). Header/pool counts
       // still update via applyRuntimeStatus above; user-initiated 换一批 / 加载更多 replace
       // the list explicitly. Matches recommend.js + popup.js (fix 79042ce).
-      if (["config_reloaded", "init_completed"].includes(event.type)) scheduleBackendHydration();
+      if (["config_reloaded"].includes(event.type)) scheduleBackendHydration();
+      if (["init_progress", "init_failed", "init_completed"].includes(event.type)) {
+        void refreshInitStatus({ schedule: event.type === "init_progress" });
+      }
       if (event.type === "activity.added") scheduleActivityPageRefresh();
       if (
         event.type === "profile_updated" ||

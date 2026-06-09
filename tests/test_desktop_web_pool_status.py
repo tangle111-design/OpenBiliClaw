@@ -29,9 +29,11 @@ def test_desktop_pool_update_does_not_replace_recommendation_list() -> None:
     runtime emits ``refresh.pool_updated`` / ``recommendation.reshuffled``,
     otherwise locally appended ("加载更多") cards get wiped out by the latest
     top window from ``/api/recommendations``. This mirrors the recommend.js +
-    popup.js behaviour (fix 79042ce). Broad-reload flows (``config_reloaded`` /
-    ``init_completed``) still hydrate, and the pool/header counts keep updating
-    via the unconditional ``applyRuntimeStatus`` call.
+    popup.js behaviour (fix 79042ce). ``config_reloaded`` still hydrates through
+    the broad-reload path; ``init_completed`` hydrates only after
+    ``refreshInitStatus`` observes the initialized transition, avoiding duplicate
+    fetches/toasts. Pool/header counts keep updating via the unconditional
+    ``applyRuntimeStatus`` call.
     """
     app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
 
@@ -44,7 +46,7 @@ def test_desktop_pool_update_does_not_replace_recommendation_list() -> None:
     assert "refresh.pool_updated" not in trigger
     assert "recommendation.reshuffled" not in trigger
     assert "config_reloaded" in trigger
-    assert "init_completed" in trigger
+    assert "init_completed" not in trigger
 
 
 def test_desktop_web_shows_github_star_cta() -> None:

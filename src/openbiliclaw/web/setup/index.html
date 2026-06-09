@@ -8,7 +8,7 @@
     :root {
       --bg: #0f1115; --panel: #181b22; --panel-2: #20242e; --line: #2c313c;
       --text: #eef1f6; --muted: #99a2b2; --accent: #fb7299; --accent-2: #2bb3a3;
-      --ok: #36c46f; --err: #ff6b6b; --radius: 14px;
+      --ok: #36c46f; --warn: #f4b942; --err: #ff6b6b; --radius: 14px;
     }
     * { box-sizing: border-box; }
     body {
@@ -65,6 +65,23 @@
     .check-list .tick { width: 24px; height: 24px; border-radius: 50%; background: rgba(54,196,111,.15);
       color: var(--ok); display: grid; place-items: center; font-weight: 800; flex: none; }
     .check-list .pending .tick { background: rgba(153,162,178,.15); color: var(--muted); }
+    .init-checks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 9px; }
+    .init-checks li { padding: 11px 13px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); }
+    .init-row { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 13px; }
+    .init-mark { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none; background: rgba(153,162,178,.15); color: var(--muted); font-weight: 900; }
+    .init-ok .init-mark { background: rgba(54,196,111,.14); color: var(--ok); }
+    .init-missing.init-hard .init-mark { background: rgba(255,107,107,.14); color: var(--err); }
+    .init-missing.init-soft .init-mark { background: rgba(244,185,66,.14); color: var(--warn); }
+    .init-hint { margin: 7px 0 0 32px; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+    .init-sources { display: grid; gap: 8px; margin: 16px 0; }
+    .init-sources-title { margin: 0 0 2px; font-size: 13px; font-weight: 800; color: var(--text); }
+    .init-source-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); font-size: 13px; }
+    .init-source-row input { width: 16px; height: 16px; padding: 0; accent-color: var(--accent); }
+    .init-source-row input:disabled { opacity: .75; }
+    .progress { margin-top: 18px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); }
+    .progress-track { height: 8px; border-radius: 999px; background: #10131a; overflow: hidden; }
+    .progress-fill { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .3s ease; }
+    .progress-label { margin: 9px 0 0; color: var(--muted); font-size: 13px; }
     .adv { margin-top: 14px; }
     .adv summary { cursor: pointer; color: var(--muted); font-size: 13px; user-select: none; }
     .ext-steps { counter-reset: s; padding-left: 0; list-style: none; margin: 16px 0; }
@@ -84,6 +101,7 @@
         <div class="dot active" data-dot="0"></div>
         <div class="dot" data-dot="1"></div>
         <div class="dot" data-dot="2"></div>
+        <div class="dot" data-dot="3"></div>
       </div>
     </div>
     <div class="body">
@@ -151,14 +169,34 @@
         </div>
       </section>
 
-      <!-- Step 2: 完成 -->
+      <!-- Step 2: 初始化 -->
       <section class="panel" data-panel="2">
+        <h2>初始化画像和推荐池</h2>
+        <p class="sub">和浏览器插件里的「开始初始化」走同一套流程：先检查 B站 登录和 AI 服务，再拉取数据、生成画像、补齐首轮内容池。</p>
+        <div id="initSources" class="init-sources"></div>
+        <ul id="initChecklist" class="init-checks">
+          <li class="init-hint-row">点「开始初始化」会先检查 B站 登录 / AI 服务 / 向量模型，全部通过才开始。</li>
+        </ul>
+        <div id="initProgress" class="progress" hidden>
+          <div class="progress-track"><div class="progress-fill" id="initProgressBar"></div></div>
+          <p class="progress-label" id="initProgressLabel">等待开始</p>
+        </div>
+        <div class="msg" id="initReason"></div>
+        <div class="row-actions">
+          <button class="ghost" id="backInit">← 上一步</button>
+          <button class="primary" id="startInit">开始初始化</button>
+        </div>
+      </section>
+
+      <!-- Step 3: 完成 -->
+      <section class="panel" data-panel="3">
         <h2>就绪 🎉</h2>
-        <p class="sub">基础配置已完成,本地引擎可以开始为你工作了。</p>
+        <p class="sub">基础配置和首轮初始化已完成,本地引擎可以开始为你工作了。</p>
         <ul class="check-list">
           <li><span class="tick">✓</span><div><b>AI 大脑</b><br><span class="hint" id="doneLlm">已连接</span></div></li>
           <li><span class="tick">✓</span><div><b>本地语义引擎</b><br><span class="hint">Ollama bge-m3 已随包就绪,推荐去重 / 多样性已开启</span></div></li>
           <li id="biliDone" class="pending"><span class="tick">…</span><div><b>B站 账号</b><br><span class="hint" id="doneBili">可稍后在主界面连接</span></div></li>
+          <li><span class="tick">✓</span><div><b>首轮初始化</b><br><span class="hint">画像和推荐池已就绪</span></div></li>
         </ul>
         <div class="row-actions">
           <button class="ghost" id="back2">← 上一步</button>
@@ -180,7 +218,30 @@
       openai_compatible: ["", ""],
       ollama: ["", ""],
     };
-    let step = 0, biliConnected = false, biliPoll = null;
+    const INIT_SOURCE_OPTIONS = [
+      { key: "bilibili", label: "B 站", required: true },
+      { key: "xiaohongshu", label: "小红书", required: false },
+      { key: "douyin", label: "抖音", required: false },
+      { key: "youtube", label: "YouTube", required: false },
+      { key: "twitter", label: "X", required: false },
+    ];
+    const INIT_REASON_TEXT = {
+      unsupported_runtime: "当前运行环境不支持图形化初始化，请改用 CLI 初始化入口。",
+      already_running: "初始化正在进行中。",
+      bilibili_not_logged_in: "还没检测到 B站 登录。",
+      llm_not_ready: "AI 服务还没配好或当前不可用。",
+      already_initialized: "已经初始化过了。",
+      local_only: "只能在本机发起初始化。",
+      internal_error: "初始化过程中出错了，请稍后重试。",
+      none: "",
+    };
+    const INIT_SOURCE_LOGIN_HINT =
+      "勾选要纳入初始化的平台。使用某个平台前，请先在当前浏览器登录该平台账号；未在设置里开启的平台，需先到设置开启。";
+    const INIT_POLL_MS = Number(window.__OBC_TEST_INIT_POLL_MS) || 3000;
+    const INIT_START_POLL_MS = Number(window.__OBC_TEST_INIT_START_POLL_MS) || 1200;
+    const INIT_STREAM_WATCHDOG_MS = Number(window.__OBC_TEST_INIT_WATCHDOG_MS) || 15000;
+    let step = 0, biliConnected = false, biliPoll = null, initPoll = null, initSocket = null;
+    let initPollInFlight = false, initPollPending = false;
 
     function setStep(n) {
       step = n;
@@ -191,6 +252,7 @@
         d.classList.toggle("done", i < n);
       });
       if (n === 1) startBiliPoll();
+      if (n === 2) renderInitIdle();
     }
 
     function renderProvider() {
@@ -256,6 +318,313 @@
       } catch { return false; }
     }
 
+    function describeInitReason(reason) {
+      if (!reason || reason === "none") return "";
+      return INIT_REASON_TEXT[reason] || `未知初始化状态：${reason}`;
+    }
+
+    function enabledPlatforms(status) {
+      const platforms = status?.prerequisites?.enabled_platforms;
+      return Array.isArray(platforms) ? platforms.map(String) : [];
+    }
+
+    function initSourceLabels(keys) {
+      const byKey = new Map(INIT_SOURCE_OPTIONS.map((opt) => [opt.key, opt.label]));
+      return (Array.isArray(keys) ? keys : []).map((key) => byKey.get(key) || key);
+    }
+
+    function buildInitChecklist(status) {
+      const prereq = status?.prerequisites || {};
+      const enabled = enabledPlatforms(status);
+      return [
+        {
+          key: "bilibili",
+          label: "B站 已登录",
+          ok: Boolean(prereq.bilibili_logged_in),
+          hard: true,
+          hint: "在浏览器里登录 bilibili.com，扩展会自动把 Cookie 同步给后端。",
+        },
+        {
+          key: "llm",
+          label: "AI 服务可用",
+          ok: Boolean(prereq.llm_ready),
+          hard: true,
+          hint: "回到第一步填好 LLM provider 的 API Key，或确认本地 / 远端模型服务可达。",
+        },
+        {
+          key: "embedding",
+          label: "向量模型可用（推荐，非必须）",
+          ok: Boolean(prereq.embedding_ready),
+          hard: false,
+          hint: "本地 Ollama + bge-m3 没就绪也能初始化，但推荐去重和语义检索会弱一些。",
+        },
+        {
+          key: "platforms",
+          label: enabled.length ? `已启用来源：${initSourceLabels(enabled).join("、")}` : "数据来源：仅 B站",
+          ok: true,
+          hard: false,
+          hint: "",
+        },
+      ];
+    }
+
+    function renderInitSources() {
+      const root = $("#initSources");
+      root.innerHTML = '<p class="init-sources-title">选择初始化数据来源</p>';
+      for (const opt of INIT_SOURCE_OPTIONS) {
+        const label = document.createElement("label");
+        label.className = "init-source-row";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.value = opt.key;
+        input.dataset.initSource = opt.key;
+        input.checked = Boolean(opt.required);
+        input.disabled = Boolean(opt.required);
+        const text = document.createElement("span");
+        text.textContent = opt.required ? `${opt.label}（必选）` : opt.label;
+        label.append(input, text);
+        root.append(label);
+      }
+      const hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent = INIT_SOURCE_LOGIN_HINT;
+      root.append(hint);
+    }
+
+    function readSelectedInitSources() {
+      const selected = [...document.querySelectorAll("input[data-init-source]")]
+        .filter((input) => input.checked)
+        .map((input) => input.value);
+      if (!selected.includes("bilibili")) selected.push("bilibili");
+      return selected;
+    }
+
+    function renderInitChecklist(status) {
+      const root = $("#initChecklist");
+      root.innerHTML = "";
+      for (const row of buildInitChecklist(status)) {
+        const li = document.createElement("li");
+        li.className = `${row.ok ? "init-ok" : "init-missing"} ${row.hard ? "init-hard" : "init-soft"}`;
+        const head = document.createElement("div");
+        head.className = "init-row";
+        const mark = document.createElement("span");
+        mark.className = "init-mark";
+        mark.textContent = row.ok ? "✓" : row.hard ? "✗" : "•";
+        const label = document.createElement("span");
+        label.textContent = row.label;
+        head.append(mark, label);
+        li.append(head);
+        if (!row.ok && row.hint) {
+          const hint = document.createElement("p");
+          hint.className = "init-hint";
+          hint.textContent = row.hint;
+          li.append(hint);
+        }
+        root.append(li);
+      }
+    }
+
+    function setInitReason(text, kind = "err") {
+      const el = $("#initReason");
+      el.className = text ? `msg show ${kind}` : "msg";
+      el.textContent = text || "";
+    }
+
+    function selectedSourcesNeedingEnable(selected, status) {
+      const checked = new Set(selected);
+      const enabled = new Set(enabledPlatforms(status));
+      return INIT_SOURCE_OPTIONS
+        .filter((opt) => !opt.required && checked.has(opt.key) && !enabled.has(opt.key))
+        .map((opt) => opt.key);
+    }
+
+    async function fetchInitStatus() {
+      const r = await fetch("/api/init-status");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    }
+
+    function progressView(status) {
+      const total = status?.total_stages || 4;
+      const stages = Array.isArray(status?.stages) ? status.stages : [];
+      const done = stages.filter((s) => s.status === "ok").length;
+      const failed = stages.find((s) => s.status === "failed" || s.status === "cancelled");
+      const running = Boolean(status?.running);
+      const current = status?.current_stage || 0;
+      const currentStage = stages.find((s) => s.n === current);
+      const pct = Math.max(0, Math.min(100, Math.round(((done + (running ? 0.5 : 0)) / total) * 100)));
+      return {
+        pct: running ? Math.max(pct, 1) : pct,
+        failed,
+        label: failed
+          ? `初始化未完成：${describeInitReason(status?.reason) || failed.reason || "请稍后重试"}`
+          : running
+            ? `${currentStage ? `${currentStage.n}/${total} ${currentStage.label}` : "正在初始化"}（${Math.max(pct, 1)}%）`
+            : "初始化完成",
+      };
+    }
+
+    function renderInitProgress(status) {
+      $("#initSources").style.display = "none";
+      $("#initProgress").hidden = false;
+      const view = progressView(status);
+      $("#initProgressBar").style.width = `${view.pct}%`;
+      $("#initProgressLabel").textContent = view.label;
+      $("#startInit").disabled = Boolean(status?.running);
+      $("#startInit").textContent = status?.running ? "初始化进行中…" : view.failed ? "重试初始化" : "开始初始化";
+    }
+
+    function renderInitIdle() {
+      clearInitPoll();
+      renderInitSources();
+      $("#initSources").style.display = "";
+      $("#initChecklist").innerHTML = '<li class="init-hint-row">点「开始初始化」会先检查 B站 登录 / AI 服务 / 向量模型，全部通过才开始。</li>';
+      $("#initProgress").hidden = true;
+      $("#initProgressBar").style.width = "0";
+      $("#startInit").disabled = false;
+      $("#startInit").textContent = "开始初始化";
+      setInitReason("");
+    }
+
+    function clearInitPoll() {
+      if (initPoll) {
+        clearTimeout(initPoll);
+        initPoll = null;
+      }
+    }
+
+    function scheduleInitPoll(delayMs = INIT_POLL_MS) {
+      clearInitPoll();
+      initPoll = setTimeout(() => {
+        initPoll = null;
+        void pollInitStatus();
+      }, delayMs);
+    }
+
+    function initStreamReady() {
+      return initSocket && initSocket.readyState === 1;
+    }
+
+    async function pollInitStatus() {
+      if (initPollInFlight) {
+        initPollPending = true;
+        return;
+      }
+      initPollInFlight = true;
+      clearInitPoll();
+      try {
+        const status = await fetchInitStatus();
+        renderInitProgress(status);
+        if (status.initialized) {
+          clearInitPoll();
+          setStep(3);
+          return;
+        }
+        if (status.running) {
+          scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_POLL_MS);
+          return;
+        }
+        clearInitPoll();
+        if (status.reason && status.reason !== "none") setInitReason(describeInitReason(status.reason) || status.detail || "初始化未完成。");
+      } catch {
+        scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_POLL_MS);
+      } finally {
+        initPollInFlight = false;
+        if (initPollPending && step === 2) {
+          initPollPending = false;
+          void pollInitStatus();
+        } else {
+          initPollPending = false;
+        }
+      }
+    }
+
+    function connectInitStream() {
+      if (initSocket) return;
+      try {
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        initSocket = new WebSocket(`${proto}//${location.host}/api/runtime-stream`);
+        initSocket.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            if (["init_progress", "init_completed", "init_failed"].includes(payload.type)) {
+              void pollInitStatus();
+            }
+          } catch {}
+        };
+        initSocket.onclose = () => {
+          initSocket = null;
+          if (step === 2) scheduleInitPoll(INIT_POLL_MS);
+        };
+      } catch {
+        initSocket = null;
+      }
+    }
+
+    async function startGuidedInit() {
+      const selected = readSelectedInitSources();
+      $("#startInit").disabled = true;
+      $("#startInit").innerHTML = '<span class="spin"></span>检查中…';
+      $("#initChecklist").innerHTML = '<li class="init-checking">正在检查 B站 登录 / AI 服务 / 向量模型（实时请求测试，可能要十几秒）…</li>';
+      setInitReason("");
+      let status;
+      try {
+        status = await fetchInitStatus();
+      } catch (e) {
+        renderInitIdle();
+        setInitReason("前置检查没拉到，后端可能还在启动，请稍后再试。");
+        return;
+      }
+
+      if (status.initialized) {
+        setStep(3);
+        return;
+      }
+      if (status.running) {
+        renderInitProgress(status);
+        connectInitStream();
+        scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_START_POLL_MS);
+        return;
+      }
+      const needEnable = selectedSourcesNeedingEnable(selected, status);
+      if (needEnable.length) {
+        renderInitChecklist(status);
+        $("#startInit").disabled = false;
+        $("#startInit").textContent = "开始初始化";
+        setInitReason(`你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；到 /web 设置页开启对应平台，或取消勾选后再点一次。`);
+        return;
+      }
+      if (!status.can_start) {
+        renderInitChecklist(status);
+        $("#startInit").disabled = false;
+        $("#startInit").textContent = "开始初始化";
+        setInitReason(describeInitReason(status.reason) || status.detail || "以下条件未满足，无法开始初始化。");
+        return;
+      }
+
+      try {
+        const r = await fetch("/api/init", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sources: selected }),
+        });
+        if (!r.ok) {
+          let details = {};
+          try { details = await r.json(); } catch {}
+          throw new Error(describeInitReason(details.error || details.reason) || details.detail || `HTTP ${r.status}`);
+        }
+      } catch (e) {
+        renderInitChecklist(status);
+        $("#startInit").disabled = false;
+        $("#startInit").textContent = "开始初始化";
+        setInitReason("初始化没能启动：" + (e.message || "请稍后重试。"));
+        return;
+      }
+      connectInitStream();
+      renderInitProgress({ running: true, current_stage: 1, total_stages: 4, stages: [] });
+      scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_START_POLL_MS);
+    }
+
     function startBiliPoll() {
       if (biliPoll) return;
       const tick = async () => {
@@ -274,10 +643,7 @@
       biliPoll = setInterval(tick, 3000);
     }
 
-    async function finish() {
-      const btn = $("#finish");
-      btn.disabled = true; btn.innerHTML = '<span class="spin"></span>启动中…';
-      try { await fetch("/api/init-completed", { method: "POST" }); } catch {}
+    function finish() {
       location.href = "/web";
     }
 
@@ -302,7 +668,9 @@
     $("#saveLlm").addEventListener("click", saveLlm);
     $("#back1").addEventListener("click", () => setStep(0));
     $("#next1").addEventListener("click", () => setStep(2));
-    $("#back2").addEventListener("click", () => setStep(1));
+    $("#backInit").addEventListener("click", () => setStep(1));
+    $("#startInit").addEventListener("click", startGuidedInit);
+    $("#back2").addEventListener("click", () => setStep(2));
     $("#finish").addEventListener("click", finish);
   </script>
 </body>
