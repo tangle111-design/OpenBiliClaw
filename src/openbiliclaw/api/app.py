@@ -6552,7 +6552,9 @@ def create_app(
                     cfg.llm.embedding.model = new_model
             if "api_key" in emb:
                 new_key = str(emb["api_key"])
-                if "*" not in new_key and (new_key.strip() or not cfg.llm.embedding.api_key.strip()):
+                if "*" not in new_key and (
+                    new_key.strip() or not cfg.llm.embedding.api_key.strip()
+                ):
                     cfg.llm.embedding.api_key = new_key
             if "base_url" in emb:
                 new_base_url = str(emb["base_url"])
