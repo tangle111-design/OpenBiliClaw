@@ -20,7 +20,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: python -m pip install -e ".[dev]"
+        # Include the optional `x` extra (twitter-cli) so the X-source test
+        # suite (tests/test_x_client.py etc.) can construct real tweet objects
+        # and run; without it those tests error with ModuleNotFoundError.
+        run: python -m pip install -e ".[dev,x]"
 
       - name: Run Ruff
         run: python -m ruff check src/ tests/
