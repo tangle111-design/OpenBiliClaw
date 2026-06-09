@@ -162,6 +162,44 @@ auto_detect_reuse_source() {
 # ---------------------------------------------------------------------------
 # Main install steps
 
+is_user_data_only_dir() {
+    local dir="$1"
+    [ -d "$dir" ] || return 1
+    local entry name saw=0
+    while IFS= read -r -d '' entry; do
+        name=$(basename "$entry")
+        [ "$name" = ".DS_Store" ] && continue
+        case "$name" in
+            config.toml|config.local.toml|data|logs|openbiliclaw.lock)
+                saw=1
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    done < <(find "$dir" -mindepth 1 -maxdepth 1 -print0)
+    [ "$saw" = "1" ]
+}
+
+clone_into_user_data_root() {
+    local parent tmp
+    parent=$(dirname "$INSTALL_DIR")
+    tmp=$(mktemp -d "$parent/openbiliclaw-clone.XXXXXX")
+    log "Target contains existing user data only; cloning source into $INSTALL_DIR without touching config/data/logs."
+    git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$tmp"
+    while IFS= read -r -d '' entry; do
+        local name
+        name=$(basename "$entry")
+        if [ -e "$INSTALL_DIR/$name" ]; then
+            rm -rf "$tmp"
+            err "Cannot merge checkout into $INSTALL_DIR: destination exists: $INSTALL_DIR/$name"
+            exit 1
+        fi
+        mv "$entry" "$INSTALL_DIR/"
+    done < <(find "$tmp" -mindepth 1 -maxdepth 1 -print0)
+    rmdir "$tmp"
+}
+
 ensure_checkout() {
     if [ -f "$INSTALL_DIR/pyproject.toml" ] && [ -f "$INSTALL_DIR/config.example.toml" ]; then
         log "Using existing checkout at $INSTALL_DIR"
@@ -201,6 +239,10 @@ ensure_checkout() {
     fi
 
     if [ -e "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null || true)" ]; then
+        if is_user_data_only_dir "$INSTALL_DIR"; then
+            clone_into_user_data_root
+            return
+        fi
         err "Target directory is not empty and not an OpenBiliClaw checkout: $INSTALL_DIR"
         err "Set INSTALL_DIR to an empty or non-existent path, or remove the existing one first."
         exit 1

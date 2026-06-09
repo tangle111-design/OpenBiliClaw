@@ -88,6 +88,7 @@ from openbiliclaw.api.models import (
     SourceShareSuggestionIn,
     SourceShareSuggestionResponse,
     StorageConfigOut,
+    TwitterSourceConfigOut,
     UpdateApplyIn,
     UpdateCheckIn,
     UpdateStatusResponse,
@@ -1520,6 +1521,7 @@ def create_app(
                 include_xhs="xiaohongshu" in effective,
                 include_dy="douyin" in effective,
                 include_yt="youtube" in effective,
+                include_x="twitter" in effective,
                 target_pool_count=_INIT_POOL_TARGET_COUNT,
                 discover_backfill=_api_discover_backfill,
                 coordinator=coord,
@@ -1891,6 +1893,17 @@ def create_app(
         cookie_pairs = parse_cookie_header(cookie_value)
         cookie_names = sorted(cookie_pairs.keys())
         has_cookie = all(name in cookie_pairs for name in _X_REQUIRED_COOKIE_NAMES)
+
+        # A freshly synced valid cookie is the external re-login signal that
+        # clears a missing_cookie / expired_cookie / blocked health block.
+        # Without this the producer's is_ready() gate stays False forever, so
+        # discovery never retries even though auth is now fixed (the cookie
+        # handler is the only place a re-login state can be lifted).
+        if has_cookie:
+            with suppress(Exception):
+                from openbiliclaw.storage.x_health import XSourceHealthStore
+
+                XSourceHealthStore(ctx.database).clear_relogin_block()
 
         with suppress(Exception):
             await ctx.event_hub.publish(
@@ -6136,6 +6149,16 @@ def create_app(
                     request_interval_seconds=cfg.sources.youtube.request_interval_seconds,
                     min_interval_minutes=cfg.sources.youtube.min_interval_minutes,
                 ),
+                twitter=TwitterSourceConfigOut(
+                    enabled=cfg.sources.twitter.enabled,
+                    mode=cfg.sources.twitter.mode,
+                    cookie_env=cfg.sources.twitter.cookie_env,
+                    daily_search_budget=cfg.sources.twitter.daily_search_budget,
+                    daily_feed_budget=cfg.sources.twitter.daily_feed_budget,
+                    daily_creator_budget=cfg.sources.twitter.daily_creator_budget,
+                    request_interval_seconds=cfg.sources.twitter.request_interval_seconds,
+                    min_interval_minutes=cfg.sources.twitter.min_interval_minutes,
+                ),
             ),
             scheduler=SchedulerConfigOut(
                 enabled=cfg.scheduler.enabled,
@@ -6444,6 +6467,24 @@ def create_app(
                     ):
                         if key in yt_data:
                             setattr(cfg.sources.youtube, key, int(yt_data[key]))
+
+                tw_data = sources_data.get("twitter")
+                if isinstance(tw_data, dict):
+                    if "enabled" in tw_data:
+                        cfg.sources.twitter.enabled = _as_bool(tw_data["enabled"])
+                    if "mode" in tw_data:
+                        cfg.sources.twitter.mode = str(tw_data["mode"])
+                    if "cookie_env" in tw_data:
+                        cfg.sources.twitter.cookie_env = str(tw_data["cookie_env"])
+                    for key in (
+                        "daily_search_budget",
+                        "daily_feed_budget",
+                        "daily_creator_budget",
+                        "request_interval_seconds",
+                        "min_interval_minutes",
+                    ):
+                        if key in tw_data:
+                            setattr(cfg.sources.twitter, key, int(tw_data[key]))
 
         # Apply scheduler updates
         if "scheduler" in update:

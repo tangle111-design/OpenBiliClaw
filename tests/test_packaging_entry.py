@@ -28,7 +28,7 @@ entry = _load_entry_module()
 
 
 # --------------------------------------------------------------------------- #
-# _user_data_root_for — per-OS conventional location, independent of install dir
+# _user_data_root_for — unified with one-line / AI install data root
 #
 # Use the pure resolver with injected params: monkeypatching the real os.name to
 # "nt" would make pathlib try (and fail) to build a WindowsPath on POSIX CI.
@@ -37,8 +37,57 @@ entry = _load_entry_module()
 # --------------------------------------------------------------------------- #
 
 
-def test_user_data_root_windows_uses_localappdata() -> None:
+def test_user_data_root_windows_uses_home_openbiliclaw() -> None:
     root = entry._user_data_root_for(
+        "nt",
+        "win32",
+        Path(r"C:\Users\tester"),
+        {"LOCALAPPDATA": r"C:\Users\tester\AppData\Local"},
+    )
+
+    assert root == Path(r"C:\Users\tester") / "OpenBiliClaw"
+
+
+def test_user_data_root_windows_ignores_localappdata_fallback() -> None:
+    root = entry._user_data_root_for("nt", "win32", Path(r"C:\Users\tester"), {})
+
+    assert root == Path(r"C:\Users\tester") / "OpenBiliClaw"
+
+
+def test_user_data_root_macos_uses_home_openbiliclaw() -> None:
+    root = entry._user_data_root_for("posix", "darwin", Path("/Users/tester"), {})
+
+    assert root == Path("/Users/tester/OpenBiliClaw")
+
+
+def test_user_data_root_linux_ignores_xdg() -> None:
+    root = entry._user_data_root_for(
+        "posix", "linux", Path("/home/tester"), {"XDG_DATA_HOME": "/home/tester/.local/share"}
+    )
+
+    assert root == Path("/home/tester/OpenBiliClaw")
+
+
+def test_user_data_root_linux_uses_home_openbiliclaw() -> None:
+    root = entry._user_data_root_for("posix", "linux", Path("/home/tester"), {})
+
+    assert root == Path("/home/tester/OpenBiliClaw")
+
+
+def test_user_data_root_delegates_to_pure_resolver() -> None:
+    # The thin wrapper just feeds real os/sys/home/environ to the pure resolver.
+    assert entry._user_data_root() == entry._user_data_root_for(
+        entry.os.name, entry.sys.platform, Path.home(), entry.os.environ
+    )
+
+
+# --------------------------------------------------------------------------- #
+# _legacy_packaged_user_data_root_for — old desktop-package data locations
+# --------------------------------------------------------------------------- #
+
+
+def test_legacy_packaged_user_data_root_windows_uses_localappdata() -> None:
+    root = entry._legacy_packaged_user_data_root_for(
         "nt",
         "win32",
         Path(r"C:\Users\tester"),
@@ -48,37 +97,15 @@ def test_user_data_root_windows_uses_localappdata() -> None:
     assert root == Path(r"C:\Users\tester\AppData\Local") / "OpenBiliClaw"
 
 
-def test_user_data_root_windows_falls_back_when_localappdata_missing() -> None:
-    root = entry._user_data_root_for("nt", "win32", Path(r"C:\Users\tester"), {})
-
-    assert root == Path(r"C:\Users\tester") / "AppData" / "Local" / "OpenBiliClaw"
-
-
-def test_user_data_root_macos_uses_application_support() -> None:
-    root = entry._user_data_root_for("posix", "darwin", Path("/Users/tester"), {})
+def test_legacy_packaged_user_data_root_macos_uses_application_support() -> None:
+    root = entry._legacy_packaged_user_data_root_for(
+        "posix",
+        "darwin",
+        Path("/Users/tester"),
+        {},
+    )
 
     assert root == Path("/Users/tester/Library/Application Support/OpenBiliClaw")
-
-
-def test_user_data_root_linux_prefers_xdg() -> None:
-    root = entry._user_data_root_for(
-        "posix", "linux", Path("/home/tester"), {"XDG_DATA_HOME": "/home/tester/.local/share"}
-    )
-
-    assert root == Path("/home/tester/.local/share/OpenBiliClaw")
-
-
-def test_user_data_root_linux_falls_back_without_xdg() -> None:
-    root = entry._user_data_root_for("posix", "linux", Path("/home/tester"), {})
-
-    assert root == Path("/home/tester/.local/share/OpenBiliClaw")
-
-
-def test_user_data_root_delegates_to_pure_resolver() -> None:
-    # The thin wrapper just feeds real os/sys/home/environ to the pure resolver.
-    assert entry._user_data_root() == entry._user_data_root_for(
-        entry.os.name, entry.sys.platform, Path.home(), entry.os.environ
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -134,6 +161,9 @@ def test_resolve_runtime_paths_honors_project_root_override(monkeypatch, tmp_pat
 def _seed_legacy_install(install_dir: Path) -> None:
     install_dir.mkdir(parents=True, exist_ok=True)
     (install_dir / "config.toml").write_text("language = 'zh'\n", encoding="utf-8")
+    (install_dir / "config.local.toml").write_text(
+        "[api]\nport = 18420\n", encoding="utf-8"
+    )
     (install_dir / "data").mkdir()
     (install_dir / "data" / "openbiliclaw.db").write_bytes(b"SQLite format 3\x00payload")
     (install_dir / "logs").mkdir()
@@ -150,10 +180,14 @@ def test_migrate_moves_config_data_and_logs(tmp_path: Path) -> None:
 
     # Moved into the new root with contents intact...
     assert (project_root / "config.toml").read_text(encoding="utf-8") == "language = 'zh'\n"
+    assert (project_root / "config.local.toml").read_text(encoding="utf-8") == (
+        "[api]\nport = 18420\n"
+    )
     assert (project_root / "data" / "openbiliclaw.db").read_bytes() == original_db
     assert (project_root / "logs" / "openbiliclaw.log").exists()
     # ...and gone from the install dir (so upgrades/uninstall can't touch them).
     assert not (install_dir / "config.toml").exists()
+    assert not (install_dir / "config.local.toml").exists()
     assert not (install_dir / "data").exists()
     assert not (install_dir / "logs").exists()
 
@@ -259,6 +293,47 @@ def test_migrate_survives_unmovable_entry(tmp_path: Path, monkeypatch) -> None:
     assert (project_root / "config.toml").exists()
     assert (project_root / "data" / "openbiliclaw.db").exists()
     assert (install_dir / "logs").exists()  # the one that failed to move
+
+
+# --------------------------------------------------------------------------- #
+# _copy_legacy_packaged_user_data — old desktop package root -> unified root
+# --------------------------------------------------------------------------- #
+
+
+def test_copy_legacy_packaged_user_data_copies_without_removing_source(tmp_path: Path) -> None:
+    old_root = tmp_path / "Library" / "Application Support" / "OpenBiliClaw"
+    new_root = tmp_path / "OpenBiliClaw"
+    _seed_legacy_install(old_root)
+    original_db = (old_root / "data" / "openbiliclaw.db").read_bytes()
+
+    entry._copy_legacy_packaged_user_data(old_root, new_root)
+
+    assert (new_root / "config.toml").read_text(encoding="utf-8") == "language = 'zh'\n"
+    assert (new_root / "config.local.toml").read_text(encoding="utf-8") == (
+        "[api]\nport = 18420\n"
+    )
+    assert (new_root / "data" / "openbiliclaw.db").read_bytes() == original_db
+    assert (new_root / "logs" / "openbiliclaw.log").read_text(encoding="utf-8") == "hello\n"
+    assert (old_root / "config.toml").exists()
+    assert (old_root / "data" / "openbiliclaw.db").exists()
+
+
+def test_copy_legacy_packaged_user_data_never_clobbers_existing_target(
+    tmp_path: Path,
+) -> None:
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    _seed_legacy_install(old_root)
+    new_root.mkdir()
+    (new_root / "config.toml").write_text("language = 'en'\n", encoding="utf-8")
+    (new_root / "data").mkdir()
+    (new_root / "data" / "openbiliclaw.db").write_bytes(b"existing")
+
+    entry._copy_legacy_packaged_user_data(old_root, new_root)
+
+    assert (new_root / "config.toml").read_text(encoding="utf-8") == "language = 'en'\n"
+    assert (new_root / "data" / "openbiliclaw.db").read_bytes() == b"existing"
+    assert (new_root / "config.local.toml").exists()
 
 
 # --------------------------------------------------------------------------- #

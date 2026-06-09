@@ -343,3 +343,61 @@ async def test_due_creators_are_fetched_and_marked(tmp_path: Path) -> None:
     assert creator_calls[0][1].get("handle") == "somehandle"
     # last_fetched_at updated → no longer due
     assert creators.due_for_fetch(hours=24) == []
+
+
+# ── re-login recovery (clear_relogin_block) ──────────────────────────
+
+
+def test_clear_relogin_block_recovers_missing_cookie(tmp_path: Path) -> None:
+    """A re-login state has no timed recovery, so clear_relogin_block is the
+    only path back to is_ready()=True after a fresh cookie syncs."""
+    from openbiliclaw.sources.x_client import XMissingCookieError
+
+    db = _db(tmp_path)
+    health = XSourceHealthStore(db)
+    health.record_error(XMissingCookieError("missing auth_token / ct0"), strategy="search")
+    assert health.get()["state"] == "missing_cookie"
+    assert health.is_ready() is False
+
+    cleared = health.clear_relogin_block()
+
+    assert cleared is True
+    assert health.get()["state"] == "ok"
+    assert health.is_ready() is True
+
+
+def test_clear_relogin_block_recovers_expired_cookie_and_feed_pause(tmp_path: Path) -> None:
+    from openbiliclaw.sources.x_client import XAuthError
+
+    db = _db(tmp_path)
+    health = XSourceHealthStore(db, feed_pause_after=1)
+    health.record_error(XAuthError("401"), strategy="feed")  # expired_cookie + feed pause
+    assert health.get()["state"] == "expired_cookie"
+    assert health.feed_allowed() is False
+
+    assert health.clear_relogin_block() is True
+    assert health.get()["state"] == "ok"
+    assert health.feed_allowed() is True  # cookie refresh also lifts the feed pause
+
+
+def test_clear_relogin_block_is_noop_for_rate_limited(tmp_path: Path) -> None:
+    """A time-based rate-limit cooldown is not a cookie problem — leave it."""
+    from openbiliclaw.sources.x_client import XRateLimitError
+
+    db = _db(tmp_path)
+    health = XSourceHealthStore(db)
+    health.record_error(XRateLimitError("429"), strategy="search")
+    assert health.get()["state"] == "rate_limited"
+
+    cleared = health.clear_relogin_block()
+
+    assert cleared is False
+    assert health.get()["state"] == "rate_limited"
+
+
+def test_clear_relogin_block_is_noop_when_already_ok(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    health = XSourceHealthStore(db)
+    assert health.get()["state"] == "ok"
+    assert health.clear_relogin_block() is False
+    assert health.get()["state"] == "ok"

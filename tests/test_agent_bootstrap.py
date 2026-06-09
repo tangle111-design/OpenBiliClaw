@@ -47,6 +47,54 @@ def test_bootstrap_connects_to_loopback_when_binding_all_interfaces() -> None:
     assert bootstrap._connect_host_for_bind_host("192.168.1.100") == "192.168.1.100"
 
 
+def test_is_user_data_only_root_accepts_packaged_data_root(tmp_path: Path) -> None:
+    (tmp_path / "config.toml").write_text("language = 'zh'\n", encoding="utf-8")
+    (tmp_path / "config.local.toml").write_text("[api]\nport = 18420\n", encoding="utf-8")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "logs").mkdir()
+
+    assert bootstrap._is_user_data_only_root(tmp_path)
+
+
+def test_is_user_data_only_root_rejects_unknown_entries(tmp_path: Path) -> None:
+    (tmp_path / "config.toml").write_text("language = 'zh'\n", encoding="utf-8")
+    (tmp_path / "random.txt").write_text("not ours\n", encoding="utf-8")
+
+    assert not bootstrap._is_user_data_only_root(tmp_path)
+
+
+def test_ensure_repo_checkout_clones_into_existing_user_data_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "OpenBiliClaw"
+    project_dir.mkdir()
+    (project_dir / "config.toml").write_text("language = 'zh'\n", encoding="utf-8")
+    (project_dir / "data").mkdir()
+    (project_dir / "data" / "openbiliclaw.db").write_bytes(b"existing db")
+
+    def fake_run_streaming(cmd: list[str], **_kwargs: object) -> None:
+        clone_dir = Path(cmd[-1])
+        clone_dir.mkdir(parents=True, exist_ok=True)
+        (clone_dir / ".git").mkdir()
+        (clone_dir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+        (clone_dir / "config.example.toml").write_text("[general]\n", encoding="utf-8")
+        (clone_dir / "src").mkdir()
+        (clone_dir / "src" / "marker.py").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(bootstrap, "which", lambda name: "git" if name == "git" else None)
+    monkeypatch.setattr(bootstrap, "run_streaming", fake_run_streaming)
+
+    result = bootstrap.ensure_repo_checkout(project_dir, "https://example/repo.git", "main")
+
+    assert result == project_dir.resolve()
+    assert (project_dir / ".git").exists()
+    assert (project_dir / "pyproject.toml").exists()
+    assert (project_dir / "config.example.toml").exists()
+    assert (project_dir / "config.toml").read_text(encoding="utf-8") == "language = 'zh'\n"
+    assert (project_dir / "data" / "openbiliclaw.db").read_bytes() == b"existing db"
+
+
 def _write_minimal_config(
     tmp_path: Path,
     *,

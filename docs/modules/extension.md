@@ -389,6 +389,7 @@ Chrome Web Store 上传自动化走官方 API v2，不使用第三方上传 acti
 - GitHub Actions：手动运行 `Publish Chrome Web Store Package` workflow；默认只上传 zip，不提交审核，勾选 `publish` 才调用 Chrome Web Store `publish` API。
 - 需要在本地环境变量或 GitHub Secrets 设置：`CHROME_WEBSTORE_CLIENT_ID`、`CHROME_WEBSTORE_CLIENT_SECRET`、`CHROME_WEBSTORE_REFRESH_TOKEN`、`CHROME_WEBSTORE_PUBLISHER_ID`、`CHROME_WEBSTORE_EXTENSION_ID`。
 - `CHROME_WEBSTORE_REFRESH_TOKEN` 必须由拥有该 Chrome Web Store item 管理权限的 Google 账号生成，OAuth scope 为 `https://www.googleapis.com/auth/chromewebstore`。
+- Chrome Web Store 详情页文案维护在 `docs/chrome-webstore-listing.md`；提交新版本、改安装路径或改项目入口时，将其中 `Detailed Description` 纯文本块复制到 Developer Dashboard 的商店详情页，避免公开页只展示无引导的短概述。
 - Chrome Web Store 隐私权政策网址可填写 `https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/privacy.md`；该文档说明插件单一用途、权限理由、数据类型、本地后端数据流和无远程代码声明。
 
 后端桌面包不走 GitHub Release 分发；后端源码更新只通过 `backend-v*` tag 标记，浏览器插件的 GitHub Release 保持为唯一下载包通道。

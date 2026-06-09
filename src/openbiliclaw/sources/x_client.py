@@ -12,7 +12,8 @@ Design contract (see ``docs/plans/2026-06-08-x-twitter-source-plan.md`` Task 6):
   module on a non-X install (where the ``openbiliclaw[x]`` extra is absent)
   must not fail. ``tests/test_x_client.py`` regresses this.
 * **Async wrapper.** ``twitter_cli`` reads are synchronous (curl_cffi), so the
-  public ``search`` / ``for_you`` / ``user_tweets`` coroutines run them via
+  public ``search`` / ``for_you`` / ``user_tweets`` (discovery) and ``likes`` /
+  ``bookmarks`` (init preference backfill) coroutines run them via
   :func:`asyncio.to_thread`.
 * **Return shape.** Each public method returns ``list[dict]`` — the output of
   ``twitter_cli.serialization.tweet_to_dict``. Keys are camelCase/JSON-safe:
@@ -122,6 +123,19 @@ class XClient:
         user_id = client.resolve_user_id(handle)
         return list(client.fetch_user_tweets(user_id, count=count))
 
+    def _raw_likes(self, *, count: int) -> list[Tweet]:
+        # The authenticated user's own Likes timeline. fetch_user_likes needs a
+        # user_id, so resolve "me" first (one extra read, init-time only).
+        client = self._client()
+        me = client.fetch_me()
+        user_id = str(getattr(me, "id", "") or "")
+        if not user_id:
+            raise XClientError("could not resolve authenticated user id for likes")
+        return list(client.fetch_user_likes(user_id, count=count))
+
+    def _raw_bookmarks(self, *, count: int) -> list[Tweet]:
+        return list(self._client().fetch_bookmarks(count=count))
+
     # -- public async API -------------------------------------------------
 
     async def search(self, query: str, *, limit: int, product: str = "Top") -> list[dict[str, Any]]:
@@ -137,6 +151,24 @@ class XClient:
     async def user_tweets(self, handle: str, *, limit: int) -> list[dict[str, Any]]:
         """Fetch a creator's recent tweets by handle. Returns ``tweet_to_dict`` dicts."""
         tweets = await self._run(self._raw_user_tweets, handle, count=limit)
+        return self._serialize(tweets, limit)
+
+    async def likes(self, *, limit: int) -> list[dict[str, Any]]:
+        """Fetch the authenticated user's own liked tweets (init preference backfill).
+
+        Unlike ``search`` / ``for_you`` (discovery), this reads the user's *own*
+        historical engagement to seed the soul profile — the X analogue of B站
+        favorites backfill. Returns ``tweet_to_dict`` dicts.
+        """
+        tweets = await self._run(self._raw_likes, count=limit)
+        return self._serialize(tweets, limit)
+
+    async def bookmarks(self, *, limit: int) -> list[dict[str, Any]]:
+        """Fetch the authenticated user's own bookmarked tweets (init preference backfill).
+
+        Returns ``tweet_to_dict`` dicts.
+        """
+        tweets = await self._run(self._raw_bookmarks, count=limit)
         return self._serialize(tweets, limit)
 
     # -- plumbing ---------------------------------------------------------

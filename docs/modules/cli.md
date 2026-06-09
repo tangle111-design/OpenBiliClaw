@@ -37,6 +37,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | `fetch-douyin` | 单独触发抖音 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-xhs` | 单独触发小红书 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-youtube` | 单独触发 YouTube bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
+| `fetch-x` | 单独触发 X（Twitter）点赞 / 收藏拉取（服务端 cookie 重放，无扩展任务，不需 daemon；`--dry-run` 只打印不入库） | ✅ |
 | `import-youtube <path>` | 从 Google Takeout 导入 YouTube 历史 / 订阅 / 点赞 | ✅ |
 | `setup-embedding` | 配置本地 Ollama 作为独立 embedding provider（可选） | ✅ |
 | `recommend` | 查看推荐 | ✅ |
@@ -669,6 +670,19 @@ YouTube 数据拉取
 ```
 
 这条命令只做单源 smoke / 补拉，不会隐式重建画像。profile 已初始化后，daemon 接收新增 partial 事件时会写入 memory 并进入增量画像更新链路。命令默认复用 6 小时内已有的 YouTube `bootstrap_profile` 任务，避免反复打开前台 YouTube 页面滚动历史 / 订阅 / 点赞；需要重新拉取时可设 `OPENBILICLAW_YT_BOOTSTRAP_DEDUPE_HOURS=0`。
+
+### `openbiliclaw fetch-x`
+
+单独触发 X（Twitter）点赞 / 收藏拉取，对应 `fetch-xhs` / `fetch-douyin` / `fetch-youtube`，但 X 是**服务端 cookie 重放**（无扩展 bootstrap 任务、**不需要 daemon**）：直接用已同步的 `x.com` cookie（`data/x_cookie.json` 或 `OPENBILICLAW_X_COOKIE`）拉取你自己的点赞 + 收藏，经 `_x_tweet_to_event` 转成统一事件写入 memory，用于在不重跑完整 `init` 的情况下验证 X 历史偏好回填链路。
+
+```bash
+$ openbiliclaw fetch-x -n 50
+拉取 X 点赞 / 收藏
+  X 点赞 50 条 / 收藏 23 条 → 共 73 条事件。
+  已写入 memory：73 条事件。 跑 `openbiliclaw rebuild-profile` 让画像吃进新信号。
+```
+
+`--limit/-n` 控制每类最多拉取条数（默认 50，`init` 回填用 200）；`--dry-run` 只拉取并打印、不写 memory。点赞 → `event_type="like"`、收藏 → `event_type="favorite"`（均为显式正向信号）。cookie 未同步时静默跳过（0 条事件、退出码 0），不报错；拉取本身 best-effort，单类失败（cookie 过期 / 限流 / 偶发 TLS）只打印告警、不中断。
 
 ### `openbiliclaw import-youtube <path>`
 

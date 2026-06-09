@@ -8,6 +8,7 @@
 - [主页 SEO 维护指南](seo.md) — Search Console / Bing 提交清单、sitemap / OG / JSON-LD 长期维护要点
 - [项目规格说明书 (SPEC)](spec.md) — 完整的项目设计与规划
 - [隐私权政策](privacy.md) — Chrome Web Store / 插件数据收集披露与本地优先数据流说明
+- [Chrome Web Store 商店页文案](chrome-webstore-listing.md) — 可直接复制到商店后台的项目入口、安装使用说明和隐私引导
 - [v0.1 开发任务清单](v0.1-todolist.md) — 当前版本的开发主线
 - [架构设计](architecture.md) — 系统架构与模块关系
 - [记忆系统设计](memory-design.md) — 多层网状记忆架构详解

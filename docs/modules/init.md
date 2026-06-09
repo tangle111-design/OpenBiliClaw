@@ -6,7 +6,7 @@
 
 四阶段（与 CLI 完全一致）：
 
-1. **拉取数据** — B站 历史 / 收藏 / 关注（`_fetch_bilibili_init_data`）+ 小红书 / 抖音 / YouTube bootstrap 信号采集（按启用平台）→ 统一 `build_event` → `memory.propagate_event` 入库。
+1. **拉取数据** — B站 历史 / 收藏 / 关注（`_fetch_bilibili_init_data`）+ 小红书 / 抖音 / YouTube bootstrap 信号采集（按启用平台）+ X 点赞 / 收藏（`_fetch_x_init_data`,服务端 twitter-cli 直拉、无扩展任务,与 B站 一样在本轮直接持久化;cookie 未同步时静默跳过）→ 统一 `build_event` → `memory.propagate_event` 入库。X 点赞 → `event_type="like"`、收藏 → `event_type="favorite"`(均为显式正向信号)。
 2. **分析偏好** — `soul_engine.analyze_events(...)` 分片并发。
 3. **生成画像** ‖ 4. **发现补池**（并行）— `soul_engine.build_initial_profile(...)` 与发现补池同时跑，发现用 preference-only 草稿画像预热评估。
 
@@ -15,7 +15,7 @@
 | 项 | 说明 |
 |---|---|
 | 位置 | `src/openbiliclaw/cli.py` |
-| 签名 | `async run_guided_init(*, client, memory, soul_engine, favorite_limit, follow_limit, include_xhs, include_dy, include_yt, target_pool_count, discover_backfill, coordinator=None, run_id=None) -> InitResult` |
+| 签名 | `async run_guided_init(*, client, memory, soul_engine, favorite_limit, follow_limit, include_xhs, include_dy, include_yt, include_x=False, target_pool_count, discover_backfill, coordinator=None, run_id=None) -> InitResult` |
 | 为什么是协程 | 四阶段原先内联在 `init` 命令里，被四处独立 `asyncio.run` 包着，后端无法复用（会嵌套事件循环）。合并为一个协程后，CLI 用单次 `asyncio.run(run_guided_init(...))` 驱动、API 在服务 loop 里直接 `await`。 |
 | bootstrap 采集器 | 仍是同步实现（有同步调用方 + 测试），但在流水线里走 `await asyncio.to_thread(...)`，不冻结 API 事件循环；`Database` 以 `check_same_thread=False` 打开，跨线程读安全。 |
 | `discover_backfill` 注入 | 唯一与运行路径相关的步骤。CLI 传 `_run_init_discovery_backfill_async`（一次性 `discovery_engine`）；API 传 `controller.run_init_backfill`（持 `_refresh_lock`，与连续 refresh 串行）。其余步骤完全共享。 |

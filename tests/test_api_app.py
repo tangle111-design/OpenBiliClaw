@@ -1496,7 +1496,7 @@ class TestBackendAPI:
             "last_account_sync_at": "2026-03-14T18:00:00+00:00",
             "last_account_sync_error": "",
             "auto_update_enabled": False,
-            "current_version": "0.3.102",
+            "current_version": "0.3.103",
             "latest_remote_version": "",
             "last_update_check_at": "",
             "last_update_error": "",
@@ -5277,6 +5277,53 @@ class TestBackendAPI:
         assert cfg.llm.embedding.model == "text-embedding-3-small"
         assert cfg.llm.embedding.similarity_threshold == 0.78
 
+    def test_put_config_persists_twitter_enable_and_pool_share(self, monkeypatch, tmp_path) -> None:
+        """PUT /api/config must persist sources.twitter (enable + budgets) and
+        the twitter pool share — previously the handler silently dropped the
+        whole sources.twitter block, so the settings-page X toggle was lost on
+        reload."""
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig, save_config
+
+        config_path = tmp_path / "config.toml"
+        cfg = Config(
+            llm=LLMConfig(
+                default_provider="ollama",
+                ollama=LLMProviderConfig(model="llama3", base_url="http://localhost:11434"),
+            ),
+        )
+        cfg.sources.twitter.enabled = False
+        save_config(cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: cfg)
+        monkeypatch.setattr(
+            "openbiliclaw.config.save_config",
+            lambda c, path=None: save_config(c, config_path),
+        )
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        client = TestClient(app)
+
+        response = client.put(
+            "/api/config",
+            json={
+                "sources": {"twitter": {"enabled": True, "daily_feed_budget": 9}},
+                "scheduler": {"pool_source_shares": {"bilibili": 8, "twitter": 4}},
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["ok"] is True
+        # Write path: no longer dropped.
+        assert cfg.sources.twitter.enabled is True
+        assert cfg.sources.twitter.daily_feed_budget == 9
+        assert cfg.scheduler.pool_source_shares["twitter"] == 4
+        # Read path: surfaced in the response so the settings page can reload it.
+        assert data["config"]["sources"]["twitter"]["enabled"] is True
+        assert data["config"]["scheduler"]["pool_source_shares"]["twitter"] == 4
+
     def test_put_config_updates_embedding_credentials(
         self,
         monkeypatch,
@@ -5888,11 +5935,17 @@ class TestEmbeddingAndCompatProviderE2E:
         cfg.sources.youtube.daily_trending_budget = 44
         cfg.sources.youtube.daily_channel_budget = 8
         cfg.sources.youtube.request_interval_seconds = 3
+        cfg.sources.twitter.enabled = True
+        cfg.sources.twitter.cookie_env = "CUSTOM_X_COOKIE"
+        cfg.sources.twitter.daily_search_budget = 7
+        cfg.sources.twitter.daily_feed_budget = 14
+        cfg.sources.twitter.daily_creator_budget = 5
         cfg.scheduler.pool_source_shares = {
             "bilibili": 6,
             "xiaohongshu": 2,
             "douyin": 2,
             "youtube": 1,
+            "twitter": 3,
         }
         cfg.scheduler.account_sync_interval_hours = 9
         cfg.scheduler.refresh_check_interval_seconds = 75
@@ -5944,11 +5997,17 @@ class TestEmbeddingAndCompatProviderE2E:
         assert data["sources"]["youtube"]["daily_trending_budget"] == 44
         assert data["sources"]["youtube"]["daily_channel_budget"] == 8
         assert data["sources"]["youtube"]["request_interval_seconds"] == 3
+        assert data["sources"]["twitter"]["enabled"] is True
+        assert data["sources"]["twitter"]["cookie_env"] == "CUSTOM_X_COOKIE"
+        assert data["sources"]["twitter"]["daily_search_budget"] == 7
+        assert data["sources"]["twitter"]["daily_feed_budget"] == 14
+        assert data["sources"]["twitter"]["daily_creator_budget"] == 5
         assert data["scheduler"]["pool_source_shares"] == {
             "bilibili": 6,
             "xiaohongshu": 2,
             "douyin": 2,
             "youtube": 1,
+            "twitter": 3,
         }
         assert data["scheduler"]["account_sync_interval_hours"] == 9
         assert data["scheduler"]["refresh_check_interval_seconds"] == 75

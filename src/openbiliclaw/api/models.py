@@ -814,12 +814,24 @@ class YoutubeSourceConfigOut(BaseModel):
     min_interval_minutes: int = 60
 
 
+class TwitterSourceConfigOut(BaseModel):
+    enabled: bool = False
+    mode: str = "cookie"
+    cookie_env: str = "OPENBILICLAW_X_COOKIE"
+    daily_search_budget: int = 0
+    daily_feed_budget: int = 0
+    daily_creator_budget: int = 0
+    request_interval_seconds: int = 3
+    min_interval_minutes: int = 60
+
+
 class SourcesConfigOut(BaseModel):
     browser: SourcesBrowserConfigOut = Field(default_factory=SourcesBrowserConfigOut)
     bilibili: BilibiliSourceConfigOut = Field(default_factory=BilibiliSourceConfigOut)
     xiaohongshu: XiaohongshuSourceConfigOut = Field(default_factory=XiaohongshuSourceConfigOut)
     douyin: DouyinSourceConfigOut = Field(default_factory=DouyinSourceConfigOut)
     youtube: YoutubeSourceConfigOut = Field(default_factory=YoutubeSourceConfigOut)
+    twitter: TwitterSourceConfigOut = Field(default_factory=TwitterSourceConfigOut)
 
 
 class SchedulerConfigOut(BaseModel):

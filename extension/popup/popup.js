@@ -4721,7 +4721,9 @@ function renderRecommendations(items, { append = false } = {}) {
     }
     const platformKey = (item.source_platform || "bilibili").toLowerCase();
     const platformLabel =
-      { bilibili: "B 站", xiaohongshu: "小红书" }[platformKey] || item.source_platform;
+      { bilibili: "B 站", xiaohongshu: "小红书", douyin: "抖音", youtube: "YouTube", twitter: "X" }[
+        platformKey
+      ] || item.source_platform;
     const sourceCorner = document.createElement("span");
     sourceCorner.className = `recommendation-source-corner source-platform-${platformKey}`;
     sourceCorner.textContent = platformLabel;

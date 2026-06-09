@@ -8,15 +8,15 @@ The layout differs between onedir and macOS ``.app`` bundle outputs:
 * **onedir** (``dist/OpenBiliClaw/OpenBiliClaw``) — the executable and its
   bundled resources (``config.example.toml``, ``ollama``) live in the install
   directory, which Setup overwrites on upgrade and may remove on uninstall.
-  User data therefore lives in a per-user root
-  (``%LOCALAPPDATA%\\OpenBiliClaw`` on Windows); any data an older build left
-  next to the executable is migrated there on first launch.
+  User data therefore lives in the same per-user root used by the one-line /
+  AI installers (``%USERPROFILE%\\OpenBiliClaw`` on Windows,
+  ``~/OpenBiliClaw`` on macOS/Linux). Any data an older build left next to the
+  executable or in the older packaged-app system data root is migrated on first
+  launch.
 * **macOS .app** (``OpenBiliClaw.app/Contents/MacOS/OpenBiliClaw``) —
-  the bundle itself is treated as read-only.  User data must live
-  outside the bundle, by macOS convention in
-  ``~/Library/Application Support/OpenBiliClaw``.  The bundled default
-  template ``config.example.toml`` is placed under ``Contents/Resources``
-  by PyInstaller and seeded into the user's data dir on first launch.
+  the bundle itself is treated as read-only. The bundled default template
+  ``config.example.toml`` is placed under ``Contents/Resources`` by PyInstaller
+  and seeded into the user's data dir on first launch.
 
 In both packaged layouts the read-only bundle provides the template config +
 ``ollama`` while user data lives under :func:`_user_data_root`.
@@ -55,20 +55,13 @@ def _user_data_root_for(
 ) -> Path:
     """Pure resolver for the per-user data root (params injected for testing).
 
-    Uses each OS's conventional per-user location, independent of the install
-    directory:
-
-    * Windows — ``%LOCALAPPDATA%\\OpenBiliClaw``
-    * macOS   — ``~/Library/Application Support/OpenBiliClaw``
-    * other   — ``$XDG_DATA_HOME/OpenBiliClaw`` (``~/.local/share`` fallback)
+    Packaged builds intentionally share the same root as script / AI installs:
+    ``~/OpenBiliClaw`` on Unix-like systems and ``%USERPROFILE%\\OpenBiliClaw``
+    on Windows. This lets users switch between install channels without
+    retyping keys or losing profile data.
     """
-    if os_name == "nt":
-        base = environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")
-        return Path(base) / "OpenBiliClaw"
-    if platform == "darwin":
-        return home / "Library" / "Application Support" / "OpenBiliClaw"
-    base = environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")
-    return Path(base) / "OpenBiliClaw"
+    _ = os_name, platform, environ
+    return home / "OpenBiliClaw"
 
 
 def _user_data_root() -> Path:
@@ -80,9 +73,32 @@ def _user_data_root() -> Path:
     return _user_data_root_for(os.name, sys.platform, Path.home(), os.environ)
 
 
+def _legacy_packaged_user_data_root_for(
+    os_name: str, platform: str, home: Path, environ: Mapping[str, str]
+) -> Path:
+    """Return the user-data root used by older packaged desktop builds."""
+    if os_name == "nt":
+        base = environ.get("LOCALAPPDATA") or str(home / "AppData" / "Local")
+        return Path(base) / "OpenBiliClaw"
+    if platform == "darwin":
+        return home / "Library" / "Application Support" / "OpenBiliClaw"
+    base = environ.get("XDG_DATA_HOME") or str(home / ".local" / "share")
+    return Path(base) / "OpenBiliClaw"
+
+
+def _legacy_packaged_user_data_root() -> Path:
+    """Return the legacy packaged-app root for the current machine."""
+    return _legacy_packaged_user_data_root_for(
+        os.name,
+        sys.platform,
+        Path.home(),
+        os.environ,
+    )
+
+
 # Names older builds wrote next to the executable under ``{app}``; relocated to
 # the per-user data root on the first launch of a relocation-aware build.
-_LEGACY_DATA_ENTRIES = ("config.toml", "data", "logs")
+_LEGACY_DATA_ENTRIES = ("config.toml", "config.local.toml", "data", "logs")
 
 
 def _migrate_legacy_install_dir_data(install_dir: Path, project_root: Path) -> None:
@@ -124,6 +140,42 @@ def _migrate_legacy_install_dir_data(install_dir: Path, project_root: Path) -> N
             print(f"[OpenBiliClaw] 历史数据迁移跳过 {name}: {exc}")
     if moved:
         print(f"[OpenBiliClaw] 已将历史数据迁移到 {project_root}: {', '.join(moved)}")
+
+
+def _copy_legacy_packaged_user_data(legacy_root: Path, project_root: Path) -> None:
+    """Copy old packaged-app user data into the unified script/AI data root.
+
+    The desktop package used to store user data in OS-specific app-data
+    locations. New builds use ``~/OpenBiliClaw`` / ``%USERPROFILE%\\OpenBiliClaw``
+    so all install channels share one profile. This migration is copy-only,
+    best-effort and non-clobbering: if the unified root already has a given
+    entry, it wins.
+    """
+    if legacy_root == project_root or not legacy_root.exists():
+        return
+    legacy = [name for name in _LEGACY_DATA_ENTRIES if (legacy_root / name).exists()]
+    if not legacy:
+        return
+    project_root.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    for name in legacy:
+        source = legacy_root / name
+        destination = project_root / name
+        if destination.exists():
+            continue
+        try:
+            if source.is_dir():
+                shutil.copytree(source, destination)
+            else:
+                shutil.copy2(source, destination)
+            copied.append(name)
+        except Exception as exc:  # noqa: BLE001 — best-effort compatibility
+            print(f"[OpenBiliClaw] 历史安装包数据拷贝跳过 {name}: {exc}")
+    if copied:
+        print(
+            f"[OpenBiliClaw] 已从历史安装包数据目录拷贝到 {project_root}: "
+            f"{', '.join(copied)}"
+        )
 
 
 def _resolve_runtime_paths() -> tuple[Path, Path]:
@@ -607,9 +659,13 @@ def main() -> None:
     # splash (closed once the tray appears); macOS — where a menu-bar agent gives
     # no Dock bounce — gets a one-shot notification here instead.
     _notify_starting()
-    # Windows onedir upgrades: relocate any user data older builds left in the
-    # install dir into the per-user root, BEFORE we create fresh data/ + logs/
-    # (a whole-dir move must not land inside a freshly-made empty dir).
+    # New packaged builds share the same data root as one-line / AI installs.
+    # If a previous packaged build used the old OS-specific app-data root, copy
+    # its data into the unified root before seeding any defaults.
+    _copy_legacy_packaged_user_data(_legacy_packaged_user_data_root(), project_root)
+    # Very old Windows onedir builds: relocate any user data left in the install
+    # dir into the per-user root, BEFORE we create fresh data/ (a whole-dir move
+    # must not land inside a freshly-made empty dir).
     _migrate_legacy_install_dir_data(bundled_resources, project_root)
     project_root.mkdir(parents=True, exist_ok=True)
     os.environ["OPENBILICLAW_PROJECT_ROOT"] = str(project_root)

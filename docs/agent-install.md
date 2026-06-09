@@ -51,6 +51,7 @@ $env:MODE="docker"; [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePo
 Either command:
 
 1. Clones the OpenBiliClaw repo (default `~/OpenBiliClaw` on Unix, `%USERPROFILE%\OpenBiliClaw` on Windows; override with the `INSTALL_DIR` env var)
+   - Desktop installers use this same directory for `config.toml` / `data/` / `logs/`. If the desktop package created the directory first, the one-line installer clones source files into it without touching existing user data.
 2. Auto-detects any existing OpenBiliClaw install under the standard candidate paths (`~/workspace/OpenBiliClaw`, `~/OpenBiliClaw`, `~/projects/OpenBiliClaw`, `~/code/OpenBiliClaw` — same set on both platforms, rooted at `$HOME` / `%USERPROFILE%`) and **reuses** its LLM API keys and Bilibili cookie so the user never has to retype them
 3. In a human terminal, opens the full installer wizard **before dependency install or backend start**: human one-line installer asks LLM provider first, then provider credentials/model, embedding, Bilibili init limits, XHS / Douyin / YouTube opt-ins, and Bilibili cookie source
 4. Installs Python dependencies for local mode, or builds / starts Docker Compose when `MODE=docker`

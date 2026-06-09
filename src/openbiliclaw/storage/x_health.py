@@ -208,6 +208,39 @@ class XSourceHealthStore:
         )
         self._db.conn.commit()
 
+    def clear_relogin_block(self) -> bool:
+        """Clear a re-login block after a fresh valid cookie is synced.
+
+        Re-login states (``missing_cookie`` / ``expired_cookie`` / ``blocked``)
+        have no timed recovery: :meth:`is_ready` parks the producer, so it can
+        never earn the "later success" that would reset them. A new browser
+        cookie *is* that external re-login signal, so reset to ``ok`` here —
+        otherwise discovery stays dead-locked even after the user re-logs in.
+
+        Leaves ``rate_limited`` untouched (its cooldown is time-based, not a
+        cookie problem). Also lifts any For-You auto-pause, since the failures
+        that tripped it were attributable to the same expired session. Returns
+        True when a block was actually cleared.
+        """
+        if self.get()["state"] not in _RELOGIN_STATES:
+            return False
+        self._db.conn.execute(
+            """
+            UPDATE x_source_health
+               SET state = 'ok',
+                   consecutive_failures = 0,
+                   feed_failures = 0,
+                   feed_paused = 0,
+                   cooldown_until = '',
+                   detail = '',
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE key = ?
+            """,
+            (_ROW_KEY,),
+        )
+        self._db.conn.commit()
+        return True
+
     def record_error(self, exc: BaseException, *, strategy: str = "") -> str:
         """Map an error to a health state, persist it, and return the state."""
         state = health_state_for_error(exc)

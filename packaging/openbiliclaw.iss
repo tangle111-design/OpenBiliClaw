@@ -66,10 +66,12 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
-; NOTE: user data (config.toml, data\, logs\) lives under %LOCALAPPDATA%\OpenBiliClaw,
+; NOTE: user data (config.toml, data\, logs\) lives under
+; %USERPROFILE%\OpenBiliClaw, the same root used by the one-line / AI installers,
 ; NOT under {app} — see packaging/entry.py (_user_data_root). Keeping it out of the
 ; install dir means upgrades never lock the database and uninstall never touches the
-; user's profile. The app migrates data left in {app} by older builds on first run.
+; user's profile. The app migrates data left in {app}, and copies data from the
+; older %LOCALAPPDATA%\OpenBiliClaw packaged-app root, on first run.
 
 [Code]
 procedure StopRunningInstance;

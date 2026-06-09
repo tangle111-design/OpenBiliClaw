@@ -163,3 +163,15 @@ def test_backend_tag_workflow_does_not_publish_backend_packages() -> None:
 
     assert "后端源码更新看 `backend-v*` tag，不发布后端桌面包" in docs_index
     assert "后端桌面包不走 GitHub Release 分发" in extension_doc
+
+
+def test_installers_can_clone_code_into_existing_packaged_data_root() -> None:
+    install_sh = _read("scripts/install.sh")
+    install_ps1 = _read("scripts/install.ps1")
+    bootstrap = _read("scripts/agent_bootstrap.py")
+
+    assert "is_user_data_only_dir" in install_sh
+    assert "clone_into_user_data_root" in install_sh
+    assert "Test-UserDataOnlyRoot" in install_ps1
+    assert "Clone-IntoUserDataRoot" in install_ps1
+    assert "_is_user_data_only_root" in bootstrap

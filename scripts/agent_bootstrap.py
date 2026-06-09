@@ -42,6 +42,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -73,6 +74,13 @@ LOCAL_OLLAMA_BASE_URLS = (
 )
 DEFAULT_BILIBILI_FAVORITE_LIMIT = 300
 DEFAULT_BILIBILI_FOLLOW_LIMIT = 100
+USER_DATA_ONLY_ENTRIES = {
+    "config.toml",
+    "config.local.toml",
+    "data",
+    "logs",
+    "openbiliclaw.lock",
+}
 
 SUPPORTED_PROVIDERS = (
     "openai",
@@ -1712,7 +1720,9 @@ def ensure_repo_checkout(project_dir: Path, repo_url: str, branch: str) -> Path:
     Rules:
     * If project_dir already contains pyproject.toml + config.example.toml, assume it's already a checkout.
     * Otherwise, clone the repo into project_dir.
-    * Refuses to clone into a non-empty directory that does not already look like OpenBiliClaw.
+    * If project_dir only contains desktop-package user data, clone code into
+      the same directory without touching config.toml / data / logs.
+    * Refuses to clone into other non-empty directories.
     """
 
     project_dir = project_dir.expanduser().resolve()
@@ -1723,6 +1733,8 @@ def ensure_repo_checkout(project_dir: Path, repo_url: str, branch: str) -> Path:
     project_dir.mkdir(parents=True, exist_ok=True)
     entries = [entry for entry in project_dir.iterdir() if entry.name != ".DS_Store"]
     if entries:
+        if _is_user_data_only_root(project_dir):
+            return _clone_repo_into_user_data_root(project_dir, repo_url, branch)
         raise RuntimeError(
             f"Target directory is not empty and does not look like OpenBiliClaw: {project_dir}"
         )
@@ -1733,6 +1745,40 @@ def ensure_repo_checkout(project_dir: Path, repo_url: str, branch: str) -> Path:
 
     info(f"Cloning {repo_url} (branch {branch}) into {project_dir}")
     run_streaming([git, "clone", "--branch", branch, "--depth", "1", repo_url, str(project_dir)])
+    return project_dir
+
+
+def _is_user_data_only_root(path: Path) -> bool:
+    """Return True when a directory only contains OpenBiliClaw user data."""
+    if not path.exists() or not path.is_dir():
+        return False
+    entries = [entry for entry in path.iterdir() if entry.name != ".DS_Store"]
+    return bool(entries) and all(entry.name in USER_DATA_ONLY_ENTRIES for entry in entries)
+
+
+def _clone_repo_into_user_data_root(project_dir: Path, repo_url: str, branch: str) -> Path:
+    """Clone source code into an existing user-data-only root.
+
+    The desktop package now shares ``~/OpenBiliClaw`` with script / AI installs.
+    If the package created that directory first, it contains config/data/logs but
+    no source checkout. Clone to a temporary sibling, then move the repo files
+    in, leaving user data untouched.
+    """
+    git = which("git")
+    if git is None:
+        raise RuntimeError("git is required to clone OpenBiliClaw but was not found on PATH.")
+
+    info(f"Target {project_dir} contains existing user data; cloning source into it")
+    with tempfile.TemporaryDirectory(prefix="openbiliclaw-clone-", dir=project_dir.parent) as tmp:
+        clone_dir = Path(tmp)
+        run_streaming([git, "clone", "--branch", branch, "--depth", "1", repo_url, str(clone_dir)])
+        for entry in clone_dir.iterdir():
+            destination = project_dir / entry.name
+            if destination.exists():
+                raise RuntimeError(
+                    f"Cannot merge checkout into {project_dir}: destination exists: {destination}"
+                )
+            shutil.move(str(entry), str(destination))
     return project_dir
 
 

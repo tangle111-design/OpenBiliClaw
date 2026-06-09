@@ -169,6 +169,10 @@ _INIT_POOL_TARGET_COUNT = 15
 _INIT_BILIBILI_HISTORY_LIMIT = 300
 _INIT_BILIBILI_FAVORITE_LIMIT = 300
 _INIT_BILIBILI_FOLLOW_LIMIT = 100
+# X (Twitter): the user's own Likes + Bookmarks, fetched server-side via
+# twitter-cli (no extension task). Both are strong explicit-preference signals.
+_INIT_X_LIKES_LIMIT = 200
+_INIT_X_BOOKMARKS_LIMIT = 200
 _INIT_BOOTSTRAP_MAX_ITEMS_PER_SCOPE = 300
 _DEFAULT_XHS_BOOTSTRAP_WAIT_SECONDS = 180.0
 _DEFAULT_DY_BOOTSTRAP_WAIT_SECONDS = 180.0
@@ -755,6 +759,51 @@ def _history_item_to_event(item: dict[str, Any]) -> dict[str, Any]:
         metadata={
             "bvid": bvid,
             "view_at": view_at,
+        },
+    )
+
+
+def _x_tweet_to_event(tweet: dict[str, Any], *, event_type: str) -> dict[str, Any] | None:
+    """Normalize a twitter-cli ``tweet_to_dict`` into a unified preference event.
+
+    Mirrors ``_history_item_to_event``: routes through ``build_event()`` so X
+    likes / bookmarks share the same event shape as B站 favorites and feed the
+    soul analyzer identically. ``event_type`` is ``"like"`` (X likes) or
+    ``"favorite"`` (X bookmarks) — both are explicit-positive signals. Returns
+    ``None`` for tombstones (no ``id``). The canonical URL matches the discovery
+    side (``x_normalize``): ``https://x.com/<handle>/status/<id>``.
+    """
+    from openbiliclaw.sources.event_format import SOURCE_TWITTER, build_event
+
+    tweet_id = str(tweet.get("id", "") or "").strip()
+    if not tweet_id:
+        return None
+    raw_author = tweet.get("author")
+    author = raw_author if isinstance(raw_author, dict) else {}
+    screen_name = str(author.get("screenName", "") or "").strip()
+    author_name = f"@{screen_name}" if screen_name else str(author.get("name", "") or "").strip()
+    handle = screen_name or "i"  # x.com/i/status/<id> resolves without a handle
+    text = str(tweet.get("articleText") or tweet.get("text") or "").strip()
+    first_line = text.splitlines()[0] if text else ""
+    title = first_line[:140]
+    verb = "点赞" if event_type == "like" else "收藏"
+    if title and author_name:
+        context = f"在 X {verb}了 {author_name} 的推文:{title}"
+    elif title:
+        context = f"在 X {verb}了一条推文:{title}"
+    else:
+        context = f"在 X {verb}了一条推文"
+    return build_event(
+        event_type=event_type,
+        source_platform=SOURCE_TWITTER,
+        title=title,
+        url=f"https://x.com/{handle}/status/{tweet_id}",
+        author=author_name,
+        context=context,
+        metadata={
+            "tweet_id": tweet_id,
+            "screen_name": screen_name,
+            "body_text": text,
         },
     )
 
@@ -4312,6 +4361,55 @@ async def _fetch_bilibili_init_data(
     return hist, favs, follows
 
 
+async def _fetch_x_init_data(
+    *,
+    likes_limit: int,
+    bookmarks_limit: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Fetch the user's own X likes + bookmarks for init preference backfill.
+
+    X is server-side cookie replay (no extension bootstrap task), so — like
+    B站 — we fetch directly here. Resolves the synced ``x.com`` cookie via the
+    same path the discovery producer uses; if it's absent (user enabled X but
+    hasn't logged in / the extension hasn't synced yet) we skip cleanly. All
+    fetches are best-effort: a missing / expired cookie or a rate-limit must
+    never hard-fail ``init``. Returns ``(likes, bookmarks)`` as
+    ``tweet_to_dict`` dicts.
+    """
+    from openbiliclaw.config import load_config
+
+    cfg = load_config()
+    x_cfg = getattr(getattr(cfg, "sources", None), "twitter", None)
+    cookie_env = str(getattr(x_cfg, "cookie_env", "OPENBILICLAW_X_COOKIE"))
+
+    from openbiliclaw.api.app import resolve_x_cookie
+
+    cookie = resolve_x_cookie(data_dir=cfg.data_path, cookie_env=cookie_env)
+    if not cookie:
+        console.print(
+            "  [dim]X 未同步 cookie,跳过点赞/收藏历史回填"
+            "(登录 x.com 后扩展会自动同步,下次 init 生效)。[/dim]"
+        )
+        return [], []
+
+    from openbiliclaw.sources.x_client import XClient
+
+    x_client = XClient(cookie=cookie)
+    likes: list[dict[str, Any]] = []
+    bookmarks: list[dict[str, Any]] = []
+    if likes_limit > 0:
+        try:
+            likes = await x_client.likes(limit=likes_limit)
+        except Exception as exc:
+            console.print(f"  [yellow]X 点赞拉取失败: {exc}[/yellow]")
+    if bookmarks_limit > 0:
+        try:
+            bookmarks = await x_client.bookmarks(limit=bookmarks_limit)
+        except Exception as exc:
+            console.print(f"  [yellow]X 收藏拉取失败: {exc}[/yellow]")
+    return likes, bookmarks
+
+
 async def run_guided_init(
     *,
     client: Any,
@@ -4322,6 +4420,7 @@ async def run_guided_init(
     include_xhs: bool,
     include_dy: bool,
     include_yt: bool,
+    include_x: bool = False,
     target_pool_count: int,
     discover_backfill: Callable[..., Coroutine[Any, Any, int]],
     coordinator: Any = None,
@@ -4496,6 +4595,22 @@ async def run_guided_init(
     elif yt_status == "failed":
         console.print("  [yellow]YouTube 任务失败 —— 检查扩展日志,或重试 init。[/yellow]")
 
+    # X (Twitter): server-side cookie replay (no extension bootstrap task), so —
+    # like B站 — fetch the user's own likes + bookmarks directly here. Skips
+    # cleanly when X is disabled or the cookie isn't synced yet.
+    x_likes_data: list[dict[str, Any]] = []
+    x_bookmarks_data: list[dict[str, Any]] = []
+    if include_x:
+        x_likes_data, x_bookmarks_data = await _fetch_x_init_data(
+            likes_limit=_INIT_X_LIKES_LIMIT,
+            bookmarks_limit=_INIT_X_BOOKMARKS_LIMIT,
+        )
+        if x_likes_data or x_bookmarks_data:
+            console.print(
+                f"  X 点赞 [green]{len(x_likes_data)}[/green] 条"
+                f" / 收藏 [green]{len(x_bookmarks_data)}[/green] 条"
+            )
+
     # Build events from all data sources via the unified event_format
     # builder so B站 / 小红书 / future-source events share one shape.
     from openbiliclaw.sources.event_format import SOURCE_BILIBILI, build_event
@@ -4535,7 +4650,23 @@ async def run_guided_init(
             )
         )
     bilibili_event_count = len(events)
-    # Persist only B站 events to memory here. Cross-platform (xhs/dy/yt) events
+    # X likes/bookmarks are direct-fetched here (no extension task handler to
+    # propagate them), so — like B站 — they must be persisted in this run.
+    # Appended before the events_to_persist snapshot below; the cross-platform
+    # (xhs/dy/yt) extends happen after the snapshot since those are persisted by
+    # their task-result handler instead.
+    x_likes_events = [
+        ev for tw in x_likes_data if (ev := _x_tweet_to_event(tw, event_type="like")) is not None
+    ]
+    x_bookmark_events = [
+        ev
+        for tw in x_bookmarks_data
+        if (ev := _x_tweet_to_event(tw, event_type="favorite")) is not None
+    ]
+    events.extend(x_likes_events)
+    events.extend(x_bookmark_events)
+    x_event_count = len(x_likes_events) + len(x_bookmark_events)
+    # Persist B站 + X events to memory here. Cross-platform (xhs/dy/yt) events
     # are propagated by the task-result handler — which, during init, only
     # propagates init-OWNED results and reuses its bootstrap-key dedupe (so a
     # force re-init within the task-reuse window doesn't double-insert). They
@@ -4558,6 +4689,7 @@ async def run_guided_init(
                 "xiaohongshu": len(xhs_events),
                 "douyin": len(dy_events),
                 "youtube": len(yt_events),
+                "twitter": x_event_count,
             }
         )
     for event in events_to_persist:
@@ -4859,6 +4991,7 @@ def init(
                 include_xhs=include_xhs,
                 include_dy=include_dy,
                 include_yt=include_yt,
+                include_x=include_x,
                 target_pool_count=_INIT_POOL_TARGET_COUNT,
                 discover_backfill=_run_init_discovery_backfill_async,
             )
@@ -5440,6 +5573,83 @@ def fetch_youtube(
         collect=lambda tid: _collect_yt_bootstrap_events(tid, max_wait_seconds=wait_seconds),
         wait_seconds=wait_seconds,
         summary_renderer=_render,
+    )
+
+
+@app.command("fetch-x")
+def fetch_x(
+    limit: int = typer.Option(
+        50,
+        "--limit",
+        "-n",
+        help="每类(点赞 / 收藏)最多拉取条数(默认 50,init 回填用 200)。",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="只拉取并打印,不写入 memory / 不更新画像。",
+    ),
+) -> None:
+    """单独触发 X(Twitter)点赞 / 收藏拉取(独立于 ``init``)。
+
+    与 fetch-xhs / fetch-douyin / fetch-youtube 对应,但 X 是服务端 cookie
+    重放(无扩展 bootstrap 任务):本命令直接用已同步的 x.com cookie 拉取你
+    自己的点赞 + 收藏,转成统一事件写入 memory —— 用于在不重跑完整 ``init``
+    的情况下验证 X 历史偏好回填链路。不需要 daemon。
+
+    \b
+    采集范围:
+      like      — 你的点赞 timeline   (强信号 → event_type="like")
+      favorite  — 你的收藏 / 书签      (强信号 → event_type="favorite")
+
+    前提:
+      1. 浏览器扩展已把 x.com cookie 同步到后端(登录 x.com 即自动同步),
+         或设置环境变量 ``OPENBILICLAW_X_COOKIE``。cookie 缺失时静默跳过。
+    """
+    _require_runtime_config()
+    _print_page_title("拉取 X 点赞 / 收藏", "服务端 cookie 重放,独立于 init")
+
+    likes_data, bookmarks_data = asyncio.run(
+        _fetch_x_init_data(likes_limit=limit, bookmarks_limit=limit)
+    )
+    like_events = [
+        ev for tw in likes_data if (ev := _x_tweet_to_event(tw, event_type="like")) is not None
+    ]
+    bookmark_events = [
+        ev
+        for tw in bookmarks_data
+        if (ev := _x_tweet_to_event(tw, event_type="favorite")) is not None
+    ]
+    events = like_events + bookmark_events
+
+    console.print(
+        f"  X 点赞 [green]{len(like_events)}[/green] 条"
+        f" / 收藏 [green]{len(bookmark_events)}[/green] 条"
+        f" → 共 [green]{len(events)}[/green] 条事件。"
+    )
+    for ev in events[:5]:
+        console.print(f"    [dim]- {ev.get('event_type')}: {(ev.get('title') or '')[:50]}[/dim]")
+
+    if not events:
+        console.print(
+            "  [yellow]没有可写入的事件 —— 未登录 X / cookie 未同步 / 账号无点赞收藏。[/yellow]"
+        )
+        raise typer.Exit(code=0)
+
+    if dry_run:
+        console.print("  [dim]--dry-run:未写入 memory。[/dim]")
+        return
+
+    memory = _build_memory_manager()
+
+    async def _persist() -> None:
+        for ev in events:
+            await memory.propagate_event(ev)
+
+    asyncio.run(_persist())
+    console.print(
+        f"  [green]已写入 memory:{len(events)} 条事件。[/green]"
+        " 跑 `openbiliclaw rebuild-profile` 让画像吃进新信号。"
     )
 
 
