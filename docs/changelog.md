@@ -16,6 +16,7 @@
 - 修复 `/api/sources/status` 小红书状态「永久绿点」：原先只看带 `xsec_token` 缓存行的总数，插件停止同步几周后令牌早已失效（xhs 300031）状态仍显示就绪。现在以 24 小时新鲜窗口判定——窗口内有新发现的带令牌缓存行、或有被令牌回填刷新过 `last_seen_at` 的候选行才算 `ready`，仅剩存量旧行降级为新状态 `stale`（黄点，提示逛逛小红书即可刷新）。
 - B 站 cookie 缺少核心登录字段（`SESSDATA`/`bili_jct`/`DedeUserID` 不全）时不再报绿点 `ready`，改为新状态 `partial`（黄点）——绿点不再掩盖「凭据存在但大概率已坏」的情况。桌面 Web 与插件的彩点映射同步新增 `partial`/`stale`，并在状态行可见时每 30 秒自动重拉 `/api/sources/status`（此前只在打开设置页时拉一次，去别的标签页登录平台后回来状态不会变）。
 - 修复惊喜推荐「点喜欢后重灌即消失」：v0.3.63 只修了三端会话内保留，但 like 写入的 `feedback_type='like'` 仍被 `get_delight_candidates` 的反馈过滤排除，popup 重开 / `delight.refreshed` 重灌队列时喜欢过的卡片静默消失。现在 `GET /api/delight/pending-batch` 以 `include_liked=True` 查询并对喜欢过的候选下发 `state="liked"`，三端重灌后保留卡片并恢复「已喜欢」展示；显式 `dismiss` / `dislike` 仍即时移出，WS 主动推送 / 候选计数 / CLI 继续排除已喜欢项，不会把喜欢过的内容当新惊喜重复推送。
+- 惊喜推荐「浏览过即已读」：`POST /api/delight/respond` 的 `view`（看看/点开浏览）现在会把候选标记为已读（`delight_notified=1`），语义对齐推荐池的 `pool_status='shown'`——当场卡片仍显示「已打开」，但下次队列重灌（popup 重开 / `delight.refreshed`）不再出现，浏览过的惊喜不再永久占据队列。已读标记不重置 4 小时主动推送冷却，看完一条不会推迟下一条新惊喜；`like / chat` 仍保留候选在队列中。
 
 ## v0.3.114 / extension v0.3.74: 来源 Cookie 配置对齐（2026-06-10）
 

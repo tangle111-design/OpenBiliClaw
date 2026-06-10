@@ -5429,6 +5429,36 @@ class TestBackendAPI:
         assert database.notified == ["BV1DL"]
         assert any("feedback_type='dislike'" in query for query, _params in database.writes)
 
+    def test_delight_view_marks_candidate_read_without_feedback(self) -> None:
+        """Browsing a delight marks it read (no re-hydration) like the rec pool's shown flag."""
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def __init__(self) -> None:
+                self.writes: list[tuple[str, tuple[object, ...]]] = []
+                self.notified: list[str] = []
+
+            def _execute_write(self, query: str, params: tuple[object, ...]) -> None:
+                self.writes.append((query, params))
+
+            def mark_delight_notified(self, bvid: str) -> None:
+                self.notified.append(bvid)
+
+        database = FakeDatabase()
+        app = create_app(memory_manager=object(), database=database, soul_engine=object())
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/delight/respond",
+            json={"bvid": "BV1DL", "title": "惊喜", "response": "view"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["action"] == "viewed"
+        assert database.notified == ["BV1DL"]
+        # view is read-marking only — no feedback_type write, no learning purge.
+        assert database.writes == []
+
     def test_delight_pending_batch_keeps_liked_candidates_with_state(self) -> None:
         """Liked delights survive queue re-hydration and come back as state=liked."""
         from fastapi.testclient import TestClient

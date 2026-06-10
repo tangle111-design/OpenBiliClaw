@@ -3226,8 +3226,12 @@ def create_app(
 
         Body:
         ``{ "bvid": "...", "title": "...", "response": "view"|"like"|"dislike"|"chat",
-        "message": "..." }``. Positive responses update learning signals but keep
-        the delight visible; ``dismiss`` and ``dislike`` consume the candidate.
+        "message": "..." }``. ``like`` / ``chat`` update learning signals and keep
+        the delight in the queue; ``view`` keeps the card visible in-session but
+        marks the candidate read (same semantics as the recommendation pool's
+        ``shown`` flag — a browsed surprise doesn't reappear on the next queue
+        re-hydration); ``dismiss`` and ``dislike`` consume the candidate
+        immediately.
         """
         from fastapi.responses import JSONResponse
 
@@ -3250,6 +3254,17 @@ def create_app(
                 ctx.database.mark_delight_notified(bvid)
 
         if response_type == "view":
+            # Browsing the content marks the candidate read — mirrors the
+            # recommendation pool, where a served item flips to 'shown' and
+            # is never re-served. The card keeps its in-session "viewed"
+            # treatment; it just stops re-hydrating on the next queue load.
+            # Direct DB mark (not mark_delight_consumed): viewing must not
+            # bump the 4h proactive-push cooldown — engaging with one
+            # surprise shouldn't delay discovery of the next.
+            try:
+                ctx.database.mark_delight_notified(bvid)
+            except Exception:
+                logger.debug("Failed to mark viewed delight bvid %s", bvid)
             return JSONResponse(content={"ok": True, "action": "viewed", "bvid": bvid})
 
         if response_type == "dismiss":
