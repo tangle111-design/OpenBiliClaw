@@ -26,10 +26,15 @@ if TYPE_CHECKING:
     from openbiliclaw.llm.base import LLMResponse
     from openbiliclaw.recommendation.curator import PoolCurator
     from openbiliclaw.runtime.task_registry import BackgroundTaskRegistry
-    from openbiliclaw.soul.profile import SoulProfile
+    from openbiliclaw.soul.profile import InterestTag, SoulProfile
     from openbiliclaw.storage.database import Database
 
 logger = logging.getLogger(__name__)
+
+
+def _interests_by_weight(profile: SoulProfile) -> list[InterestTag]:
+    """Interest tags sorted by weight (desc) so truncation keeps the strongest."""
+    return sorted(profile.preferences.interests, key=lambda tag: tag.weight, reverse=True)
 
 
 def _profile_style_summary(profile: SoulProfile) -> dict[str, object]:
@@ -79,12 +84,12 @@ def _recommendation_profile_summary(
                 "category": item.category,
                 "weight": item.weight,
             }
-            for item in profile.preferences.interests[:10]
+            for item in _interests_by_weight(profile)[:30]
         ],
         "style": _profile_style_summary(profile),
         "context": _profile_context_summary(profile),
         "exploration_openness": profile.preferences.exploration_openness,
-        "disliked_topics": profile.preferences.disliked_topics[:5],
+        "disliked_topics": profile.preferences.disliked_topics[:16],
     }
     if include_active_insights:
         summary["active_insights"] = [
@@ -572,7 +577,7 @@ class RecommendationEngine:
         """
         all_interests = [
             {"name": item.name, "category": item.category, "weight": item.weight}
-            for item in profile.preferences.interests[:15]
+            for item in _interests_by_weight(profile)[:15]
         ]
         if not all_interests:
             return []

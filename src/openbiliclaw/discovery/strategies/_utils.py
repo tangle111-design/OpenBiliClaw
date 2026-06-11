@@ -10,9 +10,17 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from openbiliclaw.discovery.engine import DiscoveredContent
-    from openbiliclaw.soul.profile import SoulProfile
+    from openbiliclaw.soul.profile import InterestDomain, OnionProfile, SoulProfile
 
 _T = TypeVar("_T")
+
+# Profile-summary truncation caps. Lists are weight-sorted before
+# truncation so the strongest interests survive the cut, not whichever
+# happened to be listed first.
+_INTEREST_DOMAIN_CAP = 8
+_SPECIFICS_PER_DOMAIN = 5
+_INTEREST_TAG_CAP = 30
+_DISLIKED_TOPICS_CAP = 16
 
 
 @runtime_checkable
@@ -178,6 +186,20 @@ def _coerce_profile_str_list(value: object, limit: int = 5) -> list[str]:
     return values
 
 
+def _likes_by_weight(profile: OnionProfile) -> list[InterestDomain]:
+    """Interest domains sorted by weight (desc), blanks dropped."""
+    return sorted(
+        (dom for dom in profile.interest.likes if dom.domain.strip()),
+        key=lambda dom: dom.weight,
+        reverse=True,
+    )
+
+
+def _entry_weight(entry: dict[str, object]) -> float:
+    weight = entry.get("weight")
+    return float(weight) if isinstance(weight, (int, float)) else 0.0
+
+
 def _extract_interest_domains(profile: SoulProfile) -> list[dict[str, object]]:
     """Extract domain-level (一级) interest hierarchy from profile.
 
@@ -195,18 +217,18 @@ def _extract_interest_domains(profile: SoulProfile) -> list[dict[str, object]]:
             {
                 "domain": dom.domain,
                 "weight": dom.weight,
-                "specifics": [s.name for s in dom.specifics[:5]],
+                "specifics": [s.name for s in dom.specifics[:_SPECIFICS_PER_DOMAIN]],
                 "first_seen": _format_profile_timestamp(dom.first_seen),
                 "last_seen": _format_profile_timestamp(dom.last_seen),
                 "source": dom.source,
             }
-            for dom in profile.interest.likes[:8]
-            if dom.domain.strip()
+            for dom in _likes_by_weight(profile)[:_INTEREST_DOMAIN_CAP]
         ]
 
     # Flat SoulProfile: reconstruct domains from category grouping
+    ranked_tags = sorted(profile.preferences.interests, key=lambda tag: tag.weight, reverse=True)
     domain_map: dict[str, dict[str, object]] = {}
-    for tag in profile.preferences.interests[:15]:
+    for tag in ranked_tags[:_INTEREST_TAG_CAP]:
         key = tag.category or tag.name
         if key not in domain_map:
             domain_map[key] = {
@@ -220,7 +242,7 @@ def _extract_interest_domains(profile: SoulProfile) -> list[dict[str, object]]:
         existing = domain_map[key]
         if tag.name != key:
             specs = existing["specifics"]
-            if isinstance(specs, list) and len(specs) < 5:
+            if isinstance(specs, list) and len(specs) < _SPECIFICS_PER_DOMAIN:
                 specs.append(tag.name)
         existing_weight = existing.get("weight", 0)
         if tag.weight > (
@@ -233,7 +255,7 @@ def _extract_interest_domains(profile: SoulProfile) -> list[dict[str, object]]:
         existing["last_seen"] = _format_profile_timestamp(tag.last_seen) or existing.get(
             "last_seen", ""
         )
-    return list(domain_map.values())[:8]
+    return sorted(domain_map.values(), key=_entry_weight, reverse=True)[:_INTEREST_DOMAIN_CAP]
 
 
 def _extract_interest_tags(profile: SoulProfile) -> list[dict[str, object]]:
@@ -241,21 +263,28 @@ def _extract_interest_tags(profile: SoulProfile) -> list[dict[str, object]]:
     from openbiliclaw.soul.profile import OnionProfile
 
     if isinstance(profile, OnionProfile):
+        ranked = _likes_by_weight(profile)
         interests: list[dict[str, object]] = []
-        for dom in profile.interest.likes[:8]:
-            if dom.domain.strip():
-                interests.append(
-                    {
-                        "name": dom.domain,
-                        "category": dom.domain,
-                        "weight": dom.weight,
-                        "first_seen": _format_profile_timestamp(dom.first_seen),
-                        "last_seen": _format_profile_timestamp(dom.last_seen),
-                        "source": dom.source,
-                    }
-                )
-            for spec in dom.specifics[:5]:
-                if len(interests) >= 10:
+        # Domain tags first: every ranked domain keeps tag-level exposure
+        # even when higher-weight domains carry many specifics.
+        for dom in ranked:
+            if len(interests) >= _INTEREST_TAG_CAP:
+                break
+            interests.append(
+                {
+                    "name": dom.domain,
+                    "category": dom.domain,
+                    "weight": dom.weight,
+                    "first_seen": _format_profile_timestamp(dom.first_seen),
+                    "last_seen": _format_profile_timestamp(dom.last_seen),
+                    "source": dom.source,
+                }
+            )
+        for dom in ranked:
+            if len(interests) >= _INTEREST_TAG_CAP:
+                break
+            for spec in dom.specifics[:_SPECIFICS_PER_DOMAIN]:
+                if len(interests) >= _INTEREST_TAG_CAP:
                     break
                 if not spec.name.strip():
                     continue
@@ -269,10 +298,13 @@ def _extract_interest_tags(profile: SoulProfile) -> list[dict[str, object]]:
                         "source": dom.source,
                     }
                 )
-            if len(interests) >= 10:
-                break
-        return interests[:10]
+        return interests
 
+    ranked_flat = sorted(
+        (tag for tag in profile.preferences.interests if tag.name.strip()),
+        key=lambda tag: tag.weight,
+        reverse=True,
+    )
     return [
         {
             "name": interest.name,
@@ -282,8 +314,7 @@ def _extract_interest_tags(profile: SoulProfile) -> list[dict[str, object]]:
             "last_seen": _format_profile_timestamp(interest.last_seen),
             "source": interest.source,
         }
-        for interest in profile.preferences.interests[:10]
-        if interest.name.strip()
+        for interest in ranked_flat[:_INTEREST_TAG_CAP]
     ]
 
 
@@ -380,7 +411,7 @@ def build_profile_summary(profile: SoulProfile) -> dict[str, object]:
         "interest_domains": interest_domains,
         "interests": _extract_interest_tags(profile),
         "favorite_up_users": profile.preferences.favorite_up_users[:5],
-        "disliked_topics": profile.preferences.disliked_topics[:8],
+        "disliked_topics": profile.preferences.disliked_topics[:_DISLIKED_TOPICS_CAP],
         "deep_needs": profile.deep_needs[:5],
         "style": {
             "preferred_duration": profile.preferences.style.preferred_duration,

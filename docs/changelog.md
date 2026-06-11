@@ -12,6 +12,7 @@
 - **冻结包更新通道切换到 `desktop-v*` 安装包 tag**：新增 `_parse_desktop_candidate` / `_fetch_latest_candidate(channel=...)`，frozen 形态的 `check_now` 只比对 `desktop-v*` tag（无 legacy 兜底）——`backend-v*` 源码 tag 与安装包不总是同步发布（如 v0.3.118 只发了源码 tag），桌面用户只该在真有新安装包时被提醒。
 - **设置页冻结态提醒 UI**：新增 `describeFrozenUpdateStatus` 分支文案（「发现新版安装包 vX.Y.Z…请下载新版安装包完成升级」/「当前安装包已是最新」等），`update_available` 时显示「前往下载新安装包」按钮直达对应 `desktop-v*` Release 页；「立即检查」在冻结态可用，「立即应用」保持隐藏；`backend_update_available` 事件到达时按 tag 前缀区分文案弹 toast 提醒（安装包 → 引导下载，源码 → 普通提示）。开关与间隔输入在冻结态仍禁用（它们只管自动应用）。
 - **惊喜推荐加载数量三端统一生效**：新增 `[scheduler].delight_queue_limit`（默认 `20`，范围 `1..100`），`/api/delight/pending-batch` 在未显式传 `limit` 时读取该配置。桌面 Web 设置页保存该字段，插件 side panel 和移动 Web 默认不再写死 `20`，因此同一配置会随下一次队列拉取在三端同步生效。
+- **discovery / 评估画像输入上限放宽**：画像摘要扁平兴趣 tag 上限 10 → 30，兴趣域 / 兴趣 tag 一律按 weight 降序排序后再截断（域 tag 优先填充，画像越丰富的用户不再被列表顺序随机砍掉强兴趣）；`disliked_topics` 上限 discovery 侧 8 → 16、推荐侧 5 → 16；负例锚定 `negative_exemplars.MAX_LIMIT` 8 → 16；batch 评估 payload 的 `description` 截断 200 → 400 字符；`_select_relevant_interests()` embedding 候选池改为按 weight 排序取前 15。
 
 ## v0.3.119: 自动更新冻结包守卫与状态体验（2026-06-11）
 
