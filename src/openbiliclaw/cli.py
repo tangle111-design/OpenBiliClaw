@@ -5566,7 +5566,9 @@ def profile_consolidate(
     for rule_merge in report.rule_merges:
         console.print(f"  [cyan][规则][/cyan] {rule_merge}")
     for merge in report.merges:
-        members = " / ".join(str(m) for m in merge.get("members", []))
+        raw_members = merge.get("members", [])
+        member_items = raw_members if isinstance(raw_members, list) else []
+        members = " / ".join(str(m) for m in member_items)
         scope = "兴趣" if merge.get("scope") == "likes" else "避雷"
         console.print(
             f"  [green][{scope}][/green] {members} → [bold]{merge.get('canonical')}[/bold]"
