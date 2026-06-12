@@ -484,6 +484,7 @@ def _build_soul_engine() -> Any:
     return SoulEngine(
         llm=llm,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         satisfaction_filter_enabled=cfg.soul.preference.satisfaction_filter_enabled,
         module_overrides=module_overrides_from_config(cfg),
         llm_concurrency=cfg.llm.concurrency,
@@ -505,9 +506,7 @@ def _build_soul_engine() -> Any:
         avoidance_speculation_max_active=cfg.scheduler.avoidance_speculation_max_active,
         speculator_idle_interval_minutes=cfg.scheduler.speculator_idle_interval_minutes,
         profile_consolidation_enabled=cfg.scheduler.profile_consolidation_enabled,
-        profile_consolidation_interval_hours=(
-            cfg.scheduler.profile_consolidation_interval_hours
-        ),
+        profile_consolidation_interval_hours=(cfg.scheduler.profile_consolidation_interval_hours),
     )
 
 
@@ -527,6 +526,7 @@ def _build_recommendation_engine() -> Any:
     llm_service = LLMService(
         registry=registry,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         module_overrides=module_overrides_from_config(cfg),
         concurrency=cfg.llm.concurrency,
     )
@@ -620,6 +620,7 @@ def _build_discovery_engine() -> Any:
     llm_service = LLMService(
         registry=registry,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         module_overrides=module_overrides_from_config(cfg),
         concurrency=cfg.llm.concurrency,
     )
@@ -691,6 +692,24 @@ def _get_runtime_database() -> Any:
     database.initialize()
     _RUNTIME_COMPONENTS["database"] = database
     return database
+
+
+def _build_usage_recorder() -> Any:
+    """Build or return the shared LLM usage recorder (cost ledger sink).
+
+    CLI commands construct their own ``LLMService`` / ``SoulEngine``
+    instead of going through ``runtime_context``, so without this every
+    CLI-run LLM call was invisible in ``openbiliclaw cost``.
+    """
+    cached = _RUNTIME_COMPONENTS.get("usage_recorder")
+    if cached is not None:
+        return cached
+
+    from openbiliclaw.llm.usage_recorder import UsageRecorder
+
+    recorder = UsageRecorder(sink=_get_runtime_database())
+    _RUNTIME_COMPONENTS["usage_recorder"] = recorder
+    return recorder
 
 
 def _runtime_database_path() -> Path:
@@ -5505,6 +5524,7 @@ def profile_consolidate(
         llm_service = LLMService(
             registry=registry,
             memory=memory,
+            usage_recorder=_build_usage_recorder(),
             module_overrides=module_overrides_from_config(cfg),
             concurrency=cfg.llm.concurrency,
         )
@@ -6213,6 +6233,7 @@ def _run_xhs_discovery(*, force: bool) -> None:
     llm_service = LLMService(
         registry=registry,
         memory=memory,
+        usage_recorder=_build_usage_recorder(),
         module_overrides=module_overrides_from_config(config),
         concurrency=config.llm.concurrency,
     )
