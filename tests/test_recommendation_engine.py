@@ -69,14 +69,14 @@ def _build_profile() -> SoulProfile:
 
 def test_recommendation_profile_summary_includes_disliked_topics() -> None:
     profile = _build_profile()
-    profile.preferences.disliked_topics = [f"话题{i}" for i in range(1, 71)]
+    profile.preferences.disliked_topics = [f"话题{i}" for i in range(1, 141)]
 
     summary = _recommendation_profile_summary(profile)
 
-    # Capped at 64 — generous enough for rich negative preferences
-    # without unbounded prompt growth. The store keeps topics in recency
-    # order, so the cut keeps the freshest entries.
-    assert summary["disliked_topics"] == [f"话题{i}" for i in range(1, 65)]
+    # Capped at 128 == _DISLIKED_TOPICS_STORE_CAP, so every stored
+    # avoid-topic reaches prompts; only an over-cap store (impossible in
+    # practice) would be cut.
+    assert summary["disliked_topics"] == [f"话题{i}" for i in range(1, 129)]
 
 
 def _seed_pool(

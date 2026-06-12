@@ -639,3 +639,34 @@ async def test_search_strategy_caps_llm_eval_candidates_for_small_limit() -> Non
 
     assert llm_service.batch_sizes == [6]
     assert [item.bvid for item in results] == ["BVQ0_0", "BVQ1_0", "BVQ2_0"]
+
+
+def test_build_profile_summary_keeps_newest_window_and_all_dislikes() -> None:
+    profile = _build_profile()
+    profile.preferences.disliked_topics = [f"避雷{i}" for i in range(1, 141)]
+    # Windows are chronological oldest→newest (cognition_cycle keeps the
+    # tail); the summary must surface the newest entries, not the stalest.
+    profile.recent_awareness = [
+        AwarenessNote(
+            date=f"2026-06-{day:02d}",
+            observation=f"观察{day}",
+            trend="",
+            emotion_guess="",
+        )
+        for day in range(1, 9)
+    ]
+    profile.active_insights = [
+        InsightHypothesis(hypothesis=f"洞察{i}", evidence=["证据"], confidence=0.5)
+        for i in range(1, 7)
+    ]
+
+    summary = build_profile_summary(profile)
+
+    # Dislike cap == store cap (128): nothing stored is hidden from prompts.
+    assert summary["disliked_topics"] == [f"避雷{i}" for i in range(1, 129)]
+    assert [n["observation"] for n in summary["recent_awareness"]] == [
+        f"观察{day}" for day in range(4, 9)
+    ]
+    assert [i["hypothesis"] for i in summary["active_insights"]] == [
+        f"洞察{i}" for i in range(2, 7)
+    ]

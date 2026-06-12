@@ -16,8 +16,8 @@ The consolidator runs a staged, mostly-free pipeline:
 3. **No-merge memory** — pairs an earlier run already judged "distinct"
    are not re-asked; a cluster with no unjudged pair is skipped, so
    steady-state runs make zero LLM calls.
-4. **LLM judgement** — one batched call returns merge/keep *operations*,
-   never a rewritten list.
+4. **LLM judgement** — batched calls (32 clusters per call) return
+   merge/keep *operations*, never a rewritten list.
 5. **Deterministic apply** — code validates every op (members verbatim,
    full cluster coverage, anti-generalization canonical rules) and
    applies it to the flat preference layer; the Onion interest tree is
@@ -51,20 +51,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Consolidation works the boundary region of the 64-entry prompt caps:
-# top-128 likes by weight (2x the display cap) and the full dislike
-# store (<= 128 by _DISLIKED_TOPICS_STORE_CAP). The goal is not to
-# shrink the store but to make the truncated top-64 hold 64 *distinct*
-# concepts; the tail below the boundary is left to weight decay.
-_LIKES_BOUNDARY = 128
+# Consolidation works well past the 64-entry prompt caps: top-512 likes
+# by weight and the full dislike store (<= 128 by
+# _DISLIKED_TOPICS_STORE_CAP). Real profiles accumulate 1000+ interest
+# tags; a narrow boundary (128 until v0.3.121) left most wording
+# variants untouched, so duplicate weight stayed split across variants
+# and never re-entered the truncated top-64. 512 covers the whole
+# meaningful store; only the deep <0.5-weight tail is left to decay.
+_LIKES_BOUNDARY = 512
 _SIMILARITY_THRESHOLD = 0.85
 _DEFAULT_MIN_INTERVAL_SECONDS = 12 * 3600
 _STATE_FILENAME = "consolidation_state.json"
 _RUNS_DIRNAME = "consolidation_runs"
 _CHANGELOG_FILENAME = "soul_changelog.md"
-# Known-distinct pair memory is FIFO-capped so the state file stays
-# bounded even after months of 12h runs.
-_NO_MERGE_PAIRS_CAP = 4000
+# Known-distinct pair memory is capped so the state file stays bounded
+# even after months of 12h runs. Sized for the 512-likes boundary: a
+# wide first pass can judge hundreds of clusters in one run.
+_NO_MERGE_PAIRS_CAP = 16000
+# Clusters per LLM judgement call. One giant call over a wide boundary
+# risks blowing the output token ceiling mid-JSON (the parse then fails
+# and every cluster gets rejected); batches keep each response small
+# and a single failed batch only loses its own clusters.
+_JUDGE_CLUSTER_BATCH = 32
 # Anti-generalization guard for canonical names. Bare umbrella words
 # would turn a specific avoid-pattern into a broad content ban.
 _BANNED_GENERIC_CANONICALS = frozenset(
@@ -430,6 +438,37 @@ class ProfileConsolidator:
     # -- Stage 2: LLM judgement ----------------------------------------------------
 
     async def _judge(self, clusters: list[_Cluster]) -> dict[str, list[dict[str, Any]]]:
+        """Judge clusters in batches of ``_JUDGE_CLUSTER_BATCH`` per LLM call.
+
+        A failed batch only drops its own clusters (they re-cluster next
+        run); the call raises only when *every* batch failed, so the
+        caller's error reporting still fires on total LLM outage.
+        """
+        if self._llm_service is None:
+            return {}
+        ops_by_cluster: dict[str, list[dict[str, Any]]] = {}
+        batches = [
+            clusters[i : i + _JUDGE_CLUSTER_BATCH]
+            for i in range(0, len(clusters), _JUDGE_CLUSTER_BATCH)
+        ]
+        last_error: Exception | None = None
+        succeeded = 0
+        for batch in batches:
+            try:
+                ops_by_cluster.update(await self._judge_batch(batch))
+                succeeded += 1
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "profile consolidation judge batch failed (%d clusters): %s",
+                    len(batch),
+                    exc,
+                )
+        if batches and succeeded == 0 and last_error is not None:
+            raise last_error
+        return ops_by_cluster
+
+    async def _judge_batch(self, clusters: list[_Cluster]) -> dict[str, list[dict[str, Any]]]:
         if self._llm_service is None:
             return {}
         preference_layer = self._memory.get_layer("preference")

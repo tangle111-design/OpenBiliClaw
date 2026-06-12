@@ -20,7 +20,11 @@ _T = TypeVar("_T")
 _INTEREST_DOMAIN_CAP = 8
 _SPECIFICS_PER_DOMAIN = 5
 _INTEREST_TAG_CAP = 64
-_DISLIKED_TOPICS_CAP = 64
+# Matches _DISLIKED_TOPICS_STORE_CAP so avoid-topics are NEVER cut from
+# prompts: the store predates the recency-ordered union (v0.3.121), so
+# legacy entries sit in alphabetical order and any cut below the store
+# cap would drop topics by codepoint, not by relevance.
+_DISLIKED_TOPICS_CAP = 128
 
 
 @runtime_checkable
@@ -365,7 +369,9 @@ def _summarize_mbti(profile: SoulProfile) -> dict[str, object] | None:
 
 def _summarize_recent_awareness(profile: SoulProfile) -> list[dict[str, str]]:
     notes: list[dict[str, str]] = []
-    for note in profile.recent_awareness[:5]:
+    # The window is chronological oldest→newest, so the newest notes live
+    # at the tail — [:5] would feed the LLM the *stalest* observations.
+    for note in profile.recent_awareness[-5:]:
         item = {
             "date": note.date,
             "observation": note.observation,
@@ -379,7 +385,8 @@ def _summarize_recent_awareness(profile: SoulProfile) -> list[dict[str, str]]:
 
 def _summarize_active_insights(profile: SoulProfile) -> list[dict[str, object]]:
     insights: list[dict[str, object]] = []
-    for insight in profile.active_insights[:5]:
+    # Chronological window: newest insights are at the tail.
+    for insight in profile.active_insights[-5:]:
         item: dict[str, object] = {
             "hypothesis": insight.hypothesis,
             "evidence": insight.evidence[:5],

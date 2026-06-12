@@ -701,3 +701,94 @@ def test_revert_missing_run_id_returns_false(tmp_path: Path) -> None:
     memory = _FakeMemory({"interests": [], "disliked_topics": []})
     consolidator = ProfileConsolidator(memory=memory, llm_service=None, data_dir=tmp_path)
     assert consolidator.revert("nonexistent") is False
+
+
+class _BatchAwareLLM:
+    """Returns a valid merge op for every cluster in each call's payload."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    @staticmethod
+    def _likes_clusters(user_input: str) -> list[dict[str, Any]]:
+        likes_json = user_input.split("<likes_clusters>")[1].split("</likes_clusters>")[0]
+        parsed = json.loads(likes_json)
+        return parsed if isinstance(parsed, list) else []
+
+    async def complete_structured_task(self, **kwargs: Any) -> Any:
+        clusters = self._likes_clusters(str(kwargs.get("user_input", "")))
+        self.calls.append([str(c["cluster_id"]) for c in clusters])
+        ops = [
+            {
+                "cluster_id": c["cluster_id"],
+                "op": "merge",
+                "members": [m["name"] for m in c["members"]],
+                "canonical": str(c["members"][0]["name"]),
+            }
+            for c in clusters
+        ]
+        return SimpleNamespace(
+            content=json.dumps({"likes": ops, "dislikes": []}, ensure_ascii=False)
+        )
+
+
+def _paired_interest_fixture(pair_count: int) -> tuple[list[dict[str, Any]], list[list[str]]]:
+    interests: list[dict[str, Any]] = []
+    groups: list[list[str]] = []
+    for i in range(pair_count):
+        a, b = f"主题{i}甲", f"主题{i}乙"
+        interests.append(_interest(a, 0.9 - i * 0.001))
+        interests.append(_interest(b, 0.85 - i * 0.001))
+        groups.append([a, b])
+    return interests, groups
+
+
+async def test_judge_batches_clusters_across_multiple_llm_calls(tmp_path: Path) -> None:
+    pair_count = 40  # > _JUDGE_CLUSTER_BATCH (32), so judgement needs 2 calls
+    interests, groups = _paired_interest_fixture(pair_count)
+    memory = _FakeMemory({"interests": interests, "disliked_topics": []}, data_dir=tmp_path)
+    llm = _BatchAwareLLM()
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=llm,
+        embedding_service=_StubEmbedding(groups),
+        data_dir=tmp_path,
+    )
+
+    report = await consolidator.run(dry_run=False)
+
+    assert [len(ids) for ids in llm.calls] == [32, 8]
+    assert report.clusters_sent == pair_count
+    assert len(report.merges) == pair_count
+    assert not report.errors
+    assert len(memory.get_layer("preference").data["interests"]) == pair_count
+
+
+async def test_judge_failed_batch_only_loses_its_own_clusters(tmp_path: Path) -> None:
+    pair_count = 40
+    interests, groups = _paired_interest_fixture(pair_count)
+    memory = _FakeMemory({"interests": interests, "disliked_topics": []}, data_dir=tmp_path)
+
+    class _FirstBatchFails(_BatchAwareLLM):
+        async def complete_structured_task(self, **kwargs: Any) -> Any:
+            if not self.calls:
+                self.calls.append([])
+                raise RuntimeError("provider timeout")
+            return await super().complete_structured_task(**kwargs)
+
+    llm = _FirstBatchFails()
+    consolidator = ProfileConsolidator(
+        memory=memory,
+        llm_service=llm,
+        embedding_service=_StubEmbedding(groups),
+        data_dir=tmp_path,
+    )
+
+    report = await consolidator.run(dry_run=False)
+
+    # Second batch (8 clusters) still applies; the failed batch's 32
+    # clusters are rejected ("no ops returned") and will re-cluster next run.
+    assert len(report.merges) == 8
+    assert len(report.rejected_clusters) == 32
+    assert not report.errors
+    assert len(memory.get_layer("preference").data["interests"]) == 2 * 32 + 8

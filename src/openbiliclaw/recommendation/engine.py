@@ -89,7 +89,10 @@ def _recommendation_profile_summary(
         "style": _profile_style_summary(profile),
         "context": _profile_context_summary(profile),
         "exploration_openness": profile.preferences.exploration_openness,
-        "disliked_topics": profile.preferences.disliked_topics[:64],
+        # Cap matches _DISLIKED_TOPICS_STORE_CAP (128) so avoid-topics are
+        # never cut: legacy store entries are alphabetically ordered, so any
+        # smaller cut would drop topics by codepoint, not by relevance.
+        "disliked_topics": profile.preferences.disliked_topics[:128],
     }
     if include_active_insights:
         summary["active_insights"] = [
@@ -97,7 +100,8 @@ def _recommendation_profile_summary(
                 "hypothesis": str(getattr(ins, "hypothesis", "")),
                 "confidence": float(getattr(ins, "confidence", 0.5)),
             }
-            for ins in getattr(profile, "active_insights", [])[:5]
+            # Chronological window: newest insights are at the tail.
+            for ins in getattr(profile, "active_insights", [])[-5:]
         ]
     return summary
 
