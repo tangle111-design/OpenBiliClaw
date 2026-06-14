@@ -497,3 +497,75 @@ async def test_no_profile_returns_empty(db: Database) -> None:
     ledger = await planner.run_once()
     assert ledger == {}
     assert llm.calls == []
+
+
+# ── per-cycle observability ledger (P1.9) ─────────────────────────────────
+
+
+async def test_cycle_ledger_captures_per_platform_generated_and_yield(db: Database) -> None:
+    """The per-cycle ledger (P1.9) records ``{platform: {generated, yield}}`` for
+    every platform generated this pass — generated counts from this pass plus
+    each platform's cumulative admit-credited yield — even though the merged LLM
+    call is a single ``discovery.keyword_planner`` caller (no per-platform token
+    split). One platform is pre-credited with yield to prove it is surfaced."""
+    profile = _profile(("露营", 0.9), ("和田玉", 0.7))
+    digest = profile_kw_digest(profile)
+    # Seed bilibili with an already-used keyword that has produced 2 admitted
+    # items, so its platform-wide yield total is non-zero going into this pass.
+    db.insert_pending_keywords(_BILI, ["历史种子"], digest)
+    seeded = db.claim_keywords(_BILI, 1)
+    seed_id = int(seeded[0]["id"])
+    db.mark_keyword_used(seed_id)
+    assert db.increment_keyword_yield(seed_id, "BV_a") is True
+    assert db.increment_keyword_yield(seed_id, "BV_b") is True
+    assert db.keyword_yield_total(_BILI) == 2
+    assert db.keyword_yield_total(_XHS) == 0
+
+    llm = _FakeLLM(payload={_BILI: ["露营 盘点", "和田玉 入门"], _XHS: ["露营 vlog"]})
+    deficit = _FakeDeficitSource(deficits={_BILI: 40, _XHS: 33})
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    generated = await planner.run_once()
+
+    # run_once still returns the plain {platform: generated} ledger.
+    assert generated[_BILI] == 2 and generated[_XHS] == 1
+    # The structured per-cycle ledger carries both production and yield.
+    structured = planner.last_cycle_ledger
+    assert structured[_BILI] == {"generated": 2, "yield": 2}
+    assert structured[_XHS] == {"generated": 1, "yield": 0}
+    # Only platforms generated this cycle appear (no zero-deficit platforms).
+    assert set(structured) == {_BILI, _XHS}
+
+
+async def test_cycle_ledger_logs_structured_line(
+    db: Database, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The generation pass emits one structured ledger log line carrying the
+    per-platform generated/yield counts (operator observability)."""
+    import logging
+
+    profile = _profile(("露营", 0.9))
+    llm = _FakeLLM(payload={_XHS: ["露营 vlog", "露营 踩坑"]})
+    deficit = _FakeDeficitSource(deficits={_XHS: 33})
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    with caplog.at_level(logging.INFO, logger="openbiliclaw.runtime.keyword_planner"):
+        await planner.run_once()
+
+    ledger_lines = [r.getMessage() for r in caplog.records if "cycle ledger" in r.getMessage()]
+    assert len(ledger_lines) == 1
+    assert "xiaohongshu=generated:2/yield:0" in ledger_lines[0]
+
+
+async def test_cycle_ledger_empty_when_nothing_generated(db: Database) -> None:
+    """No due platforms → no generation → the ledger stays empty (no log spam)."""
+    profile = _profile(("露营", 0.9))
+    llm = _FakeLLM(payload={_BILI: ["unused"]})
+    deficit = _FakeDeficitSource(
+        deficits=dict.fromkeys((_BILI, _XHS, _DOUYIN, _YOUTUBE, _TWITTER), 0)
+    )
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    await planner.run_once()
+
+    assert planner.last_cycle_ledger == {}

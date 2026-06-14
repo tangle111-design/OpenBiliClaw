@@ -122,6 +122,10 @@ class KeywordPlanner:
         # instance from double-generating. This lock does — cross-process /
         # cross-instance contention is still handled by the DB lock below.
         self._inflight_lock = asyncio.Lock()
+        # P1.9 per-cycle observability ledger: the most recent
+        # ``{platform: {"generated": n, "yield": y}}`` snapshot emitted by a
+        # generation pass. Empty until the first pass that generates anything.
+        self.last_cycle_ledger: dict[str, dict[str, int]] = {}
 
     # ── wiring ──────────────────────────────────────────────────────────
 
@@ -365,13 +369,57 @@ class KeywordPlanner:
                 inserted = self._recycle(platform, needs[platform], digest)
             ledger[platform] = inserted
 
-        if ledger:
-            logger.info(
-                "keyword planner generated keywords (digest=%s): %s",
-                digest,
-                ", ".join(f"{p}={n}" for p, n in ledger.items()),
-            )
+        self._emit_cycle_ledger(ledger, digest)
         return ledger
+
+    # ── per-cycle observability ledger (P1.9) ───────────────────────────
+
+    def _emit_cycle_ledger(
+        self, generated: dict[str, int], digest: str
+    ) -> dict[str, dict[str, int]]:
+        """Record + log the per-platform production/yield ledger for this cycle.
+
+        The merged generation is a **single** ``discovery.keyword_planner`` LLM
+        response (P1.6), so token cost can NOT be apportioned per platform — the
+        cost ledger keeps one caller. To still give operators per-platform
+        visibility this structured line surfaces, for every platform generated
+        this cycle, how many keywords it produced (``generated``) plus the
+        platform's cumulative admit-credited ``yield`` (cheap ``SUM(yield_count)``
+        via :meth:`Database.keyword_yield_total`, when available). It does NOT
+        fake token-level platform attribution.
+
+        Stored on :attr:`last_cycle_ledger` (for observability / tests) and
+        emitted as one ``logger.info`` structured line. Returns the structured
+        ``{platform: {"generated": n, "yield": y}}`` dict.
+        """
+        structured: dict[str, dict[str, int]] = {}
+        for platform, count in generated.items():
+            structured[platform] = {
+                "generated": int(count),
+                "yield": self._yield_total(platform),
+            }
+        self.last_cycle_ledger = structured
+        if structured:
+            logger.info(
+                "keyword planner cycle ledger (digest=%s): %s",
+                digest,
+                ", ".join(
+                    f"{p}=generated:{v['generated']}/yield:{v['yield']}"
+                    for p, v in structured.items()
+                ),
+            )
+        return structured
+
+    def _yield_total(self, platform: str) -> int:
+        """Cumulative admit-credited yield for a platform (0 if unavailable)."""
+        getter = getattr(self._db, "keyword_yield_total", None)
+        if not callable(getter):
+            return 0
+        try:
+            return int(getter(platform))
+        except Exception:
+            logger.debug("keyword_yield_total lookup failed for %s", platform, exc_info=True)
+            return 0
 
     # ── due computation ─────────────────────────────────────────────────
 

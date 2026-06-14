@@ -4328,6 +4328,31 @@ class Database:
         ).fetchone()
         return int(row["yield_count"]) if row is not None else 0
 
+    def keyword_yield_total(self, platform: str) -> int:
+        """Return the platform-wide sum of ``yield_count`` across all keywords.
+
+        Cheap single aggregate (the ``(platform, status, …)`` index already
+        covers the scan) used only for the planner's per-cycle observability
+        ledger (P1.9): the merged LLM call is one ``discovery.keyword_planner``
+        caller (token cost can't be split per platform), so the ledger surfaces
+        per-platform keyword *production* (generated) + cumulative *yield* so
+        operators can still see which platform's search words actually land
+        content. Counts every row's stored ``yield_count`` (used / expired
+        history included) — it is a running production total, not a live-pool
+        gauge. Returns 0 on any error so it never breaks a generation pass.
+        """
+        try:
+            self._ensure_fresh_read()
+            row = self.conn.execute(
+                "SELECT COALESCE(SUM(yield_count), 0) AS total "
+                "FROM discovery_keywords WHERE platform = ?",
+                (platform.strip(),),
+            ).fetchone()
+        except Exception:
+            logger.debug("keyword_yield_total failed for %s", platform, exc_info=True)
+            return 0
+        return int(row["total"]) if row is not None else 0
+
     def retire_zero_yield_keywords(
         self,
         platform: str,

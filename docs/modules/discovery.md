@@ -559,6 +559,32 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 如果只有搜索，系统会偏保守；如果只有探索，系统又容易飘。多策略并存的价值，就是在“稳定命中”和“适度意外”之间维持平衡。
 
+## 统一关键词 planner / 背压（默认关闭）
+
+> Discover 背压重构 P1。挂在 `[discovery].unified_keyword_planner_enabled` 后面，**默认 `false`**——开关关闭时整条链路完全不触发，五个 search 关键词仍走各自旧的逐平台 LLM 生成路径（可随时回退）。
+
+此前五个 search 关键词生成器（B 站 `search`、小红书 `xhs-search`、抖音 `search`、YouTube `yt_search`、X `x-search`）各自独立调 LLM、各发一份画像。统一 planner 把它们收敛成一套「双缓冲 + 缺口拉动」的背压模型，只接管 **search 这一路**——`trending / explore / related / hot / feed / channel / creator` 及其各自的 budget/cadence **原样不动**。
+
+**关键词存储**（`storage/database.py`，表 `discovery_keywords` + `discovery_keyword_yield` + CAS 单飞锁 `discovery_planner_lock`）是生成侧的缓存 / 历史 / yield 账本。状态机：`pending → claimed → (内联) used / failed` 或 `→ (异步) executing → used / failed`；任意在途态可经租约回收 / 预算回滚回到 `pending`；旧画像 digest 的 `pending` 作废为 `expired`。在途三元组 `(platform, keyword, profile_kw_digest)` 部分唯一，`used/expired` 历史不挡同词再生成。
+
+**生成（planner loop）**：`runtime/keyword_planner.py::KeywordPlanner` 作为独立后台对象（在 `api/runtime_context.py` 构造、持 `llm_service`+db+config，由 refresh controller 的 `run_forever` 拉起），每 `planner_poll_seconds` 轮一次：
+
+1. 算 `due` = 缓存 `pending` 低于 `kw_cache_low` **且** 真实缺口 > 0（复用 controller 的补池口径，含 raw headroom + 在途）；B 站额外催化（池低于目标 / ≥ `signal_event_threshold` 信号）也进 due。
+2. due 非空 → 现读最新画像 → 取**短事务单飞锁并在调用 LLM 前释放** → `build_merged_keywords_prompt`（一次合并调用、画像只发一份、按平台分块、静态 system 命中 prompt-cache）→ 解析 `{platform: [...]}` → 按当前 `profile_kw_digest` 写 `pending` 补到 `kw_cache_high`。
+3. LLM 失败 / 缺某平台块 → 该平台回退确定性权重排序兴趣名；仍无新词（稀疏画像）→ 回收该平台最旧 `used` 词。
+
+**缺口驱动抓取 + 三种执行形态**（`runtime/keyword_fetch.py::KeywordFetchCoordinator`，每个 search 抓取点显式 flag 分支，flag-off 行为逐字不变）：距上次 ≥ 各平台自身 `min_interval`、缺口 > 0、且 store 有可领词 → 原子 `claim` `fetch_batch` 个 → 经 P1.5 注入口（`queries` / `keyword_ids`）喂进搜索：
+
+- **内联评估并入池**（B 站 search、抖音 plugin）：抓 → 评估 → admit 都在本调用内，返回即 `used`，异常 / 空即 `failed`。
+- **fetch-only → 交共享 pipeline 延后入池**（X、YouTube）：producer 只取 raw 候选交 `discovery_candidates`，交付即 `used`（admit 由 `DiscoveryCandidatePipeline` 后续做）。
+- **真正异步**（仅小红书，扩展 out-of-band）：`claim` → 入队带 `source_keyword_id` 的 xhs 任务 → 词 `executing` → task-result 回调标 `used`/`failed`。`claim` 后被预算拒（XHS enqueue `ok=False` / 抖音 `search_aweme` 抛 `DouyinBudgetExhausted`）→ 词 `claimed → pending` 回滚（连续超 `attempts` → `failed`）。
+
+**yield 端到端**：候选全程透传 `source_keyword_id`，入池（`_cache_results` 这唯一 admission 收口）按 `(source_keyword_id, content_id)` **幂等**回填 `yield_count`（与 `used` 解耦，覆盖三形态）；连续 0 产出且过保护期的 `used` 词退役为 `expired`，不再轮换。
+
+**成本可观测**：合并调用是**一次 response**，token 无法在平台间拆分 → 统一记单一 caller `discovery.keyword_planner`（`openbiliclaw cost --by caller` 可见 search 关键词总成本随合并而塌缩）。per-platform 归因不靠冒充 token 拆分，而靠 planner 每轮 emit 的结构化 ledger（`{platform: {generated, yield}}`，`generated` 取本轮产词数、`yield` 取 `keyword_yield_total(platform)` 的累计 admit 产出），落在 `keyword planner cycle ledger` 日志行、并存于 `KeywordPlanner.last_cycle_ledger`。
+
+**如何开启**：把 `config.toml` 里 `[discovery].unified_keyword_planner_enabled` 设为 `true`（其余 `kw_cache_high/low`、`gen_batch`、`fetch_batch`、`history_window_*`、`claim_lease_minutes`、`planner_poll_seconds`、`plan_ttl_hours` 用 §6 默认即可，详见 `docs/modules/config.md`）。生产启用是一次显式 opt-in 配置切换；端到端正确性由 `tests/test_keyword_backpressure_e2e.py` 在 flag-on 下覆盖。
+
 ## 已实现功能
 
 | 任务 | 状态 | 说明 |
@@ -613,6 +639,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | Discovery 评估类型边界 | ✅ | v0.3.71 起 eval scenario / evaluator 对 LLM JSON、缓存 persona、人工反馈和 ranking pool 做显式类型守卫，`mypy strict` 可覆盖评估链路而不依赖真实 Claude / Playwright / aiohttp 安装 |
 | Discovery 自动优化循环 | ✅ | SGD 风格优化循环：生成 persona → 生成 scenario → 运行发现 → 多维评估 → exploit/explore → accept/rollback |
 | Discovery 人工评估脚本 | ✅ | 交互式人工评估 + 可选触发优化 |
+| P1 统一关键词 planner / 背压（flag-gated，默认关） | ✅ | `[discovery].unified_keyword_planner_enabled`（默认 `false`）后面的双缓冲 + 缺口拉动背压：`discovery_keywords` 存储（pending→claimed→used/failed/executing 状态机 + 部分唯一 + 租约回收 + CAS 单飞锁）+ `KeywordPlanner`（一次合并 LLM 调用、画像发一份、按平台分块、digest 失效、稀疏回收）+ `KeywordFetchCoordinator`（缺口驱动 claim + 三执行形态：内联 admit / fetch-only 交 pipeline / 异步 XHS）+ `source_keyword_id` 幂等 yield 回填 + 0 产出退役。只接管五个 search 关键词，`trending/explore/related/hot/feed` 不动；flag-off 逐字回退旧逐平台生成。成本记单一 caller `discovery.keyword_planner`，per-platform 靠 planner 每轮 `cycle ledger`（`{platform: {generated, yield}}`）观测。E2E：`tests/test_keyword_backpressure_e2e.py` |
 
 ## 公开 API
 
