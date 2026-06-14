@@ -702,3 +702,56 @@ async def test_cycle_ledger_empty_when_nothing_generated(db: Database) -> None:
     await planner.run_once()
 
     assert planner.last_cycle_ledger == {}
+
+
+# ── P3.2 dynamic cache high-water ─────────────────────────────────────────
+
+
+class _YieldDB:
+    """Minimal db exposing only the two aggregates ``_target_high`` reads."""
+
+    def __init__(self, used: int, total: int) -> None:
+        self._used = used
+        self._total = total
+
+    def used_keyword_count(self, platform: str) -> int:
+        return self._used
+
+    def keyword_yield_total(self, platform: str) -> int:
+        return self._total
+
+
+def _target_planner(used: int, total: int, deficit: int) -> KeywordPlanner:
+    cfg = _discovery_cfg(kw_cache_high=30, kw_cache_low=10, fetch_batch=5)
+    planner = KeywordPlanner(
+        llm_service=object(),
+        database=_YieldDB(used, total),  # type: ignore[arg-type]
+        config=_FakeConfig(cfg),
+        signal_event_threshold=6,
+    )
+    planner.bind_deficit_source(_FakeDeficitSource(deficits={_BILI: deficit}))
+    return planner
+
+
+def test_target_high_low_yield_generates_more() -> None:
+    # 20 used, total yield 10 → avg 0.5; deficit 30 → ceil(30/0.5)=60 (> static 30).
+    assert _target_planner(used=20, total=10, deficit=30)._target_high(_BILI) == 60
+
+
+def test_target_high_high_yield_generates_fewer() -> None:
+    # 20 used, total 100 → avg 5; deficit 30 → ceil(6); floor low+fetch=15 → 15 (< static 30).
+    assert _target_planner(used=20, total=100, deficit=30)._target_high(_BILI) == 15
+
+
+def test_target_high_cold_start_uses_static() -> None:
+    # Below _DYNAMIC_MIN_SAMPLES used keywords → noisy → static kw_cache_high (30).
+    assert _target_planner(used=3, total=100, deficit=30)._target_high(_BILI) == 30
+
+
+def test_target_high_no_deficit_uses_static() -> None:
+    assert _target_planner(used=50, total=10, deficit=0)._target_high(_BILI) == 30
+
+
+def test_target_high_clamped_to_cap() -> None:
+    # avg 0.05; deficit 30 → ceil(600) capped at kw_cache_high * 3 = 90.
+    assert _target_planner(used=20, total=1, deficit=30)._target_high(_BILI) == 90

@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import socket
 import uuid
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -73,6 +74,13 @@ _BILIBILI = "bilibili"
 # each generation pass. ``executing`` rows belong to genuinely async (XHS)
 # tasks, so give them a much wider timeout than a plain claim lease.
 _EXECUTING_TIMEOUT_MULTIPLIER = 6
+# P3.2 dynamic cache high-water: a platform's generation target may grow up to
+# this multiple of the static ``kw_cache_high`` when its observed yield is low
+# (lots of duplicate hits → need more words to fill the same deficit). Below
+# ``_DYNAMIC_MIN_SAMPLES`` used keywords the yield estimate is too noisy → fall
+# back to the static high.
+_DYNAMIC_HIGH_CAP_MULT = 3
+_DYNAMIC_MIN_SAMPLES = 10
 
 
 def _as_str_list(value: object) -> list[str]:
@@ -312,10 +320,9 @@ class KeywordPlanner:
         hints_by_platform = self._avoid_hints()
         blocks: list[dict[str, object]] = []
         needs: dict[str, int] = {}
-        high = max(0, int(self._discovery.kw_cache_high))
         for platform in due:
             current_pending = self._count_pending(platform, digest)
-            need = max(0, high - current_pending)
+            need = max(0, self._target_high(platform) - current_pending)
             if need <= 0:
                 # Bilibili catalyst can mark a platform due while its cache is
                 # already full — nothing to generate, skip it from the prompt.
@@ -567,6 +574,60 @@ class KeywordPlanner:
             "avoid_franchises": _as_str_list(hints.get("avoid_franchises")),
         }
         return dict.fromkeys(_PLANNER_PLATFORMS, shared)
+
+    def _target_high(self, platform: str) -> int:
+        """P3.2 dynamic cache high-water for a platform.
+
+        Sizes the pending target from the live search deficit ÷ the platform's
+        observed average yield-per-keyword, so a low-yield platform (lots of
+        duplicate hits) generates MORE words to fill the same gap and a
+        high-yield one fewer. Falls back to the static ``kw_cache_high`` on cold
+        start (too little yield history), when there is no deficit source, or
+        when the deficit is non-positive. Clamped to ``[low+fetch_batch ..
+        kw_cache_high × _DYNAMIC_HIGH_CAP_MULT]`` so the cache stays functional.
+        """
+        static_high = max(1, int(self._discovery.kw_cache_high))
+        source = self._deficit_source
+        if source is None:
+            return static_high
+        try:
+            deficit = int(source.keyword_planner_real_deficit(platform))
+        except Exception:
+            return static_high
+        if deficit <= 0:
+            return static_high
+        avg_yield = self._avg_yield(platform)
+        if avg_yield <= 0.0:
+            return static_high
+        target = math.ceil(deficit / avg_yield)
+        floor = max(1, int(self._discovery.kw_cache_low) + int(self._discovery.fetch_batch))
+        cap = static_high * _DYNAMIC_HIGH_CAP_MULT
+        return max(floor, min(target, cap))
+
+    def _avg_yield(self, platform: str) -> float:
+        """Observed yield-per-keyword (total yield ÷ used keywords) for a platform.
+
+        Returns 0.0 (→ caller uses the static high) until at least
+        ``_DYNAMIC_MIN_SAMPLES`` used keywords exist, so the cold-start estimate
+        isn't driven by one or two noisy samples.
+        """
+        used = 0
+        getter = getattr(self._db, "used_keyword_count", None)
+        if callable(getter):
+            try:
+                used = int(getter(platform))
+            except Exception:
+                used = 0
+        if used < _DYNAMIC_MIN_SAMPLES:
+            return 0.0
+        total = 0
+        total_getter = getattr(self._db, "keyword_yield_total", None)
+        if callable(total_getter):
+            try:
+                total = int(total_getter(platform))
+            except Exception:
+                total = 0
+        return total / used if used > 0 else 0.0
 
     def _source_targets(self) -> dict[str, int]:
         source = self._deficit_source

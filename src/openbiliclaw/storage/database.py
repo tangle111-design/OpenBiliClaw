@@ -4353,6 +4353,25 @@ class Database:
             return 0
         return int(row["total"]) if row is not None else 0
 
+    def used_keyword_count(self, platform: str) -> int:
+        """Count ``used`` keywords for a platform (P3.2 dynamic-cap denominator).
+
+        Paired with :meth:`keyword_yield_total` to derive the platform's observed
+        average yield-per-keyword (total yield / used count). Cheap single
+        aggregate; returns 0 on any error so it never breaks a generation pass.
+        """
+        try:
+            self._ensure_fresh_read()
+            row = self.conn.execute(
+                "SELECT COUNT(*) AS n FROM discovery_keywords "
+                "WHERE platform = ? AND status = 'used'",
+                (platform.strip(),),
+            ).fetchone()
+        except Exception:
+            logger.debug("used_keyword_count failed for %s", platform, exc_info=True)
+            return 0
+        return int(row["n"]) if row is not None else 0
+
     def retire_zero_yield_keywords(
         self,
         platform: str,
