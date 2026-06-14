@@ -589,6 +589,8 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 **P3.3 数据驱动供给优势**：P2.1 的 `<supply_advantage>` 是**静态先验**（B站擅长学习区、小红书擅长美妆…）；P3.3 在它之上叠一层**这个用户的真实 admit 历史**。新增 `Database.get_admitted_topic_counts_by_platform()`——口径与 P3.1 的「当前可服务池」**不同**：它统计每个平台**历来入过缓存**（非 dislike、可链接、不限是否已服务/已看）的 `topic_group`，反映「这个平台为该用户实际产出过哪些主题」。`KeywordPlanner._supply_hints()` 取各平台 top-8（阈值 `max(3, 本平台入池量//10)`、入池量不足 floor 10 则空），并**减去该平台当前的 `avoid_topics`**——所以「擅长但当前饱和」的主题只留在避让里，绝不同时出现在「主推」和「避让」。结果作为每平台 `supply_hint` 写进合并 prompt 分块（静态 system 描述该字段语义、`<supply_advantage>` 表保持不变，prompt-cache 不破）；冷启动无历史时该字段为空、模型只依据静态表。意义：用户若在某平台稳定看某偏门主题（如抖音上的硬核科普），planner 会学到并优先把相关兴趣往该方向映射，而非死守平台刻板印象。
 
+**合并调用的 ask 收口 + 动态 max_tokens**（真实模型端到端验证补强）：合并生成是全系统输出最大的一次调用（每个 due 平台 × 至多 `gen_batch` 个词同在一个 JSON）。两处保证不被截断：① 给模型的每平台 `need` **收口到 `gen_batch`**——P3.2 的动态水位可达 `kw_cache_high×3`，但解析每平台只保留 `gen_batch`，若按 80 去要、只留 30，既浪费模型输出又把排在 JSON 靠后的平台顶向截断；现在「要多少＝留多少」。② 合并调用的 `max_tokens` 不再用固定默认，而是**按本轮实际要词量动态算**：`max(4096, sum(收口后 need) × 48 + 1024)`，随平台数 / `gen_batch` 自适应、留足余量（`max_tokens` 是天花板、按真实输出计费，放大几乎零成本）。否则靠后的平台会被截断、退回兴趣名兜底（实测 deepseek 下 5 平台 ×30 词若限额过小，youtube/twitter 会退化成裸兴趣名；修复后五平台均满额、英文平台正确出英文）。
+
 **如何开启**：把 `config.toml` 里 `[discovery].unified_keyword_planner_enabled` 设为 `true`（其余 `kw_cache_high/low`、`gen_batch`、`fetch_batch`、`history_window_*`、`claim_lease_minutes`、`planner_poll_seconds`、`plan_ttl_hours` 用 §6 默认即可，详见 `docs/modules/config.md`）。生产启用是一次显式 opt-in 配置切换；端到端正确性由 `tests/test_keyword_backpressure_e2e.py` 在 flag-on 下覆盖。
 
 ## 已实现功能

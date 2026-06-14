@@ -875,3 +875,63 @@ def test_supply_hints_cold_start_below_floor_is_empty() -> None:
     # Fewer than _PER_PLATFORM_SUPPLY_FLOOR (10) admitted rows → untrusted → [].
     hints = _supply_planner({_BILI: {"学习区": 5}})._supply_hints({})
     assert hints[_BILI] == []
+
+
+# ── merged ask cap + max_tokens budget ────────────────────────────────────
+
+
+@dataclass
+class _CaptureLLM:
+    """Fake that records the user prompt + the max_tokens it was called with."""
+
+    payload: dict[str, list[str]]
+    calls: list[dict[str, str]] = field(default_factory=list)
+    max_tokens_seen: list[int] = field(default_factory=list)
+
+    async def complete_structured_task(
+        self,
+        *,
+        system_instruction: str,
+        user_input: str,
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        caller: str = "",
+        reasoning_effort: str | None = None,
+    ) -> Any:
+        self.calls.append({"user": user_input, "caller": caller})
+        self.max_tokens_seen.append(max_tokens)
+        from openbiliclaw.llm.base import LLMResponse
+
+        return LLMResponse(
+            content=json.dumps(self.payload, ensure_ascii=False), provider="t", model="t"
+        )
+
+
+async def test_merged_ask_capped_at_gen_batch(db: Database) -> None:
+    # Static cache target 30 > gen_batch 10: the ask shown to the model is capped
+    # at gen_batch (we only keep that many per cycle; asking for the full 30 gap
+    # only bloats the JSON and risks truncating the trailing platforms).
+    profile = _profile(("露营", 0.9), ("和田玉", 0.7))
+    llm = _CaptureLLM(payload={_BILI: ["露营 装备", "和田玉 鉴别"]})
+    deficit = _FakeDeficitSource(deficits={_BILI: 40})
+    cfg = _discovery_cfg(kw_cache_high=30, gen_batch=10)
+    await _make_planner(db, llm=llm, profile=profile, deficit=deficit, discovery=cfg).run_once()
+    user = llm.calls[0]["user"]
+    assert '"need": 10' in user
+    assert '"need": 30' not in user
+    # Small ask (10) → max_tokens floored at the 4096 default.
+    assert llm.max_tokens_seen[0] == 4096
+
+
+async def test_merged_max_tokens_scales_with_total_ask(db: Database) -> None:
+    # 5 due platforms × gen_batch(30) = 150 keyword ask → max_tokens sized to it
+    # (150 × 48 + 1024 = 8224), well above the 4096 floor, so the trailing
+    # platforms in the merged JSON are never truncated onto the fallback.
+    profile = _profile(("露营", 0.9), ("和田玉", 0.7))
+    plats = (_BILI, _XHS, _DOUYIN, _YOUTUBE, _TWITTER)
+    llm = _CaptureLLM(payload={p: ["w1", "w2"] for p in plats})
+    deficit = _FakeDeficitSource(deficits=dict.fromkeys(plats, 40))
+    cfg = _discovery_cfg(kw_cache_high=30, gen_batch=30)
+    await _make_planner(db, llm=llm, profile=profile, deficit=deficit, discovery=cfg).run_once()
+    assert llm.max_tokens_seen[0] == 150 * 48 + 1024

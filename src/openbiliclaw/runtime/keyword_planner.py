@@ -99,6 +99,16 @@ _PER_PLATFORM_SUPPLY_FLOOR = 10
 _PER_PLATFORM_SUPPLY_MIN_THRESHOLD = 3
 _PER_PLATFORM_SUPPLY_DIVISOR = 10
 _PER_PLATFORM_SUPPLY_TOP = 8
+# Merged-generation token budget. The merged call is the largest-output call in
+# the system (every due platform × up to gen_batch keywords in one JSON), so a
+# fixed max_tokens can truncate the trailing platforms — they then fall onto the
+# interest-name fallback. Size max_tokens from the actual per-cycle ask (sum of
+# the gen_batch-capped needs) with a generous per-keyword budget (Chinese phrase
+# + JSON quoting). Over-provisioning is effectively free: max_tokens is a ceiling
+# billed on real output, not a charge. Never drop below the prior 4096 default.
+_MERGED_TOKENS_PER_KEYWORD = 48
+_MERGED_JSON_OVERHEAD_TOKENS = 1024
+_MERGED_MIN_MAX_TOKENS = 4096
 
 
 def _as_str_list(value: object) -> list[str]:
@@ -339,19 +349,27 @@ class KeywordPlanner:
         supply_by_platform = self._supply_hints(hints_by_platform)
         blocks: list[dict[str, object]] = []
         needs: dict[str, int] = {}
+        total_ask = 0
+        gen_batch = max(0, int(self._discovery.gen_batch))
         for platform in due:
             current_pending = self._count_pending(platform, digest)
             need = max(0, self._target_high(platform) - current_pending)
-            if need <= 0:
-                # Bilibili catalyst can mark a platform due while its cache is
-                # already full — nothing to generate, skip it from the prompt.
+            # Never ask the model for more than we keep this cycle: the parse caps
+            # each platform at gen_batch, so asking for the full (possibly dynamic,
+            # up to high × _DYNAMIC_HIGH_CAP_MULT) gap only bloats the merged JSON
+            # and pushes the trailing platforms toward truncation. Cap the ask.
+            shown_need = min(need, gen_batch)
+            if shown_need <= 0:
+                # No gap to fill (or gen_batch disabled). The B站 catalyst can mark
+                # a platform due while its cache is already full — skip it.
                 continue
             needs[platform] = need
+            total_ask += shown_need
             avoid = hints_by_platform.get(platform, {})
             blocks.append(
                 {
                     "platform": platform,
-                    "need": need,
+                    "need": shown_need,
                     "recent_keywords": self._history(platform),
                     "avoid_topics": list(avoid.get("avoid_topics", [])),
                     "avoid_styles": list(avoid.get("avoid_styles", [])),
@@ -370,6 +388,14 @@ class KeywordPlanner:
         call_failed = False
         if blocks:
             target_platforms = [str(block["platform"]) for block in blocks]
+            # Budget the merged call's max_tokens from the actual ask (sum of the
+            # gen_batch-capped needs) so the trailing platforms in the JSON are
+            # never truncated onto the interest-name fallback. Scales with
+            # platform count and gen_batch; floored at the prior 4096 default.
+            merged_max_tokens = max(
+                _MERGED_MIN_MAX_TOKENS,
+                total_ask * _MERGED_TOKENS_PER_KEYWORD + _MERGED_JSON_OVERHEAD_TOKENS,
+            )
             try:
                 profile_summary = build_profile_summary(profile)
                 messages = build_merged_keywords_prompt(
@@ -381,12 +407,13 @@ class KeywordPlanner:
                     user_input=messages[1]["content"],
                     caller="discovery.keyword_planner",
                     reasoning_effort="",
+                    max_tokens=merged_max_tokens,
                 )
                 content = str(getattr(response, "content", "") or "")
                 generated, present = parse_merged_keywords_with_presence(
                     content,
                     target_platforms,
-                    per_platform_cap=max(0, int(self._discovery.gen_batch)),
+                    per_platform_cap=gen_batch,
                 )
             except Exception:
                 logger.exception(
