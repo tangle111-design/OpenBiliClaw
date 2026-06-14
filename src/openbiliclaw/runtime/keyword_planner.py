@@ -81,6 +81,13 @@ _EXECUTING_TIMEOUT_MULTIPLIER = 6
 # back to the static high.
 _DYNAMIC_HIGH_CAP_MULT = 3
 _DYNAMIC_MIN_SAMPLES = 10
+# P3.1 per-platform topic saturation: a platform with fewer than this many of
+# its own fresh pooled rows falls back to the global avoid (too little data to
+# judge); above the floor, a topic is "saturated for a platform" once its count
+# reaches max(_MIN, platform_total // _DIV) of that platform's own pool.
+_PER_PLATFORM_AVOID_FLOOR = 10
+_PER_PLATFORM_AVOID_MIN_THRESHOLD = 5
+_PER_PLATFORM_AVOID_DIVISOR = 5
 
 
 def _as_str_list(value: object) -> list[str]:
@@ -551,29 +558,60 @@ class KeywordPlanner:
             return 0
 
     def _avoid_hints(self) -> dict[str, dict[str, list[str]]]:
-        """Global avoid_* hints, reused for every platform block.
+        """Per-platform topic avoid + global style/franchise avoid (P3.1).
 
-        P1 uses GLOBAL pool-saturation avoidance (per-platform saturation is
-        P2). ``prefer_axes`` stays disabled. One snapshot is built and its
-        hints shared across all due platform blocks.
+        P1/P2 fed every platform the GLOBAL avoid, which over-avoids — a topic
+        saturated on B站 may be absent on 小红书. P3.1 gives each platform its
+        OWN saturated topics (relative to that platform's own pool); styles and
+        franchises stay global (coarser, less platform-specific). A platform
+        with too little of its own pool falls back to the global topic avoid.
+        ``prefer_axes`` stays disabled.
         """
         hints: dict[str, object] = {}
         try:
-            source_targets = self._source_targets()
             snapshot = build_pool_distribution_snapshot(
                 self._db,
                 pool_target_count=self._resolved_pool_target(),
-                source_targets=source_targets,
+                source_targets=self._source_targets(),
             )
             hints = snapshot.to_prompt_hints()
         except Exception:
             logger.exception("keyword planner failed to build pool distribution snapshot")
-        shared: dict[str, list[str]] = {
-            "avoid_topics": _as_str_list(hints.get("avoid_topics")),
-            "avoid_styles": _as_str_list(hints.get("avoid_styles")),
-            "avoid_franchises": _as_str_list(hints.get("avoid_franchises")),
-        }
-        return dict.fromkeys(_PLANNER_PLATFORMS, shared)
+        global_topics = _as_str_list(hints.get("avoid_topics"))
+        shared_styles = _as_str_list(hints.get("avoid_styles"))
+        shared_franchises = _as_str_list(hints.get("avoid_franchises"))
+
+        per_platform: dict[str, dict[str, int]] = {}
+        getter = getattr(self._db, "get_pool_topic_counts_by_platform", None)
+        if callable(getter):
+            try:
+                per_platform = getter()
+            except Exception:
+                logger.exception("keyword planner failed to read per-platform topic counts")
+
+        result: dict[str, dict[str, list[str]]] = {}
+        for platform in _PLANNER_PLATFORMS:
+            topic_counts = per_platform.get(platform, {})
+            total = sum(int(count) for count in topic_counts.values())
+            if total < _PER_PLATFORM_AVOID_FLOOR:
+                avoid_topics = list(global_topics)
+            else:
+                threshold = max(
+                    _PER_PLATFORM_AVOID_MIN_THRESHOLD, total // _PER_PLATFORM_AVOID_DIVISOR
+                )
+                avoid_topics = [
+                    topic
+                    for topic, count in sorted(
+                        topic_counts.items(), key=lambda kv: (-kv[1], kv[0])
+                    )
+                    if int(count) >= threshold
+                ][:12]
+            result[platform] = {
+                "avoid_topics": avoid_topics,
+                "avoid_styles": list(shared_styles),
+                "avoid_franchises": list(shared_franchises),
+            }
+        return result
 
     def _target_high(self, platform: str) -> int:
         """P3.2 dynamic cache high-water for a platform.

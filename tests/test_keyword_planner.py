@@ -755,3 +755,71 @@ def test_target_high_no_deficit_uses_static() -> None:
 def test_target_high_clamped_to_cap() -> None:
     # avg 0.05; deficit 30 → ceil(600) capped at kw_cache_high * 3 = 90.
     assert _target_planner(used=20, total=1, deficit=30)._target_high(_BILI) == 90
+
+
+# ── P3.1 per-platform topic avoid ─────────────────────────────────────────
+
+
+class _AvoidDB:
+    """Fake db exposing what ``_avoid_hints`` reads (per-platform + global)."""
+
+    def __init__(
+        self,
+        per_platform_topics: dict[str, dict[str, int]],
+        global_topics: dict[str, int] | None = None,
+    ) -> None:
+        self._pp = per_platform_topics
+        self._global = {
+            "topic_group": dict(global_topics or {}),
+            "style_key": {},
+            "franchise_key": {},
+        }
+
+    def get_pool_topic_counts_by_platform(self) -> dict[str, dict[str, int]]:
+        return self._pp
+
+    def count_pool_candidates(self) -> int:
+        return 0
+
+    def count_pool_candidates_by_source(self) -> dict[str, int]:
+        return {}
+
+    def get_pool_distribution_counts(self) -> dict[str, dict[str, int]]:
+        return self._global
+
+
+def _avoid_planner(
+    per_platform_topics: dict[str, dict[str, int]],
+    global_topics: dict[str, int] | None = None,
+) -> KeywordPlanner:
+    planner = KeywordPlanner(
+        llm_service=object(),
+        database=_AvoidDB(per_platform_topics, global_topics),  # type: ignore[arg-type]
+        config=_FakeConfig(_discovery_cfg()),
+        signal_event_threshold=6,
+    )
+    planner.bind_deficit_source(_FakeDeficitSource())
+    return planner
+
+
+def test_avoid_hints_are_per_platform_for_topics() -> None:
+    hints = _avoid_planner(
+        {
+            _BILI: {"国际局势": 40, "数码": 2},  # total 42 → thr max(5,8)=8
+            _XHS: {"美妆": 30},  # total 30 → thr max(5,6)=6
+        }
+    )._avoid_hints()
+    assert hints[_BILI]["avoid_topics"] == ["国际局势"]
+    assert hints[_XHS]["avoid_topics"] == ["美妆"]
+    # The fix: a topic saturated only on 小红书 is NOT avoided on B站.
+    assert "美妆" not in hints[_BILI]["avoid_topics"]
+    assert "数码" not in hints[_BILI]["avoid_topics"]  # below per-platform threshold
+
+
+def test_avoid_hints_below_floor_falls_back_to_global() -> None:
+    hints = _avoid_planner(
+        {_DOUYIN: {"x": 3}},  # total 3 < floor 10 → global topic avoid
+        global_topics={"全局热点": 50},  # global topic_threshold(300)=15 → avoided
+    )._avoid_hints()
+    assert hints[_DOUYIN]["avoid_topics"] == ["全局热点"]
+    assert hints[_YOUTUBE]["avoid_topics"] == ["全局热点"]  # no own data → global too

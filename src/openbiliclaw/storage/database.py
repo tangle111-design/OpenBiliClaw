@@ -2197,6 +2197,50 @@ class Database:
                     counts[axis][value] += 1
         return {axis: dict(axis_counts) for axis, axis_counts in counts.items()}
 
+    def get_pool_topic_counts_by_platform(self) -> dict[str, dict[str, int]]:
+        """Per-platform ``topic_group`` counts of fresh servable pool rows (P3.1).
+
+        Same servable filter as :meth:`get_pool_distribution_counts`, but keyed by
+        ``source_platform`` → ``{platform: {topic_group: count}}`` so the keyword
+        planner can avoid topics saturated *on that platform* instead of pool-wide
+        (a topic piled up on B站 may be absent on 小红书). Returns ``{}`` on error.
+        """
+        try:
+            cursor = self.conn.execute(
+                """
+                SELECT bvid, topic_group, style_key, franchise_key,
+                       source, source_platform, content_url
+                FROM content_cache
+                WHERE COALESCE(pool_status, 'fresh') = 'fresh'
+                  AND COALESCE(feedback_type, '') != 'dislike'
+                  AND COALESCE(pool_expression, '') != ''
+                  AND COALESCE(pool_topic_label, '') != ''
+                  AND NOT EXISTS (
+                    SELECT 1 FROM recommendations AS r WHERE r.bvid = content_cache.bvid
+                  )
+                """
+            )
+            viewed_content_keys = self.get_recent_viewed_content_keys()
+        except Exception:
+            logger.debug("get_pool_topic_counts_by_platform query failed", exc_info=True)
+            return {}
+        counts: dict[str, dict[str, int]] = {}
+        for row in cursor.fetchall():
+            bvid = str(row["bvid"]).strip()
+            row_dict = dict(row)
+            if not bvid or self._is_viewed_row(row_dict, viewed_content_keys):
+                continue
+            if not _is_linkable_pool_source(
+                row["source"], row["source_platform"], row["content_url"]
+            ):
+                continue
+            platform = str(row["source_platform"] or "").strip()
+            topic = str(row["topic_group"] or "").strip()
+            if not platform or not topic:
+                continue
+            counts.setdefault(platform, defaultdict(int))[topic] += 1
+        return {platform: dict(topics) for platform, topics in counts.items()}
+
     def canonicalize_topic_groups(self, canonical_map: dict[str, str]) -> int:
         """Rewrite ``content_cache.topic_group`` to canonical form per map.
 
