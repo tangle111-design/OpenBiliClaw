@@ -89,8 +89,18 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
     def name(self) -> str:
         return "yt_search"
 
-    async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
-        queries = await self._generate_queries(profile)
+    async def discover(
+        self,
+        profile: SoulProfile,
+        limit: int = 20,
+        *,
+        queries: list[str] | None = None,
+    ) -> list[DiscoveredContent]:
+        if queries is None:
+            resolved_queries = await self._generate_queries(profile)
+        else:
+            resolved_queries = self._dedupe_queries(queries)
+        queries = resolved_queries
         self.last_intermediates = {"queries": list(queries)}
         if not queries:
             return []
@@ -121,6 +131,19 @@ class YoutubeSearchStrategy(DiscoveryStrategy):
             return candidates[:limit]
 
         return await self._evaluate(candidates, profile, limit)
+
+    @staticmethod
+    def _dedupe_queries(queries: list[str]) -> list[str]:
+        """Strip + dedupe caller-injected queries (unified planner injection)."""
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in queries:
+            query = str(item).strip()
+            if not query or query in seen:
+                continue
+            seen.add(query)
+            deduped.append(query)
+        return deduped
 
     async def _generate_queries(self, profile: SoulProfile) -> list[str]:
         profile_summary = build_profile_summary(profile)

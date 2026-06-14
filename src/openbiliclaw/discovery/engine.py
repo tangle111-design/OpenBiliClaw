@@ -397,15 +397,20 @@ class DiscoveryStrategy(ABC):
         return None
 
 
-def _strategy_accepts_pool_snapshot(fn: Any) -> bool:
-    """Return whether a strategy discover callable accepts ``pool_snapshot=``."""
+def _strategy_accepts_kwarg(fn: Any, name: str) -> bool:
+    """Return whether a strategy discover callable accepts a keyword ``name``."""
     try:
         signature = inspect.signature(fn)
     except (TypeError, ValueError):
         return True
-    return "pool_snapshot" in signature.parameters or any(
+    return name in signature.parameters or any(
         param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
     )
+
+
+def _strategy_accepts_pool_snapshot(fn: Any) -> bool:
+    """Return whether a strategy discover callable accepts ``pool_snapshot=``."""
+    return _strategy_accepts_kwarg(fn, "pool_snapshot")
 
 
 async def _call_strategy_discover(
@@ -414,14 +419,18 @@ async def _call_strategy_discover(
     *,
     limit: int,
     pool_snapshot: Any | None,
+    keywords: list[str] | None = None,
 ) -> list[DiscoveredContent]:
     discover_fn: Any = strategy.discover
+    kwargs: dict[str, Any] = {"limit": limit}
     if _strategy_accepts_pool_snapshot(discover_fn):
-        return cast(
-            "list[DiscoveredContent]",
-            await discover_fn(profile, limit=limit, pool_snapshot=pool_snapshot),
-        )
-    return cast("list[DiscoveredContent]", await discover_fn(profile, limit=limit))
+        kwargs["pool_snapshot"] = pool_snapshot
+    # Only forward injected keywords when the caller supplied them AND the
+    # strategy actually accepts the kwarg — non-search sub-strategies (which
+    # never declare ``keywords``) are left byte-identical.
+    if keywords is not None and _strategy_accepts_kwarg(discover_fn, "keywords"):
+        kwargs["keywords"] = keywords
+    return cast("list[DiscoveredContent]", await discover_fn(profile, **kwargs))
 
 
 class ContentDiscoveryEngine:
@@ -498,6 +507,7 @@ class ContentDiscoveryEngine:
         fully_parallel: bool = False,
         strategy_limits: dict[str, int] | None = None,
         pool_snapshot: Any | None = None,
+        keywords: list[str] | None = None,
     ) -> list[DiscoveredContent]:
         """Run discovery with selected (or all) strategies.
 
@@ -518,6 +528,11 @@ class ContentDiscoveryEngine:
                 full platform deficit.
             pool_snapshot: Optional current pool distribution summary for
                 strategies that can use pool-aware discovery guidance.
+            keywords: Optional caller-supplied search keywords forwarded to
+                search sub-strategies that accept a ``keywords`` kwarg (the
+                unified keyword planner injection point). Non-search strategies
+                never declare the kwarg, so they are unaffected. When ``None``,
+                strategies generate their own keywords as before.
 
         Returns:
             Combined, deduplicated, and scored list of discovered content.
@@ -537,6 +552,7 @@ class ContentDiscoveryEngine:
             fully_parallel=fully_parallel,
             strategy_limits=strategy_limits,
             pool_snapshot=pool_snapshot,
+            keywords=keywords,
         )
         # Normalize topic_group using embeddings before dedup
         merged_primary = self._merge_and_rank(primary_results)
@@ -578,6 +594,7 @@ class ContentDiscoveryEngine:
         fully_parallel: bool = False,
         strategy_limits: dict[str, int] | None = None,
         pool_snapshot: Any | None = None,
+        keywords: list[str] | None = None,
     ) -> list[DiscoveredContent]:
         """Fetch raw candidates without LLM evaluation or content_cache writes."""
 
@@ -597,6 +614,7 @@ class ContentDiscoveryEngine:
                 fully_parallel=fully_parallel,
                 strategy_limits=strategy_limits,
                 pool_snapshot=pool_snapshot,
+                keywords=keywords,
             )
         finally:
             _RAW_CANDIDATE_MODE.reset(token)
@@ -1540,6 +1558,7 @@ class ContentDiscoveryEngine:
         fully_parallel: bool = False,
         strategy_limits: dict[str, int] | None = None,
         pool_snapshot: Any | None = None,
+        keywords: list[str] | None = None,
     ) -> list[DiscoveredContent]:
         results: list[DiscoveredContent] = []
         run_entries = [
@@ -1573,6 +1592,7 @@ class ContentDiscoveryEngine:
                         profile,
                         limit=run_limit,
                         pool_snapshot=pool_snapshot,
+                        keywords=keywords,
                     )
                 finally:
                     logger.info(
@@ -1612,6 +1632,7 @@ class ContentDiscoveryEngine:
                         profile,
                         limit=run_limit,
                         pool_snapshot=pool_snapshot,
+                        keywords=keywords,
                     )
                     for s, run_limit in search_entries
                 ]

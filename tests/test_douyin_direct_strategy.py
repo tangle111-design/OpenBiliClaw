@@ -240,3 +240,79 @@ async def test_strategy_seed_keywords_skip_llm() -> None:
 
     assert client.keywords == ["机械键盘"]
     assert llm.calls == []  # explicit seeds short-circuit keyword generation
+
+
+# ── P1.5 keyword source-gating + seed injection ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_strategy_hot_only_does_not_synthesize_keywords() -> None:
+    # hot/feed/creator-only modes (no 'search' in sources) must NOT run keyword
+    # synthesis — no LLM keyword-gen call and no interest-name fallback.
+    llm = _FakeKeywordLLM('{"keywords": ["不应被生成"]}')
+    strategy = DouyinDirectStrategy(
+        client=_FakeDouyinClient(),
+        llm_service=llm,
+        sources=("hot",),
+        seed_keywords=(),
+        llm_evaluation=False,
+    )
+
+    items = await strategy.discover(_profile(), limit=10)
+
+    assert llm.calls == []  # no keyword generation when search source is absent
+    assert strategy.last_intermediates["keywords"] == []
+    # hot source still produced its candidate.
+    assert [item.content_id for item in items] == ["2"]
+
+
+@pytest.mark.asyncio
+async def test_strategy_feed_only_does_not_synthesize_keywords() -> None:
+    llm = _FakeKeywordLLM('{"keywords": ["不应被生成"]}')
+    strategy = DouyinDirectStrategy(
+        client=_FakeDouyinClient(),
+        llm_service=llm,
+        sources=("feed",),
+        seed_keywords=(),
+        llm_evaluation=False,
+    )
+
+    await strategy.discover(_profile(), limit=10)
+
+    assert llm.calls == []
+    assert strategy.last_intermediates["keywords"] == []
+
+
+@pytest.mark.asyncio
+async def test_strategy_hot_feed_only_skips_keywords_even_with_seeds() -> None:
+    # Even if seeds are present, a hot/feed-only run never searches them — and
+    # never reports them as the run's keywords.
+    client = _RecordingSearchClient()
+    strategy = DouyinDirectStrategy(
+        client=client,
+        sources=("hot", "feed"),
+        seed_keywords=("机械键盘",),
+        llm_evaluation=False,
+    )
+
+    await strategy.discover(_profile(), limit=10)
+
+    assert client.keywords == []  # search_aweme never invoked
+    assert strategy.last_intermediates["keywords"] == []
+
+
+@pytest.mark.asyncio
+async def test_strategy_seed_keywords_injected_to_search() -> None:
+    # Planner injection path: seed_keywords flow straight to search_aweme.
+    client = _RecordingSearchClient()
+    strategy = DouyinDirectStrategy(
+        client=client,
+        sources=("search",),
+        seed_keywords=("露营装备测评", "和田玉鉴别教程"),
+        llm_evaluation=False,
+    )
+
+    await strategy.discover(_profile(), limit=10)
+
+    assert client.keywords == ["露营装备测评", "和田玉鉴别教程"]
+    assert strategy.last_intermediates["keywords"] == ["露营装备测评", "和田玉鉴别教程"]

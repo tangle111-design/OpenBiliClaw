@@ -121,6 +121,19 @@ def _parse_keywords(content: str, *, count: int) -> list[str]:
     return keywords
 
 
+def _dedupe_keywords(keywords: list[str]) -> list[str]:
+    """Strip + dedupe caller-injected keywords (unified planner injection)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in keywords:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
 def _normalize_raw(
     raw_tweets: list[dict[str, Any]],
     *,
@@ -160,10 +173,18 @@ class XSearchStrategy:
         *,
         limit: int = 20,
         query: str = "",
+        queries: list[str] | None = None,
         **_: object,
     ) -> list[DiscoveredContent]:
         explicit = (query or "").strip()
-        keywords = [explicit] if explicit else await self._generate_keywords(profile)
+        if explicit:
+            keywords = [explicit]
+        elif queries is not None:
+            # Unified keyword planner injection: search each supplied keyword,
+            # skipping internal LLM keyword generation.
+            keywords = _dedupe_keywords(queries)
+        else:
+            keywords = await self._generate_keywords(profile)
         self.last_intermediates = {"keywords": list(keywords)}
         if not keywords:
             return []

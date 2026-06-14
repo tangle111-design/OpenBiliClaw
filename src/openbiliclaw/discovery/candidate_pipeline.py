@@ -94,11 +94,22 @@ class DiscoveryCandidatePipeline:
         limit: int,
         strategy_limits: dict[str, int] | None = None,
         pool_snapshot: Any | None = None,
+        keywords: list[str] | None = None,
     ) -> int:
-        """Fetch raw candidates with the discovery engine and enqueue them."""
+        """Fetch raw candidates with the discovery engine and enqueue them.
+
+        ``keywords`` (when provided) is forwarded to search sub-strategies that
+        accept it — the unified keyword planner injection point. ``None`` keeps
+        the legacy self-generating behavior. Only forwarded when non-None so
+        engines/stubs without a ``keywords`` kwarg stay byte-compatible.
+        """
 
         if self.pool_full():
             return 0
+
+        extra: dict[str, Any] = {}
+        if keywords is not None:
+            extra["keywords"] = keywords
 
         produce_fn = getattr(self.discovery_engine, "produce_candidates", None)
         if callable(produce_fn):
@@ -108,6 +119,7 @@ class DiscoveryCandidatePipeline:
                 limit=limit,
                 strategy_limits=strategy_limits,
                 pool_snapshot=pool_snapshot,
+                **extra,
             )
         else:
             items = await self.discovery_engine.discover(
@@ -116,6 +128,7 @@ class DiscoveryCandidatePipeline:
                 limit=limit,
                 strategy_limits=strategy_limits,
                 pool_snapshot=pool_snapshot,
+                **extra,
             )
         return self.enqueue_candidates(list(items), source_context="mixed")
 

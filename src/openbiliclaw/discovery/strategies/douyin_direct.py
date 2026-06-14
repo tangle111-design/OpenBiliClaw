@@ -125,7 +125,10 @@ class DouyinDirectStrategy(DiscoveryStrategy):
 
     async def discover(self, profile: SoulProfile, limit: int = 20) -> list[DiscoveredContent]:
         raw_items: list[tuple[str, dict[str, object]]] = []
-        keywords = await self._keywords(profile)
+        # Only synthesize / LLM-generate search keywords when the search source
+        # is active. hot/feed/creator-only modes must NOT burn an LLM call (or
+        # fall back to interest names) for keywords they will never search.
+        keywords = await self._keywords(profile) if "search" in self.sources else []
         self.last_intermediates = {
             "sources": list(self.sources),
             "keywords": list(keywords),

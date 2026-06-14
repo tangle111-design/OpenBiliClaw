@@ -53,19 +53,43 @@ class XhsTaskProducer:
     keywords_per_cycle: int = 5
     _last_skip_reason: str = field(default="", init=False)
 
-    async def produce_if_due(self, *, limit: int | None = None) -> dict[str, object]:
+    async def produce_if_due(
+        self,
+        *,
+        limit: int | None = None,
+        keywords: list[str] | None = None,
+    ) -> dict[str, object]:
         """Run one producer cycle if enough time has passed.
 
         Returns a summary dict for diagnostics. When the producer is
         disabled, throttled, or has nothing useful to enqueue, the result
         carries ``enqueued: 0`` and a ``reason`` string — callers should
         treat it as a no-op.
+
+        Args:
+            limit: Optional cap on the number of keywords generated this cycle.
+            keywords: Optional caller-supplied keywords (unified keyword planner
+                injection point). When provided (non-None), they are enqueued
+                directly and the internal ``generate_xhs_keywords`` LLM call is
+                skipped. When ``None``, the producer generates its own keywords
+                from the profile as before.
         """
         if not self.enabled:
             return self._skip("disabled")
 
         if not self._is_due():
             return self._skip("throttled")
+
+        keyword_count = min(
+            self.keywords_per_cycle,
+            max(1, int(limit or self.keywords_per_cycle)),
+        )
+
+        if keywords is not None:
+            resolved_keywords = _dedupe_keywords(keywords)[:keyword_count]
+            if not resolved_keywords:
+                return self._skip("no_keywords")
+            return self._enqueue_keywords(resolved_keywords)
 
         is_ready_fn = getattr(self.soul_engine, "is_profile_ready", None)
         if callable(is_ready_fn) and not is_ready_fn():
@@ -82,17 +106,17 @@ class XhsTaskProducer:
         if profile is None:
             return self._skip("no_profile")
 
-        keyword_count = min(
-            self.keywords_per_cycle,
-            max(1, int(limit or self.keywords_per_cycle)),
-        )
-        keywords = await generate_xhs_keywords(
+        resolved_keywords = await generate_xhs_keywords(
             self.llm_service,
             profile,
             count=keyword_count,
         )
-        if not keywords:
+        if not resolved_keywords:
             return self._skip("no_keywords")
+        return self._enqueue_keywords(resolved_keywords)
+
+    def _enqueue_keywords(self, keywords: list[str]) -> dict[str, object]:
+        """Enqueue one ``search`` task per keyword, stopping when budget is hit."""
 
         enqueued = 0
         for keyword in keywords:
@@ -140,6 +164,19 @@ class XhsTaskProducer:
             logger.info("xhs producer skip: reason=%s", reason)
         self._last_skip_reason = reason
         return {"enqueued": 0, "attempted": 0, "reason": reason}
+
+
+def _dedupe_keywords(keywords: list[str]) -> list[str]:
+    """Strip + dedupe caller-injected keywords (unified planner injection)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in keywords:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
 
 
 def _parse_sqlite_timestamp(value: str) -> datetime | None:

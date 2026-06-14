@@ -34,6 +34,32 @@ logger = logging.getLogger(__name__)
 _SOURCE_TYPE = "twitter"
 
 
+def _coerce_keyword_list(value: Any) -> list[str] | None:
+    """Coerce a recipe-config ``keywords`` value into a clean list of strings.
+
+    Returns ``None`` when the recipe carries no ``keywords`` (so the adapter
+    keeps the legacy single-``query`` call path byte-for-byte). A present but
+    empty / all-blank list yields ``[]`` (an explicit "no keywords" injection).
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        return None
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
 class _SupportsDiscover(Protocol):
     """Structural type for the three injected strategy callables.
 
@@ -86,7 +112,13 @@ class XAdapter:
 
         if strategy == "search":
             query = str(config.get("query", "") or "")
-            items = await self._search.discover(profile, limit=limit, query=query)
+            keywords = _coerce_keyword_list(config.get("keywords"))
+            if keywords is not None:
+                items = await self._search.discover(
+                    profile, limit=limit, query=query, keywords=keywords
+                )
+            else:
+                items = await self._search.discover(profile, limit=limit, query=query)
         elif strategy == "feed":
             items = await self._feed.discover(profile, limit=limit)
         elif strategy == "creator":

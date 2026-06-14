@@ -62,6 +62,7 @@ class SearchStrategy(DiscoveryStrategy):
         limit: int = 20,
         *,
         pool_snapshot: object | None = None,
+        queries: list[str] | None = None,
     ) -> list[DiscoveredContent]:
         """Generate search queries based on user soul and execute them.
 
@@ -75,6 +76,10 @@ class SearchStrategy(DiscoveryStrategy):
             profile: User soul profile.
             limit: Maximum results.
             pool_snapshot: Optional current pool distribution summary.
+            queries: Optional caller-supplied search queries. When provided
+                (non-None), they are used verbatim and the internal LLM
+                query-generation call is skipped (the unified keyword planner
+                injection point). When ``None``, behavior is unchanged.
 
         Returns:
             Discovered content list.
@@ -92,7 +97,11 @@ class SearchStrategy(DiscoveryStrategy):
             )
             return []
 
-        queries = await self._generate_queries(profile, pool_snapshot=pool_snapshot)
+        if queries is None:
+            resolved_queries = await self._generate_queries(profile, pool_snapshot=pool_snapshot)
+        else:
+            resolved_queries = self._dedupe_queries(queries)
+        queries = resolved_queries
         self.last_intermediates = {"queries": list(queries)}
         anchor_list = interest_anchors(profile)
         candidates: list[DiscoveredContent] = []
@@ -400,6 +409,19 @@ class SearchStrategy(DiscoveryStrategy):
         except Exception:
             logger.exception("Search query generation failed; falling back to local queries.")
         return self._fallback_queries(profile)
+
+    @staticmethod
+    def _dedupe_queries(queries: list[str]) -> list[str]:
+        """Strip + dedupe caller-injected queries (no per-run cap)."""
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in queries:
+            query = str(item).strip()
+            if not query or query in seen:
+                continue
+            seen.add(query)
+            deduped.append(query)
+        return deduped
 
     def _parse_queries(self, content: str) -> list[str]:
         text = content.strip()

@@ -712,3 +712,82 @@ def test_extract_interest_tags_fills_specifics_by_global_weight(
     # though its domain ranks lower. The old per-domain fill order
     # admitted 娱乐次级 here and hid 小域强项.
     assert names == ["娱乐", "小域", "娱乐头部", "小域强项"]
+
+
+# ── P1.5 strategy keyword injection ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_injected_queries_skip_llm_generation() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    llm_service = FakeLLMService('{"queries": ["不应被使用"]}')
+    bilibili_client = FakeBilibiliClient(
+        {
+            "机械键盘 测评": [
+                {"bvid": "BV1A", "title": "键盘测评", "author": "UP", "mid": 1, "play": 1}
+            ],
+            "城市纪录片": [
+                {"bvid": "BV1B", "title": "城市纪录", "author": "UP", "mid": 2, "play": 2}
+            ],
+        }
+    )
+    strategy = SearchStrategy(
+        llm_service=llm_service,
+        bilibili_client=bilibili_client,
+        llm_evaluation=False,
+    )
+
+    await strategy.discover(
+        _build_profile(),
+        limit=20,
+        queries=["机械键盘 测评", "城市纪录片"],
+    )
+
+    # Searched exactly the injected queries, and made NO keyword-gen LLM call.
+    assert bilibili_client.calls == ["机械键盘 测评", "城市纪录片"]
+    assert llm_service.calls == []
+    assert strategy.last_intermediates == {"queries": ["机械键盘 测评", "城市纪录片"]}
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_injected_queries_are_deduped() -> None:
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    llm_service = FakeLLMService('{"queries": ["x"]}')
+    bilibili_client = FakeBilibiliClient({})
+    strategy = SearchStrategy(
+        llm_service=llm_service,
+        bilibili_client=bilibili_client,
+        llm_evaluation=False,
+    )
+
+    await strategy.discover(
+        _build_profile(),
+        limit=20,
+        queries=["  纪录片  ", "纪录片", "", "摄影"],
+    )
+
+    assert bilibili_client.calls == ["纪录片", "摄影"]
+    assert llm_service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_search_strategy_without_injection_still_generates() -> None:
+    # Flag-off / no-injection regression: queries=None → legacy LLM gen runs.
+    from openbiliclaw.discovery.strategies.strategies import SearchStrategy
+
+    llm_service = FakeLLMService('{"queries": ["纪录片 原理"]}')
+    bilibili_client = FakeBilibiliClient(
+        {"纪录片 原理": [{"bvid": "BV1A", "title": "t", "author": "u", "mid": 1, "play": 1}]}
+    )
+    strategy = SearchStrategy(
+        llm_service=llm_service,
+        bilibili_client=bilibili_client,
+        llm_evaluation=False,
+    )
+
+    await strategy.discover(_build_profile(), limit=20)
+
+    assert bilibili_client.calls == ["纪录片 原理"]
+    assert len(llm_service.calls) == 1
