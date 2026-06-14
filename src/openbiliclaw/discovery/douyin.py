@@ -33,6 +33,10 @@ class DouyinDiscoveryOptions:
     evaluate: bool = True
     per_source_limit: int = 20
     keywords_per_run: int = 5
+    # Unified keyword planner fetch path (P1.7): make the plugin-search client
+    # raise ``DouyinBudgetExhausted`` on budget exhaustion so a claimed keyword
+    # rolls back instead of being burned. Off → legacy behavior unchanged.
+    raise_on_budget: bool = False
 
 
 @dataclass(frozen=True)

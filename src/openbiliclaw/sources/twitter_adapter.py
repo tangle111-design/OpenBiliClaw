@@ -112,8 +112,17 @@ class XAdapter:
 
         if strategy == "search":
             query = str(config.get("query", "") or "")
+            # ``queries`` is the unified-planner injection key — it maps to the
+            # real ``XSearchStrategy.discover(queries=)`` param. ``keywords``
+            # remains the legacy config key (forwarded as ``keywords=``), which
+            # the real strategy ignores; both stay supported for back-compat.
+            queries = _coerce_keyword_list(config.get("queries"))
             keywords = _coerce_keyword_list(config.get("keywords"))
-            if keywords is not None:
+            if queries is not None:
+                items = await self._search.discover(
+                    profile, limit=limit, query=query, queries=queries
+                )
+            elif keywords is not None:
                 items = await self._search.discover(
                     profile, limit=limit, query=query, keywords=keywords
                 )

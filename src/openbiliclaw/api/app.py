@@ -118,6 +118,7 @@ from openbiliclaw.runtime.image_cache import (
 from openbiliclaw.runtime.image_cache import (
     image_cache_key as _image_cache_key,
 )
+from openbiliclaw.runtime.keyword_fetch import mark_keyword_terminal_from_xhs_task
 from openbiliclaw.soul.dislike_writeback import (
     apply_new_dislikes,
     topics_for_confirmed_avoidance,
@@ -5463,6 +5464,14 @@ def create_app(
                 debug=debug,
                 complete=is_final,
             )
+            # Unified keyword planner lifecycle (P1.7): XHS is truly async, so a
+            # claimed search word stays ``executing`` until this terminal
+            # callback. On a final ``ok`` mark its ``source_keyword_id`` word
+            # ``used`` (a ``partial`` is not terminal → leave it ``executing``).
+            if is_final and task is not None:
+                mark_keyword_terminal_from_xhs_task(
+                    ctx.database, task.get("payload_json"), success=True
+                )
             # v0.3.48+: piggyback self_info from bootstrap debug payload.
             # v0.3.57+: also accept self_info at the payload top level for
             # search / creator / passive paths via extension v0.3.10.
@@ -5535,6 +5544,12 @@ def create_app(
                     )
         else:
             _xhs_task_queue.fail(task_id, error=payload.get("error", ""), debug=debug)
+            # Unified keyword planner lifecycle (P1.7): the async search failed →
+            # mark its ``source_keyword_id`` word ``failed`` (retry via attempts).
+            if task is not None:
+                mark_keyword_terminal_from_xhs_task(
+                    ctx.database, task.get("payload_json"), success=False
+                )
 
         return {"ok": True}
 

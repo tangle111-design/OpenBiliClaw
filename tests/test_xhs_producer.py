@@ -316,3 +316,121 @@ async def test_producer_empty_injected_keywords_is_no_keywords(
 
     assert result["reason"] == "no_keywords"
     assert result["enqueued"] == 0
+
+
+# ── P1.7 unified keyword planner fetch path (truly async lifecycle) ──────
+
+
+from dataclasses import dataclass as _dataclass  # noqa: E402
+
+from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator  # noqa: E402
+
+
+@_dataclass
+class _DiscoveryCfg:
+    unified_keyword_planner_enabled: bool = False
+    fetch_batch: int = 5
+
+
+def _keyword_statuses(db: Database) -> dict[str, str]:
+    rows = db.conn.execute(
+        "SELECT keyword, status FROM discovery_keywords WHERE platform = 'xiaohongshu' ORDER BY id"
+    ).fetchall()
+    return {str(r["keyword"]): str(r["status"]) for r in rows}
+
+
+@pytest.mark.asyncio
+async def test_flag_off_does_not_touch_keyword_store(
+    db: Database,
+    queue: XhsTaskQueue,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Flag OFF + words sitting in the store → legacy self-gen path, store
+    # untouched (byte-identical to pre-P1.7).
+    db.insert_pending_keywords("xiaohongshu", ["stored-1", "stored-2"], "dig")
+
+    async def fake_keywords(_llm: Any, _profile: Any, *, count: int) -> list[str]:
+        return [f"gen-{i}" for i in range(count)]
+
+    monkeypatch.setattr("openbiliclaw.runtime.xhs_producer.generate_xhs_keywords", fake_keywords)
+    producer = XhsTaskProducer(
+        task_queue=queue,
+        soul_engine=_FakeSoulEngine(_profile_with_interests()),
+        llm_service=_FakeLLMService(),
+        enabled=True,
+        min_interval_hours=0,
+        keyword_fetch=KeywordFetchCoordinator(database=db, discovery_config=_DiscoveryCfg(False)),
+    )
+    result = await producer.produce_if_due()
+    assert result["reason"] == "ok"
+    # Self-generated words enqueued; the stored words stay pending (not claimed).
+    assert all(kw.startswith("gen-") for kw in _pending_search_keywords(db))
+    assert _keyword_statuses(db) == {"stored-1": "pending", "stored-2": "pending"}
+
+
+@pytest.mark.asyncio
+async def test_flag_on_claims_and_marks_executing_not_used(
+    db: Database,
+    queue: XhsTaskQueue,
+) -> None:
+    db.insert_pending_keywords("xiaohongshu", ["claim-1", "claim-2"], "dig")
+    producer = XhsTaskProducer(
+        task_queue=queue,
+        soul_engine=_FakeSoulEngine(_profile_with_interests()),
+        llm_service=_FakeLLMService(),
+        enabled=True,
+        min_interval_hours=0,
+        keyword_fetch=KeywordFetchCoordinator(
+            database=db, discovery_config=_DiscoveryCfg(True, fetch_batch=5)
+        ),
+    )
+    result = await producer.produce_if_due()
+    assert result["reason"] == "ok"
+    assert result["enqueued"] == 2
+    # Claimed words are EXECUTING (not used — XHS terminal is the task callback).
+    assert _keyword_statuses(db) == {"claim-1": "executing", "claim-2": "executing"}
+    # Each enqueued task carries its source_keyword_id (lifecycle correlation).
+    rows = db.conn.execute(
+        "SELECT payload_json FROM xhs_tasks WHERE type = 'search' ORDER BY id"
+    ).fetchall()
+    payloads = [json.loads(str(r[0])) for r in rows]
+    assert {p["keyword"] for p in payloads} == {"claim-1", "claim-2"}
+    assert all(isinstance(p["source_keyword_id"], int) for p in payloads)
+
+
+@pytest.mark.asyncio
+async def test_flag_on_empty_store_skips(db: Database, queue: XhsTaskQueue) -> None:
+    producer = XhsTaskProducer(
+        task_queue=queue,
+        soul_engine=_FakeSoulEngine(_profile_with_interests()),
+        llm_service=_FakeLLMService(),
+        enabled=True,
+        min_interval_hours=0,
+        keyword_fetch=KeywordFetchCoordinator(database=db, discovery_config=_DiscoveryCfg(True)),
+    )
+    result = await producer.produce_if_due()
+    assert result["reason"] == "no_keywords"
+    assert result["enqueued"] == 0
+    assert _pending_search_keywords(db) == []
+
+
+@pytest.mark.asyncio
+async def test_flag_on_budget_rejection_rolls_back(db: Database, queue: XhsTaskQueue) -> None:
+    db.insert_pending_keywords("xiaohongshu", ["a", "b", "c"], "dig")
+    # Pre-fill today's search-task budget to the cap so enqueue is refused.
+    queue.enqueue("search", {"keyword": "preexisting"}, daily_budget=1)
+    producer = XhsTaskProducer(
+        task_queue=queue,
+        soul_engine=_FakeSoulEngine(_profile_with_interests()),
+        llm_service=_FakeLLMService(),
+        enabled=True,
+        daily_budget=1,  # already at cap → every claim enqueue is rejected
+        min_interval_hours=0,
+        keyword_fetch=KeywordFetchCoordinator(
+            database=db, discovery_config=_DiscoveryCfg(True, fetch_batch=3)
+        ),
+    )
+    result = await producer.produce_if_due()
+    assert result["enqueued"] == 0
+    # All claimed words rolled back to pending (none burned as used/executing).
+    assert _keyword_statuses(db) == {"a": "pending", "b": "pending", "c": "pending"}

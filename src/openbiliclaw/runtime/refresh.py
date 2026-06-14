@@ -18,6 +18,7 @@ from openbiliclaw.runtime.image_cache import (
     prefetch_cover,
     select_prefetch_targets,
 )
+from openbiliclaw.runtime.keyword_fetch import PLATFORM_BILIBILI as _KW_PLATFORM_BILIBILI
 from openbiliclaw.runtime.presence import PresenceTracker, background_llm_work_allowed
 from openbiliclaw.soul.avoidance_speculator import choose_next_avoidance_candidate
 from openbiliclaw.soul.speculator import (
@@ -81,6 +82,22 @@ def _call_accepts_pool_snapshot(fn: Any) -> bool:
     except (TypeError, ValueError):
         return True
     return "pool_snapshot" in signature.parameters or any(
+        param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+    )
+
+
+def _call_accepts_keywords(fn: Any) -> bool:
+    """Return whether a discovery callable accepts a ``keywords=`` keyword.
+
+    Used for the direct-engine B站 search fallback path so the unified keyword
+    planner's injected words are only forwarded to engines/stubs that declare
+    the kwarg — stubs without it stay byte-compatible (flag-off / tests).
+    """
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return True
+    return "keywords" in signature.parameters or any(
         param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
     )
 
@@ -290,6 +307,11 @@ class ContinuousRefreshController:
     # used by tests that build the controller directly) means the planner loop
     # returns immediately.
     keyword_planner: Any | None = None
+    # P1.7: unified keyword planner FETCH coordinator. Drives the B站 search
+    # inline-admit lifecycle (claim → inject as ``queries`` → used / failed) when
+    # the flag is on. Constructed in ``api/runtime_context.py``; ``None`` (tests
+    # / flag off) → the B站 search keeps its legacy self-generating path.
+    keyword_fetch: Any | None = None
     _manual_refresh_task: asyncio.Task[None] | None = None
     _discovery_drain_lock: asyncio.Lock = field(
         default_factory=asyncio.Lock,
@@ -1601,42 +1623,83 @@ class ContinuousRefreshController:
             except Exception:
                 logger.exception("Failed to build pool distribution snapshot")
                 pool_snapshot = None
+            # Unified keyword planner fetch path (P1.7, flag-gated). B站 search is
+            # inline-admit: this plan iteration fetches + drains (admits) in the
+            # same call. When the flag is on and this entry includes ``search``,
+            # claim words from the store and inject them as ``keywords`` (the
+            # engine maps them onto the search strategy's ``queries`` param); on
+            # a successful admit mark them ``used``, on an empty/failed iteration
+            # mark them ``failed``. Non-search sub-strategies in the same entry
+            # are unaffected (they never receive the injected words).
+            claimed_search: list[Any] = []
+            coordinator = self.keyword_fetch
+            if (
+                "search" in strategies
+                and coordinator is not None
+                and bool(getattr(coordinator, "should_claim", lambda: False)())
+            ):
+                claimed_search = coordinator.claim(_KW_PLATFORM_BILIBILI)
+            injected_keywords = (
+                [item.keyword for item in claimed_search] if claimed_search else None
+            )
+
             pipeline = self.discovery_candidate_pipeline
             discovered: list[Any] = []
             topic_items: list[Any] = []
             discovered_count = 0
             admitted_count = 0
-            if pipeline is not None:
-                produced_count = await pipeline.produce_and_enqueue(
-                    profile=profile,
-                    strategies=strategies,
-                    limit=effective_limit,
-                    strategy_limits=strategy_limits,
-                    pool_snapshot=pool_snapshot,
-                )
-                drain_result = await pipeline.drain_pending(
-                    profile=profile,
-                    batch_size=effective_limit,
-                )
-                discovered_count = int(produced_count or 0)
-                admitted_count = int(drain_result.get("cached", 0) or 0)
-                if admitted_count > 0:
-                    topic_items = list(getattr(pipeline, "last_admitted_items", []) or [])
-                pipeline_discovered_count += discovered_count
-            else:
-                discover_fn = self.discovery_engine.discover
-                discover_kwargs: dict[str, Any] = {
-                    "strategies": strategies,
-                    "limit": effective_limit,
-                }
-                if strategy_limits and _call_accepts_strategy_limits(discover_fn):
-                    discover_kwargs["strategy_limits"] = strategy_limits
-                if _call_accepts_pool_snapshot(discover_fn):
-                    discover_kwargs["pool_snapshot"] = pool_snapshot
-                discovered = await discover_fn(profile, **discover_kwargs)
-                topic_items = discovered
-                discovered_count = len(discovered)
-                admitted_count = discovered_count
+            iteration_failed = False
+            try:
+                if pipeline is not None:
+                    produce_kwargs: dict[str, Any] = {
+                        "profile": profile,
+                        "strategies": strategies,
+                        "limit": effective_limit,
+                        "strategy_limits": strategy_limits,
+                        "pool_snapshot": pool_snapshot,
+                    }
+                    if injected_keywords is not None:
+                        produce_kwargs["keywords"] = injected_keywords
+                    produced_count = await pipeline.produce_and_enqueue(**produce_kwargs)
+                    drain_result = await pipeline.drain_pending(
+                        profile=profile,
+                        batch_size=effective_limit,
+                    )
+                    discovered_count = int(produced_count or 0)
+                    admitted_count = int(drain_result.get("cached", 0) or 0)
+                    if admitted_count > 0:
+                        topic_items = list(getattr(pipeline, "last_admitted_items", []) or [])
+                    pipeline_discovered_count += discovered_count
+                else:
+                    discover_fn = self.discovery_engine.discover
+                    discover_kwargs: dict[str, Any] = {
+                        "strategies": strategies,
+                        "limit": effective_limit,
+                    }
+                    if strategy_limits and _call_accepts_strategy_limits(discover_fn):
+                        discover_kwargs["strategy_limits"] = strategy_limits
+                    if _call_accepts_pool_snapshot(discover_fn):
+                        discover_kwargs["pool_snapshot"] = pool_snapshot
+                    if injected_keywords is not None and _call_accepts_keywords(discover_fn):
+                        discover_kwargs["keywords"] = injected_keywords
+                    discovered = await discover_fn(profile, **discover_kwargs)
+                    topic_items = discovered
+                    discovered_count = len(discovered)
+                    admitted_count = discovered_count
+            except Exception:
+                iteration_failed = True
+                if claimed_search and coordinator is not None:
+                    coordinator.mark_failed(claimed_search)
+                raise
+            finally:
+                if claimed_search and coordinator is not None and not iteration_failed:
+                    # Inline-admit terminal: words that drove a fetch producing
+                    # candidates are ``used``; an empty fetch marks them ``failed``
+                    # (retry). yield backfill is P1.8, decoupled from ``used``.
+                    if discovered_count > 0:
+                        coordinator.mark_used(claimed_search)
+                    else:
+                        coordinator.mark_failed(claimed_search)
             all_discovered.extend(discovered)
             flattened_strategies.extend(strategies)
 

@@ -397,6 +397,15 @@ class DiscoveryStrategy(ABC):
         return None
 
 
+def _strategy_declares_param(fn: Any, name: str) -> bool:
+    """Return whether a strategy discover callable declares an explicit ``name`` param."""
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    return name in signature.parameters
+
+
 def _strategy_accepts_kwarg(fn: Any, name: str) -> bool:
     """Return whether a strategy discover callable accepts a keyword ``name``."""
     try:
@@ -406,6 +415,29 @@ def _strategy_accepts_kwarg(fn: Any, name: str) -> bool:
     return name in signature.parameters or any(
         param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
     )
+
+
+def _injected_keyword_kwarg(fn: Any) -> str | None:
+    """Return the kwarg name to forward unified-planner injected words under.
+
+    The real search sub-strategies (B站 ``SearchStrategy``, ``XSearchStrategy``,
+    ``YoutubeSearchStrategy``) all read an explicit ``queries`` parameter — NOT
+    ``keywords`` — so the engine must forward injected words under whatever name
+    the strategy actually declares, or the injection is a silent no-op (the word
+    is claimed + marked ``used`` while the search never sees it). Preference:
+
+    1. an explicit ``queries`` param (every real search strategy),
+    2. an explicit ``keywords`` param (older/alternate signatures + fakes),
+    3. ``keywords`` when the callable only declares ``**kwargs`` (legacy contract),
+    4. ``None`` → the strategy takes no injected words (non-search sub-strategies).
+    """
+    if _strategy_declares_param(fn, "queries"):
+        return "queries"
+    if _strategy_declares_param(fn, "keywords"):
+        return "keywords"
+    if _strategy_accepts_kwarg(fn, "keywords"):
+        return "keywords"
+    return None
 
 
 def _strategy_accepts_pool_snapshot(fn: Any) -> bool:
@@ -426,10 +458,13 @@ async def _call_strategy_discover(
     if _strategy_accepts_pool_snapshot(discover_fn):
         kwargs["pool_snapshot"] = pool_snapshot
     # Only forward injected keywords when the caller supplied them AND the
-    # strategy actually accepts the kwarg — non-search sub-strategies (which
-    # never declare ``keywords``) are left byte-identical.
-    if keywords is not None and _strategy_accepts_kwarg(discover_fn, "keywords"):
-        kwargs["keywords"] = keywords
+    # strategy actually accepts them — under the name the strategy declares
+    # (real search strategies read ``queries``, not ``keywords``). Non-search
+    # sub-strategies declare neither, so they are left byte-identical.
+    if keywords is not None:
+        inject_kwarg = _injected_keyword_kwarg(discover_fn)
+        if inject_kwarg is not None:
+            kwargs[inject_kwarg] = keywords
     return cast("list[DiscoveredContent]", await discover_fn(profile, **kwargs))
 
 

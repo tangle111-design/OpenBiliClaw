@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from openbiliclaw.runtime.keyword_fetch import PLATFORM_XIAOHONGSHU as _PLATFORM_XIAOHONGSHU
 from openbiliclaw.sources.xhs_keyword_gen import generate_xhs_keywords
 
 if TYPE_CHECKING:
@@ -43,6 +44,14 @@ class XhsTaskProducer:
     llm_service: LLMService
     enabled: bool = True
     daily_budget: int = 0
+    # Unified keyword planner fetch coordinator (P1.7). When wired AND the flag
+    # is on, the producer claims words from the keyword store, enqueues one xhs
+    # search task per word carrying its ``source_keyword_id``, and marks the word
+    # ``executing`` (NOT ``used`` — XHS is truly async; the task-result handler
+    # marks the terminal ``used`` / ``failed``). Budget rejection on enqueue
+    # (``ok=False``) rolls the word back to ``pending``. ``None`` (default / flag
+    # off) → legacy self-generated, lifecycle-free enqueue.
+    keyword_fetch: Any | None = None
     # v0.3.53+: lowered 4 → 1. Production logs (2026-05-05) showed
     # the producer firing only once per 43-minute session because the
     # 4-hour throttle is way too long for pool freshness — XHS pool
@@ -84,6 +93,25 @@ class XhsTaskProducer:
             self.keywords_per_cycle,
             max(1, int(limit or self.keywords_per_cycle)),
         )
+
+        # Unified keyword planner fetch path (P1.7, flag-gated). Takes priority
+        # over both external injection and self-generation: claim words from the
+        # store, enqueue each as a task carrying its ``source_keyword_id``, and
+        # mark it ``executing`` (XHS is truly async — terminal ``used`` /
+        # ``failed`` is the task-result handler's job). The deficit gate is
+        # upstream; the distinct floor is ``min_interval`` / ``_is_due`` above.
+        coordinator = self.keyword_fetch
+        if (
+            keywords is None
+            and coordinator is not None
+            and bool(getattr(coordinator, "should_claim", lambda: False)())
+        ):
+            claimed = coordinator.claim(_PLATFORM_XIAOHONGSHU, keyword_count)
+            if not claimed:
+                # Flag on but the store has no claimable pending words → skip
+                # this cycle (the planner will refill).
+                return self._skip("no_keywords")
+            return self._enqueue_claimed_keywords(claimed)
 
         if keywords is not None:
             resolved_keywords = _dedupe_keywords(keywords)[:keyword_count]
@@ -135,6 +163,47 @@ class XhsTaskProducer:
             len(keywords),
         )
         return {"enqueued": enqueued, "attempted": len(keywords), "reason": "ok"}
+
+    def _enqueue_claimed_keywords(self, claimed: list[Any]) -> dict[str, object]:
+        """Enqueue one task per claimed word (carrying its ``source_keyword_id``).
+
+        XHS is truly async: enqueuing only hands the search to the extension, so
+        each enqueued word is marked ``executing`` — NOT ``used`` (the terminal
+        is the task-result handler's job). A word whose enqueue is refused by
+        budget (``enqueue_with_id`` returns ``None``) is rolled back to
+        ``pending`` rather than burned; enqueueing stops early at the budget
+        wall. ``source_keyword_id`` is the lifecycle correlation that the
+        task-result handler reads back to mark the terminal (P1.8 extends it
+        onto candidates for yield).
+        """
+        coordinator = self.keyword_fetch
+        enqueued = 0
+        for item in claimed:
+            task_id = self.task_queue.enqueue_with_id(
+                "search",
+                {"keyword": item.keyword, "source_keyword_id": int(item.id)},
+                daily_budget=self.daily_budget,
+            )
+            if task_id is not None:
+                enqueued += 1
+                if coordinator is not None:
+                    coordinator.mark_executing(item)
+            else:
+                # Budget exhausted: roll this word (and every still-unclaimed
+                # one after it) back to pending so none are burned.
+                if coordinator is not None:
+                    coordinator.rollback(item)
+                break
+        # Roll back any words we never reached (the loop broke at the budget wall).
+        if coordinator is not None and enqueued < len(claimed):
+            for item in claimed[enqueued + 1 :]:
+                coordinator.rollback(item)
+        logger.info(
+            "xhs producer enqueued %d/%d claimed search tasks (executing)",
+            enqueued,
+            len(claimed),
+        )
+        return {"enqueued": enqueued, "attempted": len(claimed), "reason": "ok"}
 
     def _is_due(self) -> bool:
         """Return False if the newest search task was enqueued recently."""

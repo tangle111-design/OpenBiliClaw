@@ -140,6 +140,7 @@ def build_youtube_discovery_producer(
     memory: Any,
     concurrency: Any,
     candidate_pipeline: Any | None = None,
+    keyword_fetch: Any | None = None,
 ) -> Any | None:
     """Build the runtime YouTube producer if YouTube discovery is enabled."""
     yt_cfg = getattr(getattr(config, "sources", None), "youtube", None)
@@ -169,6 +170,7 @@ def build_youtube_discovery_producer(
         strategy: str,
         unit_budget: int,
         result_limit: int,
+        queries: list[str] | None = None,
     ) -> YoutubeStrategyRunResult:
         strategies = build_youtube_discovery_strategies(
             config=config,
@@ -185,18 +187,27 @@ def build_youtube_discovery_producer(
 
         selected_strategy = selected[0]
         discovery_engine.register_strategy(selected_strategy)
+        # Unified keyword planner injection (P1.7): forward claimed words to the
+        # engine as ``keywords``; the engine maps them onto the strategy's
+        # ``queries`` param (only ``yt_search`` declares it). ``None`` keeps the
+        # legacy self-generating behavior byte-identical.
+        inject: dict[str, Any] = {}
+        if queries is not None:
+            inject["keywords"] = list(queries)
         produce_fn = getattr(discovery_engine, "produce_candidates", None)
         if callable(produce_fn):
             raw_items = await produce_fn(
                 profile,
                 strategies=[strategy],
                 limit=max(1, int(result_limit)),
+                **inject,
             )
         else:
             raw_items = await discovery_engine.discover(
                 profile,
                 strategies=[strategy],
                 limit=max(1, int(result_limit)),
+                **inject,
             )
         items = [
             item
@@ -224,6 +235,7 @@ def build_youtube_discovery_producer(
         daily_trending_budget=int(getattr(yt_cfg, "daily_trending_budget", 0)),
         daily_channel_budget=int(getattr(yt_cfg, "daily_channel_budget", 0)),
         candidate_pipeline=candidate_pipeline,
+        keyword_fetch=keyword_fetch,
     )
 
 
@@ -585,6 +597,23 @@ class RuntimeContext:
                 (_xhs_self_info_provider() or {}).get("nickname", "") or ""
             ).strip(),
         )
+        # P1.7: unified keyword planner FETCH coordinator — claim-from-store +
+        # word-lifecycle helper shared by the 5 search fetch sites (4 producers
+        # + the B站 search path in the controller). Holds the keyword-store DAO
+        # (the database) + discovery config (the flag + ``fetch_batch``). With
+        # the flag off (default) every site's ``should_claim`` returns False, so
+        # wiring it in is zero behavior change.
+        from openbiliclaw.config import DiscoveryConfig
+        from openbiliclaw.runtime.keyword_fetch import KeywordFetchCoordinator
+
+        new_keyword_fetch = KeywordFetchCoordinator(
+            database=self.database,
+            # Real ``Config`` always carries ``discovery`` (a dataclass field);
+            # lightweight test stubs (SimpleNamespace) may not — fall back to the
+            # default (flag off) so the coordinator stays inert.
+            discovery_config=getattr(new_config, "discovery", None) or DiscoveryConfig(),
+        )
+
         new_xhs_producer: Any = None
         new_douyin_producer: Any = None
         new_youtube_producer: Any = None
@@ -604,6 +633,7 @@ class RuntimeContext:
                 llm_service=new_llm_service,
                 enabled=xhs_enabled,
                 daily_budget=int(getattr(xhs_cfg, "daily_search_budget", 0)),
+                keyword_fetch=new_keyword_fetch,
             )
             from openbiliclaw.runtime.douyin_producer import build_douyin_discovery_producer
 
@@ -613,6 +643,7 @@ class RuntimeContext:
                 soul_engine=new_soul_engine,
                 discovery_engine=new_discovery_engine,
                 candidate_pipeline=new_candidate_pipeline,
+                keyword_fetch=new_keyword_fetch,
             )
             new_youtube_producer = build_youtube_discovery_producer(
                 config=new_config,
@@ -623,6 +654,7 @@ class RuntimeContext:
                 llm_service=new_llm_service,
                 memory=cast("Any", self.memory_manager),
                 concurrency=concurrency,
+                keyword_fetch=new_keyword_fetch,
             )
             # X (Twitter) producer — fetch-only; enqueues into discovery_candidates
             # and never evaluates / writes content_cache (unified-pool spec). Gated
@@ -634,6 +666,7 @@ class RuntimeContext:
                 database=self.database,
                 soul_engine=new_soul_engine,
                 llm_service=new_llm_service,
+                keyword_fetch=new_keyword_fetch,
             )
 
         # P1.6: unified keyword planner — deficit-pulled merged keyword
@@ -661,6 +694,7 @@ class RuntimeContext:
             recommendation_engine=new_recommendation_engine,
             discovery_candidate_pipeline=new_candidate_pipeline,
             keyword_planner=new_keyword_planner,
+            keyword_fetch=new_keyword_fetch,
             pool_target_count=new_config.scheduler.pool_target_count,
             pool_source_shares=_pool_source_shares_from_config(new_config),
             signal_event_threshold=int(getattr(new_config.scheduler, "signal_event_threshold", 6)),
