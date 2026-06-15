@@ -272,7 +272,7 @@
   <header>
     <h1>Soul 更新变化流程图</h1>
     <p class="subtitle">这张图说明当前 soul 模块如何把事件、反馈、对话、探针和手动编辑转成五层 OnionProfile 的变化，并标出哪些路径只是“先记住”，哪些路径会真正写入 soul 画像。</p>
-    <p class="stamp">docs/diagrams/soul-update-flow.html · 对齐当前源码 · 2026-06-01</p>
+    <p class="stamp">docs/diagrams/soul-update-flow.html · 对齐当前源码 · 2026-06-15</p>
     <div class="legend" aria-label="图例">
       <span><i class="dot" style="background:var(--blue)"></i>输入/入口</span>
       <span><i class="dot" style="background:var(--green)"></i>确定性写回</span>
@@ -289,7 +289,7 @@
       <p class="note">重点：行为不会总是直接改画像，多数先进入偏好、候选或缓冲层。</p>
     </div>
     <div class="panel">
-      <svg viewBox="0 0 1280 900" role="img" aria-labelledby="flowTitle flowDesc">
+      <svg viewBox="0 48 1200 566" role="img" aria-labelledby="flowTitle flowDesc">
         <title id="flowTitle">Soul 模块总流程图</title>
         <desc id="flowDesc">展示事件源、MemoryManager、SoulEngine、ProfileUpdatePipeline、五层画像、探针、反馈和手动编辑的更新流程。</desc>
         <defs>
@@ -313,202 +313,217 @@
           </filter>
         </defs>
 
-        <!-- background lanes -->
-        <rect x="28" y="32" width="268" height="700" rx="8" fill="#f5f8ff" stroke="#dbe6ff"></rect>
-        <rect x="326" y="32" width="620" height="700" rx="8" fill="#fffaf0" stroke="#f1deb0"></rect>
-        <rect x="976" y="32" width="276" height="700" rx="8" fill="#f8fafc" stroke="#d8dee7"></rect>
-        <text x="162" y="58" text-anchor="middle" fill="#2563eb" font-size="13" font-weight="700">输入事件与时机</text>
-        <text x="636" y="58" text-anchor="middle" fill="#b88a00" font-size="13" font-weight="700">Soul 运行核心</text>
-        <text x="1114" y="58" text-anchor="middle" fill="#4b5563" font-size="13" font-weight="700">持久化与输出</text>
+        <!-- band backgrounds -->
+        <rect x="18" y="64" width="1164" height="258" rx="10" fill="#f6faf7" stroke="#cfe6d8"></rect>
+        <rect x="18" y="338" width="1164" height="262" rx="10" fill="#fcfaf4" stroke="#ece0c8"></rect>
+        <text x="34" y="88" fill="#0f8f5f" font-size="12" font-weight="700">① 真正写入五层画像 · 慢 · 需阈值</text>
+        <text x="34" y="362" fill="#b88a00" font-size="12" font-weight="700">② 先记住 / 覆盖层 · 快 · 不直接改五层</text>
+        <text x="600" y="334" text-anchor="middle" fill="#555f6d" font-size="10.5">② 中反馈累计 ≥3 / 偏好显著变化 / 候选 ≥0.8 且 ≥2 次 → 上升为 ① 的输入</text>
 
-        <!-- Inputs -->
+        <!-- TOP band: 输入 -->
         <g filter="url(#softShadow)">
-          <rect x="58" y="88" width="208" height="64" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"></rect>
-          <text x="162" y="112" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">init 历史导入</text>
-          <text x="162" y="131" text-anchor="middle" fill="#555f6d" font-size="10">B站 + 小红书 + 抖音 + YouTube</text>
+          <rect x="34" y="104" width="180" height="176" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"></rect>
+          <text x="124" y="128" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">历史 / 行为 / 点击</text>
+          <text x="124" y="151" text-anchor="middle" fill="#555f6d" font-size="9.5">init 历史导入</text>
+          <text x="124" y="169" text-anchor="middle" fill="#555f6d" font-size="9.5">B站·小红书·抖音·YouTube</text>
+          <text x="124" y="187" text-anchor="middle" fill="#555f6d" font-size="9.5">view·search·favorite·follow</text>
+          <text x="124" y="205" text-anchor="middle" fill="#555f6d" font-size="9.5">recommendation_click（强）</text>
+          <text x="124" y="223" text-anchor="middle" fill="#555f6d" font-size="9.5">账号同步</text>
         </g>
 
+        <!-- TOP band: 事件落库 -->
         <g filter="url(#softShadow)">
-          <rect x="58" y="166" width="208" height="64" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"></rect>
-          <text x="162" y="190" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">行为/账号同步</text>
-          <text x="162" y="209" text-anchor="middle" fill="#555f6d" font-size="10">view / search / favorite / follow</text>
+          <rect x="258" y="162" width="150" height="62" rx="8" fill="#ffffff" stroke="#7a8699" stroke-width="1.5"></rect>
+          <text x="333" y="187" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">事件落库</text>
+          <text x="333" y="206" text-anchor="middle" fill="#555f6d" font-size="9">→SQLite，只落事实不级联</text>
         </g>
 
+        <!-- TOP band: 偏好分析 → 重建 -->
         <g filter="url(#softShadow)">
-          <rect x="58" y="244" width="208" height="64" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"></rect>
-          <text x="162" y="268" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">推荐点击</text>
-          <text x="162" y="287" text-anchor="middle" fill="#555f6d" font-size="10">recommendation_click 强信号</text>
+          <rect x="440" y="92" width="190" height="72" rx="8" fill="#ffffff" stroke="#6d28d9" stroke-width="1.5"></rect>
+          <text x="535" y="114" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">偏好分析 → 画像重建</text>
+          <text x="535" y="132" text-anchor="middle" fill="#555f6d" font-size="8.5">analyze_events · PreferenceAnalyzer</text>
+          <text x="535" y="150" text-anchor="middle" fill="#555f6d" font-size="9">ProfileBuilder（显著变化才重建）</text>
         </g>
 
+        <!-- TOP band: 增量管线 -->
         <g filter="url(#softShadow)">
-          <rect x="58" y="322" width="208" height="64" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"></rect>
-          <text x="162" y="346" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">推荐反馈</text>
-          <text x="162" y="365" text-anchor="middle" fill="#555f6d" font-size="10">like / dislike / comment / dismiss</text>
+          <rect x="440" y="222" width="190" height="72" rx="8" fill="#ffffff" stroke="#b88a00" stroke-width="1.5"></rect>
+          <text x="535" y="244" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">增量管线 → LayerUpdaters</text>
+          <text x="535" y="262" text-anchor="middle" fill="#555f6d" font-size="8.5">pipeline.ingest · classify→buffer</text>
+          <text x="535" y="280" text-anchor="middle" fill="#555f6d" font-size="9">tick 60s · 按层阈值/防抖</text>
         </g>
 
+        <!-- TOP band: 五层 -->
         <g filter="url(#softShadow)">
-          <rect x="58" y="400" width="208" height="64" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"></rect>
-          <text x="162" y="424" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">聊天对话</text>
-          <text x="162" y="443" text-anchor="middle" fill="#555f6d" font-size="10">goal / value / interest / dislike / state</text>
+          <rect x="662" y="96" width="196" height="190" rx="8" fill="#ffffff" stroke="#0f8f5f" stroke-width="1.5"></rect>
+          <text x="760" y="120" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">OnionProfile 五层</text>
+          <rect x="682" y="132" width="156" height="22" rx="5" fill="#f0fdf4" stroke="#9bd8b6"></rect>
+          <text x="760" y="147" text-anchor="middle" fill="#0f8f5f" font-size="9.5" font-weight="700">Surface 风格/上下文</text>
+          <rect x="682" y="160" width="156" height="22" rx="5" fill="#f0fdf4" stroke="#9bd8b6"></rect>
+          <text x="760" y="175" text-anchor="middle" fill="#0f8f5f" font-size="9.5" font-weight="700">Interest 喜欢/不喜欢/UP主</text>
+          <rect x="682" y="188" width="156" height="22" rx="5" fill="#f8fafc" stroke="#d8dee7"></rect>
+          <text x="760" y="203" text-anchor="middle" fill="#555f6d" font-size="9.5" font-weight="700">Role 阶段/状态</text>
+          <rect x="682" y="216" width="156" height="22" rx="5" fill="#f8fafc" stroke="#d8dee7"></rect>
+          <text x="760" y="231" text-anchor="middle" fill="#555f6d" font-size="9.5" font-weight="700">Values 价值观/驱动</text>
+          <rect x="682" y="244" width="156" height="22" rx="5" fill="#f8fafc" stroke="#d8dee7"></rect>
+          <text x="760" y="259" text-anchor="middle" fill="#555f6d" font-size="9.5" font-weight="700">Core 特质/需求/MBTI</text>
         </g>
 
+        <!-- TOP band: 文件 -->
         <g filter="url(#softShadow)">
-          <rect x="58" y="478" width="208" height="64" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"></rect>
-          <text x="162" y="502" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">兴趣/避雷探针</text>
-          <text x="162" y="521" text-anchor="middle" fill="#555f6d" font-size="10">confirm / reject / chat</text>
+          <rect x="892" y="100" width="170" height="58" rx="8" fill="#ffffff" stroke="#7a8699" stroke-width="1.5"></rect>
+          <text x="977" y="124" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">preference.json</text>
+          <text x="977" y="143" text-anchor="middle" fill="#555f6d" font-size="9">interests/style/dislikes</text>
+        </g>
+        <g filter="url(#softShadow)">
+          <rect x="892" y="188" width="170" height="96" rx="8" fill="#ffffff" stroke="#0f8f5f" stroke-width="1.5"></rect>
+          <text x="977" y="212" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">soul.json</text>
+          <text x="977" y="231" text-anchor="middle" fill="#555f6d" font-size="9">五层 OnionProfile</text>
+          <text x="977" y="249" text-anchor="middle" fill="#555f6d" font-size="8.5">Values/Core 变→重写 portrait</text>
+          <text x="977" y="267" text-anchor="middle" fill="#555f6d" font-size="9">→ soul_profile.json/md</text>
         </g>
 
+        <!-- BOTTOM band: 输入 -->
         <g filter="url(#softShadow)">
-          <rect x="58" y="556" width="208" height="64" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"></rect>
-          <text x="162" y="580" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">手动编辑画像</text>
-          <text x="162" y="599" text-anchor="middle" fill="#555f6d" font-size="10">profile_overrides 独立覆盖层</text>
+          <rect x="44" y="372" width="190" height="172" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"></rect>
+          <text x="139" y="396" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">反馈 / 聊天 / 探针 / 手动</text>
+          <text x="139" y="419" text-anchor="middle" fill="#555f6d" font-size="9">like·dislike·comment</text>
+          <text x="139" y="437" text-anchor="middle" fill="#555f6d" font-size="9">聊天 goal·value·interest</text>
+          <text x="139" y="455" text-anchor="middle" fill="#555f6d" font-size="9">聊天 dislike·state</text>
+          <text x="139" y="473" text-anchor="middle" fill="#555f6d" font-size="9">探针 confirm·reject</text>
+          <text x="139" y="491" text-anchor="middle" fill="#555f6d" font-size="9">手动编辑画像</text>
         </g>
 
-        <!-- Core nodes -->
+        <!-- BOTTOM band: 处理 -->
         <g filter="url(#softShadow)">
-          <rect x="370" y="92" width="220" height="70" rx="8" fill="#ffffff" stroke="#6d28d9" stroke-width="1.5"></rect>
-          <text x="480" y="116" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">SoulEngine.analyze_events</text>
-          <text x="480" y="135" text-anchor="middle" fill="#555f6d" font-size="10">PreferenceAnalyzer + merge_preferences</text>
-          <text x="480" y="150" text-anchor="middle" fill="#555f6d" font-size="10">分片/压缩/满意度过滤</text>
+          <rect x="300" y="372" width="180" height="70" rx="8" fill="#ffffff" stroke="#7a8699" stroke-width="1.5"></rect>
+          <text x="390" y="396" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">即时记忆 / 候选</text>
+          <text x="390" y="414" text-anchor="middle" fill="#555f6d" font-size="9">cognition card（先记住）</text>
+          <text x="390" y="432" text-anchor="middle" fill="#555f6d" font-size="9">候选 ≥0.8 且 ≥2 次升级</text>
+        </g>
+        <g filter="url(#softShadow)">
+          <rect x="300" y="456" width="180" height="70" rx="8" fill="#ffffff" stroke="#c2410c" stroke-width="1.5"></rect>
+          <text x="390" y="480" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">避雷写回 / 手动覆盖</text>
+          <text x="390" y="498" text-anchor="middle" fill="#555f6d" font-size="9">apply_new_dislikes</text>
+          <text x="390" y="516" text-anchor="middle" fill="#555f6d" font-size="9">overrides · 后台清池</text>
+        </g>
+        <g filter="url(#softShadow)">
+          <rect x="300" y="540" width="180" height="54" rx="8" fill="#ffffff" stroke="#b88a00" stroke-width="1.5"></rect>
+          <text x="390" y="563" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">周期 tick</text>
+          <text x="390" y="581" text-anchor="middle" fill="#555f6d" font-size="9">CognitionCycle 12h · 探针</text>
         </g>
 
+        <!-- BOTTOM band: 文件 -->
         <g filter="url(#softShadow)">
-          <rect x="370" y="184" width="220" height="76" rx="8" fill="#ffffff" stroke="#6d28d9" stroke-width="1.5"></rect>
-          <text x="480" y="207" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">ProfileBuilder.build</text>
-          <text x="480" y="226" text-anchor="middle" fill="#555f6d" font-size="10">history + preference + awareness + insight</text>
-          <text x="480" y="241" text-anchor="middle" fill="#555f6d" font-size="10">生成结构化初始画像/重建画像</text>
+          <rect x="770" y="372" width="250" height="54" rx="8" fill="#ffffff" stroke="#7a8699" stroke-width="1.5"></rect>
+          <text x="895" y="395" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">cognition_updates.json</text>
+          <text x="895" y="414" text-anchor="middle" fill="#555f6d" font-size="9">「阿B 最近记住了什么」≠ 画像</text>
+        </g>
+        <g filter="url(#softShadow)">
+          <rect x="770" y="440" width="250" height="88" rx="8" fill="#ffffff" stroke="#7a8699" stroke-width="1.5"></rect>
+          <text x="895" y="463" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">中间状态文件</text>
+          <text x="895" y="481" text-anchor="middle" fill="#555f6d" font-size="9">awareness · insight</text>
+          <text x="895" y="499" text-anchor="middle" fill="#555f6d" font-size="8.5">insight_candidates · feedback_state</text>
+          <text x="895" y="517" text-anchor="middle" fill="#555f6d" font-size="8.5">speculative_state · avoidance_state</text>
+        </g>
+        <g filter="url(#softShadow)">
+          <rect x="770" y="544" width="250" height="54" rx="8" fill="#ffffff" stroke="#7a8699" stroke-width="1.5"></rect>
+          <text x="895" y="567" text-anchor="middle" fill="#171717" font-size="12.5" font-weight="700">profile_overrides.json</text>
+          <text x="895" y="586" text-anchor="middle" fill="#555f6d" font-size="9">get_profile = AI画像 + 覆盖层</text>
         </g>
 
-        <g filter="url(#softShadow)">
-          <rect x="642" y="92" width="260" height="88" rx="8" fill="#ffffff" stroke="#b88a00" stroke-width="1.5"></rect>
-          <text x="772" y="116" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">ProfileUpdatePipeline</text>
-          <text x="772" y="136" text-anchor="middle" fill="#555f6d" font-size="10">classify_signal → LayerBuffer</text>
-          <text x="772" y="151" text-anchor="middle" fill="#555f6d" font-size="10">阈值：条数 + min_interval</text>
-          <text x="772" y="166" text-anchor="middle" fill="#555f6d" font-size="10">tick 默认 60s（可配置）由 runtime 调用</text>
-        </g>
+        <!-- TOP arrows -->
+        <path d="M214 193 L258 193" fill="none" stroke="#2563eb" stroke-width="1.6" marker-end="url(#arrowBlue)"></path>
+        <path d="M408 193 L424 193 L424 128 L440 128" fill="none" stroke="#6d28d9" stroke-width="1.4" marker-end="url(#arrowDark)"></path>
+        <path d="M408 193 L424 193 L424 258 L440 258" fill="none" stroke="#b88a00" stroke-width="1.4" marker-end="url(#arrowGold)"></path>
+        <path d="M630 128 L646 128 L646 150 L662 150" fill="none" stroke="#0f8f5f" stroke-width="1.6" marker-end="url(#arrowGreen)"></path>
+        <path d="M630 258 L646 258 L646 232 L662 232" fill="none" stroke="#0f8f5f" stroke-width="1.6" marker-end="url(#arrowGreen)"></path>
+        <path d="M858 210 L876 210 L876 236 L892 236" fill="none" stroke="#0f8f5f" stroke-width="1.8" marker-end="url(#arrowGreen)"></path>
+        <path d="M630 110 L646 110 L646 82 L876 82 L876 129 L892 129" fill="none" stroke="#7a8699" stroke-width="1.2" marker-end="url(#arrowDark)" stroke-dasharray="5,4"></path>
 
-        <g filter="url(#softShadow)">
-          <rect x="642" y="204" width="260" height="78" rx="8" fill="#ffffff" stroke="#6d28d9" stroke-width="1.5"></rect>
-          <text x="772" y="228" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">LayerUpdaters</text>
-          <text x="772" y="247" text-anchor="middle" fill="#555f6d" font-size="10">Surface 纯计算 · Interest 偏好 LLM</text>
-          <text x="772" y="262" text-anchor="middle" fill="#555f6d" font-size="10">Role/Values/Core LLM delta 防抖</text>
-        </g>
+        <!-- BOTTOM arrows -->
+        <path d="M234 407 L300 407" fill="none" stroke="#2563eb" stroke-width="1.6" marker-end="url(#arrowBlue)"></path>
+        <path d="M234 460 L266 460 L266 491 L300 491" fill="none" stroke="#2563eb" stroke-width="1.4" marker-end="url(#arrowBlue)"></path>
+        <path d="M234 500 L266 500 L266 567 L300 567" fill="none" stroke="#2563eb" stroke-width="1.4" marker-end="url(#arrowBlue)"></path>
+        <path d="M480 399 L770 399" fill="none" stroke="#7a8699" stroke-width="1.5" marker-end="url(#arrowDark)"></path>
+        <path d="M480 420 L640 420 L640 470 L770 470" fill="none" stroke="#7a8699" stroke-width="1.2" marker-end="url(#arrowDark)" stroke-dasharray="5,4"></path>
+        <path d="M480 567 L640 567 L640 505 L770 505" fill="none" stroke="#b88a00" stroke-width="1.3" marker-end="url(#arrowGold)"></path>
+        <path d="M480 491 L660 491 L660 571 L770 571" fill="none" stroke="#0f8f5f" stroke-width="1.5" marker-end="url(#arrowGreen)"></path>
 
-        <!-- Onion profile layers -->
-        <g filter="url(#softShadow)">
-          <rect x="642" y="310" width="260" height="182" rx="8" fill="#ffffff" stroke="#0f8f5f" stroke-width="1.5"></rect>
-          <text x="772" y="334" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">OnionProfile 五层</text>
-          <rect x="672" y="352" width="200" height="22" rx="5" fill="#f0fdf4" stroke="#9bd8b6"></rect>
-          <text x="772" y="367" text-anchor="middle" fill="#0f8f5f" font-size="10" font-weight="700">Surface：风格/上下文/探索开放度</text>
-          <rect x="672" y="380" width="200" height="22" rx="5" fill="#f0fdf4" stroke="#9bd8b6"></rect>
-          <text x="772" y="395" text-anchor="middle" fill="#0f8f5f" font-size="10" font-weight="700">Interest：喜欢/不喜欢/UP主</text>
-          <rect x="672" y="408" width="200" height="22" rx="5" fill="#f8fafc" stroke="#d8dee7"></rect>
-          <text x="772" y="423" text-anchor="middle" fill="#555f6d" font-size="10" font-weight="700">Role：人生阶段/当前状态</text>
-          <rect x="672" y="436" width="200" height="22" rx="5" fill="#f8fafc" stroke="#d8dee7"></rect>
-          <text x="772" y="451" text-anchor="middle" fill="#555f6d" font-size="10" font-weight="700">Values：价值观/内在驱动</text>
-          <rect x="672" y="464" width="200" height="22" rx="5" fill="#f8fafc" stroke="#d8dee7"></rect>
-          <text x="772" y="479" text-anchor="middle" fill="#555f6d" font-size="10" font-weight="700">Core：特质/需求/MBTI</text>
-        </g>
-
-        <g filter="url(#softShadow)">
-          <rect x="370" y="306" width="220" height="70" rx="8" fill="#ffffff" stroke="#b88a00" stroke-width="1.5"></rect>
-          <text x="480" y="330" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">反馈批处理</text>
-          <text x="480" y="349" text-anchor="middle" fill="#555f6d" font-size="10">默认新 feedback ≥ 3 才重析</text>
-          <text x="480" y="364" text-anchor="middle" fill="#555f6d" font-size="10">偏好显著变化才重建画像</text>
-        </g>
-
-        <g filter="url(#softShadow)">
-          <rect x="370" y="400" width="220" height="76" rx="8" fill="#ffffff" stroke="#b88a00" stroke-width="1.5"></rect>
-          <text x="480" y="424" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">聊天学习候选</text>
-          <text x="480" y="443" text-anchor="middle" fill="#555f6d" font-size="10">confidence ≥ 0.8</text>
-          <text x="480" y="458" text-anchor="middle" fill="#555f6d" font-size="10">同类出现 ≥ 2 次才进入长期学习</text>
-        </g>
-
-        <g filter="url(#softShadow)">
-          <rect x="370" y="502" width="220" height="76" rx="8" fill="#ffffff" stroke="#c2410c" stroke-width="1.5"></rect>
-          <text x="480" y="526" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">避雷/不喜欢写回</text>
-          <text x="480" y="545" text-anchor="middle" fill="#555f6d" font-size="10">apply_new_dislikes</text>
-          <text x="480" y="560" text-anchor="middle" fill="#555f6d" font-size="10">preference → soul interest.dislikes → 清池</text>
-        </g>
-
-        <g filter="url(#softShadow)">
-          <rect x="370" y="606" width="532" height="68" rx="8" fill="#ffffff" stroke="#b88a00" stroke-width="1.5"></rect>
-          <text x="636" y="630" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">周期性 tick：探针生命周期 + CognitionCycle</text>
-          <text x="636" y="649" text-anchor="middle" fill="#555f6d" font-size="10">Interest/Avoidance Speculator：observe → expire/promote/generate → 写回层</text>
-          <text x="636" y="664" text-anchor="middle" fill="#555f6d" font-size="10">Awareness/Insight：默认 12h（可配置）生成，写入 profile.recent_awareness / active_insights</text>
-        </g>
-
-        <!-- Storage/output nodes -->
-        <g filter="url(#softShadow)">
-          <rect x="1004" y="92" width="220" height="76" rx="8" fill="#ffffff" stroke="#7a8699" stroke-width="1.5"></rect>
-          <text x="1114" y="116" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">preference.json</text>
-          <text x="1114" y="135" text-anchor="middle" fill="#555f6d" font-size="10">interests / style / context</text>
-          <text x="1114" y="150" text-anchor="middle" fill="#555f6d" font-size="10">disliked_topics / favorite_up_users</text>
-        </g>
-
-        <g filter="url(#softShadow)">
-          <rect x="1004" y="192" width="220" height="94" rx="8" fill="#ffffff" stroke="#0f8f5f" stroke-width="1.5"></rect>
-          <text x="1114" y="216" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">soul.json</text>
-          <text x="1114" y="235" text-anchor="middle" fill="#555f6d" font-size="10">AI 原始五层 OnionProfile</text>
-          <text x="1114" y="250" text-anchor="middle" fill="#555f6d" font-size="10">Core/Values 变化会重写 portrait</text>
-          <text x="1114" y="265" text-anchor="middle" fill="#555f6d" font-size="10">sync → soul_profile.json/md</text>
-        </g>
-
-        <g filter="url(#softShadow)">
-          <rect x="1004" y="312" width="220" height="82" rx="8" fill="#ffffff" stroke="#7a8699" stroke-width="1.5"></rect>
-          <text x="1114" y="336" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">中间状态文件</text>
-          <text x="1114" y="355" text-anchor="middle" fill="#555f6d" font-size="10">awareness / insight</text>
-          <text x="1114" y="370" text-anchor="middle" fill="#555f6d" font-size="10">insight_candidates / feedback_state</text>
-          <text x="1114" y="385" text-anchor="middle" fill="#555f6d" font-size="10">speculative_state / avoidance_state</text>
-        </g>
-
-        <g filter="url(#softShadow)">
-          <rect x="1004" y="420" width="220" height="72" rx="8" fill="#ffffff" stroke="#7a8699" stroke-width="1.5"></rect>
-          <text x="1114" y="444" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">cognition_updates.json</text>
-          <text x="1114" y="463" text-anchor="middle" fill="#555f6d" font-size="10">“阿B 最近记住了什么”</text>
-          <text x="1114" y="478" text-anchor="middle" fill="#555f6d" font-size="10">解释记录，不等于画像本体</text>
-        </g>
-
-        <g filter="url(#softShadow)">
-          <rect x="1004" y="518" width="220" height="76" rx="8" fill="#ffffff" stroke="#7a8699" stroke-width="1.5"></rect>
-          <text x="1114" y="542" text-anchor="middle" fill="#171717" font-size="13" font-weight="700">profile_overrides.json</text>
-          <text x="1114" y="561" text-anchor="middle" fill="#555f6d" font-size="10">用户手动编辑覆盖层</text>
-          <text x="1114" y="576" text-anchor="middle" fill="#555f6d" font-size="10">get_profile = AI 画像 + 覆盖层</text>
-        </g>
-
-        <!-- Arrows -->
-        <path d="M266 120 C310 120 326 127 370 127" fill="none" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrowBlue)"></path>
-        <path d="M590 127 C620 127 620 127 642 127" fill="none" stroke="#171717" stroke-width="1.2" marker-end="url(#arrowDark)"></path>
-        <path d="M590 222 C620 222 620 224 642 224" fill="none" stroke="#171717" stroke-width="1.2" marker-end="url(#arrowDark)"></path>
-        <path d="M902 246 C938 246 964 239 1004 239" fill="none" stroke="#0f8f5f" stroke-width="1.6" marker-end="url(#arrowGreen)"></path>
-        <path d="M590 127 C740 127 860 116 1004 130" fill="none" stroke="#7a8699" stroke-width="1.2" marker-end="url(#arrowDark)" stroke-dasharray="5,4"></path>
-        <path d="M902 400 C940 400 964 352 1004 352" fill="none" stroke="#7a8699" stroke-width="1.2" marker-end="url(#arrowDark)" stroke-dasharray="5,4"></path>
-        <path d="M902 400 C942 400 964 239 1004 239" fill="none" stroke="#0f8f5f" stroke-width="1.4" marker-end="url(#arrowGreen)"></path>
-        <path d="M902 640 C952 640 960 352 1004 352" fill="none" stroke="#b88a00" stroke-width="1.2" marker-end="url(#arrowGold)" stroke-dasharray="5,4"></path>
-        <path d="M902 640 C950 640 958 239 1004 239" fill="none" stroke="#b88a00" stroke-width="1.2" marker-end="url(#arrowGold)" stroke-dasharray="5,4"></path>
-
-        <path d="M266 198 C430 198 500 84 642 128" fill="none" stroke="#2563eb" stroke-width="1.2" marker-end="url(#arrowBlue)"></path>
-        <path d="M266 276 C430 276 520 116 642 136" fill="none" stroke="#2563eb" stroke-width="1.4" marker-end="url(#arrowBlue)"></path>
-        <path d="M266 354 C312 354 330 340 370 340" fill="none" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrowBlue)"></path>
-        <path d="M590 340 C636 340 636 340 672 340" fill="none" stroke="#b88a00" stroke-width="1.2" marker-end="url(#arrowGold)"></path>
-        <path d="M370 340 C330 408 330 444 370 438" fill="none" stroke="#b88a00" stroke-width="1.1" stroke-dasharray="4,4"></path>
-        <path d="M590 340 C676 298 712 284 750 282" fill="none" stroke="#6d28d9" stroke-width="1.2" marker-end="url(#arrowDark)" stroke-dasharray="4,4"></path>
-        <path d="M266 432 C310 432 326 438 370 438" fill="none" stroke="#2563eb" stroke-width="1.4" marker-end="url(#arrowBlue)"></path>
-        <path d="M590 438 C628 438 635 400 672 400" fill="none" stroke="#b88a00" stroke-width="1.2" marker-end="url(#arrowGold)"></path>
-        <path d="M266 510 C320 510 332 540 370 540" fill="none" stroke="#2563eb" stroke-width="1.4" marker-end="url(#arrowBlue)"></path>
-        <path d="M590 540 C636 540 636 400 672 400" fill="none" stroke="#c2410c" stroke-width="1.3" marker-end="url(#arrowRed)"></path>
-        <path d="M590 540 C770 540 880 352 1004 352" fill="none" stroke="#c2410c" stroke-width="1.3" marker-end="url(#arrowRed)" stroke-dasharray="4,3"></path>
-        <path d="M266 588 C650 588 770 548 1004 556" fill="none" stroke="#0f8f5f" stroke-width="1.5" marker-end="url(#arrowGreen)"></path>
-        <path d="M266 588 C510 622 760 280 1004 239" fill="none" stroke="#0f8f5f" stroke-width="1.2" marker-end="url(#arrowGreen)" stroke-dasharray="5,4"></path>
-        <path d="M260 354 C540 512 838 490 1004 456" fill="none" stroke="#7a8699" stroke-width="1.2" marker-end="url(#arrowDark)" stroke-dasharray="4,4"></path>
-        <path d="M260 432 C542 500 836 492 1004 456" fill="none" stroke="#7a8699" stroke-width="1.2" marker-end="url(#arrowDark)" stroke-dasharray="4,4"></path>
+        <!-- cross-band: 避雷写回 → 五层 Interest.dislikes -->
+        <path d="M480 470 L652 470 L652 171 L662 171" fill="none" stroke="#c2410c" stroke-width="1.4" marker-end="url(#arrowRed)" stroke-dasharray="5,3"></path>
       </svg>
     </div>
   </section>
 
   <section>
     <div class="section-head">
-      <h2>2. 关键步骤注释：目标 / 处理 / 写入</h2>
+      <h2>2. 举例：七条流分别怎么改 soul</h2>
+      <p class="note">同一个动作，先发生什么、何时才真的改 soul、改的是哪一层。<b>✅ = 已写入画像</b>，<b>💤 = 先记住但还没改五层</b>。</p>
+    </div>
+    <div class="step-grid">
+      <article class="step-card">
+        <span class="step-kicker">①</span>
+        <h3>首次 init：一次性全量建档</h3>
+        <p><b>你做了：</b>第一次运行 <code>openbiliclaw init</code>，导入 B站 / 小红书 / 抖音 / YouTube 的历史。</p>
+        <p><b>系统怎么走：</b>历史先落成事件 → 跑偏好分析写 <code>preference.json</code> → <code>ProfileBuilder.build</code> 一次性合成五层。</p>
+        <p><b>soul 结果：</b>✅ 五层从零全建，直接写 <code>soul.json</code>。这是<b>唯一“无阈值、立刻全建”</b>的流；之后再不会这样大改。</p>
+      </article>
+
+      <article class="step-card green">
+        <span class="step-kicker">②</span>
+        <h3>看视频 / 账号同步：外层慢慢长</h3>
+        <p><b>你做了：</b>连刷 5 个“机器学习”长视频（或后台同步了你的 B站 历史）。</p>
+        <p><b>系统怎么走：</b>每条先落 SQLite；账号同步直接走 <code>analyze_events</code>，普通浏览进增量管线分到 Surface + Interest 缓冲，攒够阈值（Surface 3 条/5 分钟、Interest 3 条/10 分钟）才更新。</p>
+        <p><b>soul 结果：</b>✅ Surface 把 <code>depth_preference</code> 调向长视频；Interest 里“机器学习”权重上升。💤 Role/Values/Core 这次纹丝不动。</p>
+      </article>
+
+      <article class="step-card green">
+        <span class="step-kicker">③</span>
+        <h3>点开一条推荐：强信号，门槛降到 1</h3>
+        <p><b>你做了：</b>点开了阿B 推给你的一个冷门纪录片。</p>
+        <p><b>系统怎么走：</b><code>recommendation_click</code> 是强信号，让那一层 <code>min_signals</code> 临时降到 1（仍受 <code>min_interval</code> 约束）；同时进探索缓冲 +0.25。</p>
+        <p><b>soul 结果：</b>✅ 比普通浏览更快把这个方向并入 Interest / Surface，下次更敢推同类。💤 仍不碰深层。</p>
+      </article>
+
+      <article class="step-card gold">
+        <span class="step-kicker">④</span>
+        <h3>点 like / dislike：先记住，够了才重建</h3>
+        <p><b>你做了：</b>给一条推荐点了 dislike。</p>
+        <p><b>系统怎么走：</b>① 立刻写 <code>cognition_updates.json</code>（“记住你不喜欢这条”）——此刻 soul.json 没变；② 新反馈攒够 3 条才重析偏好，只有偏好显著变化（高权兴趣变动 / 新增 dislike）才 <code>ProfileBuilder</code> 重建五层。</p>
+        <p><b>soul 结果：</b>💤 点完马上“被记住”≠画像已改 → 够阈值后才 ✅ 重建。dislike 还会顺手清掉候选池里的同类内容。</p>
+      </article>
+
+      <article class="step-card gold">
+        <span class="step-kicker">⑤</span>
+        <h3>聊天说一句：重复 + 高置信才沉淀</h3>
+        <p><b>你做了：</b>聊天里说“我最近在准备考研”。</p>
+        <p><b>系统怎么走：</b><code>DialogueInsightAnalyzer</code> 提取成 goal 候选写 <code>insight_candidates.json</code>。第一次只是候选，不写人格；等再提到（<code>confidence ≥ 0.8</code> 且同类出现 <code>≥ 2</code> 次）才转成 <code>dialogue_insight</code> 事件进偏好分析。</p>
+        <p><b>soul 结果：</b>💤 单独一句不会立刻定人设 → 满足重复+高置信后 ✅ 可能更新 Role 的 <code>current_phase=“备考”</code>。（state 类深层结论门槛更高，需 ≥ 0.9）</p>
+      </article>
+
+      <article class="step-card purple">
+        <span class="step-kicker">⑥</span>
+        <h3>探针点“确认”：确认 ≠ 当场写入</h3>
+        <p><b>你做了：</b>阿B 猜你可能喜欢“桌游”，弹出兴趣探针，你点了确认。</p>
+        <p><b>系统怎么走：</b>API 把该 speculator 标成 confirmed + 后台 <code>force_tick()</code>（只处理探针状态/生成新探针，不写 soul.json）。真正合入要等下一次 pipeline tick 的 <code>_run_speculator_tick → merge_confirmed_interest</code>。</p>
+        <p><b>soul 结果：</b>💤 点确认那一刻 soul.json 还没加“桌游” → 等周期 tick 才 ✅ 并进 <code>Interest.likes</code>。避雷探针同理，但只认显式负向（<code>quick_exit</code> 不算）。</p>
+      </article>
+
+      <article class="step-card red">
+        <span class="step-kicker">⑦</span>
+        <h3>手动改画像：覆盖层，最高优先级</h3>
+        <p><b>你做了：</b>在画像页手动删掉“游戏”这个兴趣。</p>
+        <p><b>系统怎么走：</b>写 <code>profile_overrides.json</code> 立即生效；读取时 <code>get_profile = AI 画像 + 覆盖层</code>。</p>
+        <p><b>soul 结果：</b>✅ 你看到的有效画像立刻去掉“游戏”，且 AI 之后重建也不会覆盖你的手动决定；💤 <code>soul.json</code> 里的 AI 原始画像本身不动。若新增的是 dislike，后台异步清池。</p>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>3. 关键步骤注释：目标 / 处理 / 写入</h2>
       <p class="note">这部分是主图的文字版注释，方便核对每一步到底在干什么。</p>
     </div>
     <div class="step-grid">
@@ -549,7 +564,7 @@
         <h3>分层更新：外层快变，内层慢变</h3>
         <p><b>目标：</b>按证据强度更新不同层：Surface 处理消费风格，Interest 处理主题偏好，Role/Values/Core 处理更长期的身份和心理结构。</p>
         <p><b>处理：</b>Surface 纯计算；Interest 复用偏好分析并把 flat preference 填回兴趣树；Role/Values/Core 走 LLM delta，并带 diff-protection。</p>
-        <p><b>写入：</b>层变更写回 <code>soul.json</code> 并追加 <code>soul_changelog.md</code>；Values/Core 变化后才触发 portrait regeneration。</p>
+        <p><b>写入：</b>层变更写回 <code>soul.json</code> 并追加 <code>soul_changelog.md</code>。注意 portrait 有两条重写入口：① 此增量路径下，仅 Values/Core 层变化触发；② 偏好显著变化时由 ProfileBuilder 整体重建（见步骤 06 与右下结论卡）。</p>
       </article>
 
       <article class="step-card">
@@ -564,7 +579,7 @@
         <span class="step-kicker">07</span>
         <h3>聊天学习：候选先沉淀，重复出现才长期学习</h3>
         <p><b>目标：</b>聊天里经常有一次性表达，所以系统先收集候选，不把一句话直接写成人格结论。</p>
-        <p><b>处理：</b><code>DialogueInsightAnalyzer</code> 提取 interest / dislike / goal / value / state；同类候选按 kind + content 合并。<code>confidence ≥ 0.8</code> 且出现 <code>≥ 2</code> 才进入长期学习。</p>
+        <p><b>处理：</b><code>DialogueInsightAnalyzer</code> 提取 interest / dislike / goal / value / state；同类候选按 kind + content 合并。进入<b>长期学习</b>需 <code>confidence ≥ 0.8</code> 且出现 <code>≥ 2</code> 次；<b>即时展示</b> cognition card 门槛不同：goal/dislike/interest/value ≥ 0.8，唯 state 需 ≥ 0.9。</p>
         <p><b>写入：</b>候选写 <code>insight_candidates.json</code>；合格后转成 <code>dialogue_insight</code> 事件，进入偏好分析和可能的画像重建。</p>
       </article>
 
@@ -596,7 +611,7 @@
 
   <section>
     <div class="section-head">
-      <h2>3. 事件影响矩阵</h2>
+      <h2>4. 事件影响矩阵</h2>
       <p class="note">读法：左边是事件，右边是它会立即动什么、什么时候进入长期画像。</p>
     </div>
     <div class="panel">
@@ -711,7 +726,7 @@
 
   <section>
     <div class="section-head">
-      <h2>4. 五层画像的变化速度</h2>
+      <h2>5. 五层画像的变化速度</h2>
       <p class="note">越往内层越慢，越需要重复、明确、高置信证据。</p>
     </div>
     <div class="panel">
@@ -801,7 +816,7 @@
 
   <section>
     <div class="section-head">
-      <h2>5. 四个关键结论</h2>
+      <h2>6. 四个关键结论</h2>
       <p class="note">看懂这四点，就能判断某个动作会不会马上改 soul。</p>
     </div>
     <div class="summary-grid">
@@ -815,7 +830,7 @@
       </article>
       <article class="summary-card">
         <h3>画像重建有显著变化门槛</h3>
-        <p>反馈和聊天最终会先更新偏好。只有高权重兴趣明显变动、权重大幅变化或新增 dislike，才会触发 ProfileBuilder 重建画像。</p>
+        <p>反馈和聊天先更新偏好。仅当高权重兴趣（weight ≥ 0.6）新增/移除 ≥ 2 项、同项权重差 ≥ 0.2，或新增 ≥ 1 个 dislike 时，才由 <code>_preference_changed_significantly</code> 触发 ProfileBuilder 整体重建五层。这与增量路径里 Values/Core 层变化重写 portrait 是两条独立入口。</p>
       </article>
       <article class="summary-card">
         <h3>手动编辑是覆盖层</h3>
