@@ -9,15 +9,18 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from openbiliclaw.discovery.strategies._utils import build_profile_summary, search_cooldown_remaining
+from openbiliclaw.discovery.strategies._utils import (
+    build_profile_summary,
+    search_cooldown_remaining,
+)
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
 from openbiliclaw.llm.prompts import build_search_queries_prompt
 from openbiliclaw.runtime.keyword_fetch import PLATFORM_BILIBILI as _PLATFORM_BILIBILI
 
 if TYPE_CHECKING:
     from openbiliclaw.llm.service import LLMService
-    from openbiliclaw.sources.bili_tasks import BiliTaskQueue
     from openbiliclaw.soul.profile import SoulProfile
+    from openbiliclaw.sources.bili_tasks import BiliTaskQueue
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +217,10 @@ class BilibiliExtensionSearchProducer:
         try:
             return bool(pool_full())
         except Exception:
-            logger.debug("bili extension producer: candidate pool fullness unavailable", exc_info=True)
+            logger.debug(
+                "bili extension producer: candidate pool fullness unavailable",
+                exc_info=True,
+            )
             return False
 
     def _is_due(self) -> bool:

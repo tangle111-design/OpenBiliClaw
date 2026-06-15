@@ -634,13 +634,13 @@ class TestBackendAPI:
         import openbiliclaw.runtime.bilibili_producer as bilibili_producer_module
         import openbiliclaw.runtime.events as runtime_events_module
         import openbiliclaw.runtime.refresh as refresh_module
+        import openbiliclaw.soul.dialogue as dialogue_module
+        import openbiliclaw.soul.engine as soul_engine_module
         import openbiliclaw.sources.bili_tasks as bili_tasks_module
         import openbiliclaw.sources.dy_tasks as dy_tasks_module
         import openbiliclaw.sources.x_tasks as x_tasks_module
         import openbiliclaw.sources.xhs_tasks as xhs_tasks_module
         import openbiliclaw.sources.yt_tasks as yt_tasks_module
-        import openbiliclaw.soul.dialogue as dialogue_module
-        import openbiliclaw.soul.engine as soul_engine_module
         import openbiliclaw.storage.database as database_module
 
         captured: dict[str, object] = {}

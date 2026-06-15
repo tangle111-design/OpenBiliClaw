@@ -47,8 +47,11 @@ class _BiliClient:
         return self.cooldown
 
 
+_DEFAULT_PROFILE = object()
+
+
 class _Soul:
-    def __init__(self, profile: Any = object()) -> None:
+    def __init__(self, profile: Any = _DEFAULT_PROFILE) -> None:
         self.profile = profile
 
     async def get_profile(self) -> Any:

@@ -5006,7 +5006,11 @@ def create_app(
             if not content_url:
                 content_url = f"https://www.bilibili.com/video/{bvid}"
             tags_raw = video.get("tags")
-            tags = [str(item).strip() for item in tags_raw if str(item).strip()] if isinstance(tags_raw, list) else []
+            tags = (
+                [str(item).strip() for item in tags_raw if str(item).strip()]
+                if isinstance(tags_raw, list)
+                else []
+            )
             item = DiscoveredContent(
                 bvid=bvid,
                 title=title,
