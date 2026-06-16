@@ -64,19 +64,18 @@ if [ -n "$desktop_tag" ]; then
 fi
 
 declare -a assets=()
-declare -a seen_asset_names=()
+seen_asset_names=$'\n'
 
 asset_name_seen() {
   local candidate="$1"
-  local seen
-
-  for seen in "${seen_asset_names[@]}"; do
-    if [ "$seen" = "$candidate" ]; then
+  case "$seen_asset_names" in
+    *$'\n'"$candidate"$'\n'*)
       return 0
-    fi
-  done
-
-  return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 add_asset() {
@@ -92,7 +91,7 @@ add_asset() {
   fi
 
   assets+=("$asset")
-  seen_asset_names+=("$name")
+  seen_asset_names+="${name}"$'\n'
 }
 
 add_glob_assets() {
