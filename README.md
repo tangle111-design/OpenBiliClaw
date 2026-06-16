@@ -42,9 +42,9 @@
 
 普通用户先走这四步；Firefox、Docker 和手动部署等备用路径保留在后面的 [安装与部署详情](#安装与部署详情)。
 
-1. **安装浏览器插件**：推荐从 [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) 下载最新 `extension-v*` 的 zip 手动安装（版本最新）；也可从 [Chrome 应用商店](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)一键安装（自动更新，但受审核排期影响，版本可能滞后于 Releases）。
+1. **安装浏览器插件**：推荐从 [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 最新 `openbiliclaw-v*` 聚合发布页下载 `openbiliclaw-extension-v*.zip` 手动安装（版本最新）；也可从 [Chrome 应用商店](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)一键安装（自动更新，但受审核排期影响，版本可能滞后于 Releases）。
 2. **部署后端（两种方式，按需选一，都推荐）**：
-   - 🖥️ **下载桌面安装包（最省事）**：到 [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) 下载 macOS `.dmg` / Windows `.exe`，装好双击即用 —— 自带本地 embedding、常驻菜单栏/托盘。当前为**未签名的实验性预发布**，首次打开需绕过系统拦截，详见 [安装与部署详情](#安装与部署详情)。
+   - 🖥️ **下载桌面安装包（最省事）**：到同一个 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 聚合页下载 macOS `.dmg` / Windows `.exe`，装好双击即用 —— 自带本地 embedding、常驻菜单栏/托盘。当前为**未签名的实验性预发布**，首次打开需绕过系统拦截，详见 [安装与部署详情](#安装与部署详情)。
    - 🤖 **让 AI 助手部署（想改源码 / 深度定制选它）**：把下面整句粘给 Claude Code、Codex CLI、Cursor、Windsurf 或其他 AI 编程助手。
 
 ```text
@@ -225,9 +225,9 @@
 
 插件基于 Manifest V3，支持所有兼容 Chrome 插件的浏览器，包括 **Chrome、Edge、Brave、Arc、Vivaldi、Opera** 等。
 
-**推荐方式 · 从 Releases 下载最新版手动安装**（拿到最新功能与修复 —— Chrome 应用商店受审核排期影响，版本通常会滞后几天到一两周）：
+**推荐方式 · 从 Latest Release 下载最新版手动安装**（拿到最新功能与修复 —— Chrome 应用商店受审核排期影响，版本通常会滞后几天到一两周）：
 
-1. 打开 [OpenBiliClaw Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，找到最新的 `extension-v*`
+1. 打开 [OpenBiliClaw Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest)，也就是最新 `openbiliclaw-v*` 聚合发布页
 2. Chrome / Edge / Brave 下载 `openbiliclaw-extension-v*.zip`；Firefox 下载 `openbiliclaw-extension-v*-firefox.zip`
 3. 打开扩展管理页面（Chrome：`chrome://extensions/` · Edge：`edge://extensions/` · Brave：`brave://extensions/`），开启右上角「开发者模式」
 4. 将下载的 `.zip` 文件拖入页面安装
@@ -270,7 +270,7 @@ npm run build:firefox          # 产出 dist-firefox/
 
 #### 方式 A：下载桌面安装包（实验性，最省事）
 
-到 [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) 下载对应系统的安装包：
+到 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合发布页下载对应系统的安装包；如果桌面安装包暂时落后于后端源码版本，发布说明会标明当前对应的 `desktop-v*`：
 
 - **macOS**：`.dmg`（区分 Apple 芯片 `arm64` / Intel `x64`），打开后把 OpenBiliClaw 拖进「应用程序」。
 - **Windows**：`.exe` 安装程序，双击安装。
@@ -666,7 +666,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.125: 画像分类词表 + B 站扩展搜索兜底（2026-06-16）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。插件包和桌面安装包见 [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases)，后端源码更新看 `backend-v*` tag。
+最新版本：**v0.3.126 / extension v0.3.81: X 文字推荐卡与画像学习修复（2026-06-17）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。普通用户从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合页同时下载插件包和桌面安装包；后端源码自动更新仍看 `backend-v*` tag。
 
 ## 🗺️ 后续规划
 

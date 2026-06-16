@@ -14,7 +14,7 @@
 - [架构设计](architecture.md) — 系统架构与模块关系
 - [记忆系统设计](memory-design.md) — 多层网状记忆架构详解
 - [变更日志](changelog.md) — 各里程碑交付记录
-- [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) — 从 `extension-v*` 下载插件、从 `desktop-v*` 下载实验性桌面安装包；后端源码更新看 `backend-v*` tag，不发布后端桌面包
+- [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) — 普通用户看 Latest Release 的 `openbiliclaw-v*` 聚合页，同时下载浏览器插件 zip、实验性桌面安装包并查看后端源码 tag；维护者通道仍保留 `extension-v*` / `desktop-v*` / `backend-v*`
 - [手动端到端联调](manual-e2e.md) — CLI、插件与 SQLite 的真实联调步骤
 - [OpenClaw 接入最短指南](openclaw-quickstart.md) — Docker 优先、本地兜底的安装、初始化、skill 发现与 CLI bridge 自检
 - [Agent 机器契约 (短)](agent-install.md) — 给 AI 智能体 WebFetch 的短契约,配合 README 的短粘贴语句

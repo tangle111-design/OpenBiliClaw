@@ -8,6 +8,7 @@
 
 后端源码走 `backend-v0.3.126`，浏览器插件走 `extension-v0.3.81`。桌面安装包未改动；如冻结包用户需要同步本次 Web / 后端修复，可后续单独打 `desktop-v0.3.126`。
 
+- **GitHub Releases 增加聚合 Latest 入口**：新增 `openbiliclaw-v*` 用户发布页，由 `backend-v*` / `extension-v*` / `desktop-v*` 三条 workflow 共同同步；页面会同时展示后端源码 tag、最新插件 zip 与桌面安装包，避免 Releases 首页被单一通道 release 占住。
 - **X / Twitter 推荐卡三端归一**：插件 side panel、移动 Web 与桌面 Web 会把 `x` / `twitter` / `x.com` / `twitter.com` 统一归一为 `source_platform="twitter"`，标签显示为 `X (Twitter)`；候选池 source family、点击上报 URL 推断和 fallback URL 也同步映射 X，不再退成 Web 或 B 站。
 - **X 文字卡真实 append 链路修复**：`/web`、`/m/` 与插件对 X tweet / thread 或无有效封面的候选渲染文本卡正文；真实后端 + 真实浏览器 E2E 复现到 `/api/recommendations/append` 会把 X tweet 从 pool row 还原成默认 `video` 且丢 `body_text`，现已在 `RecommendationEngine._rows_to_discovered()` 同步映射 `content_type/body_text`。
 - **PC Web 平台过滤 tab 从配置驱动**：桌面 Web `/web` 推荐页的 `全部 / B站 / YouTube / ...` tab 现在先读取 `config.sources` 与 `scheduler.pool_source_shares` 中启用的平台，再合并当前推荐列表里实际出现的平台；点击某个平台只过滤当前已加载推荐，没有命中时允许展示空列表。

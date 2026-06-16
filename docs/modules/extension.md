@@ -405,15 +405,17 @@ npm run build
 
 ## Release 分发
 
-插件现在走独立 release 通道：
+普通用户下载入口是 GitHub Latest Release 的 `openbiliclaw-vX.Y.Z` 聚合页：该页会同时展示当前后端源码 tag、最新插件 zip 和可用桌面安装包。`extension-v*` 仍是插件自动化通道 tag，用于构建、商店提交和排查发布流水线，不再要求普通用户在 Releases 列表里手动筛选。
+
+插件内部 release 通道：
 
 - 发布 tag：`extension-vX.Y.Z`
 - Release 资产：
   - Chrome / Edge / Brave / 其他 Chromium 浏览器：`openbiliclaw-extension-vX.Y.Z.zip`
   - Firefox 140+：`openbiliclaw-extension-vX.Y.Z-firefox.zip`
-- 下载入口：GitHub Releases 页面中查找最新的 `extension-v*` release
+- 用户下载入口：`openbiliclaw-v*` 聚合 Latest Release；维护者需要核对构建日志时再看对应 `extension-v*` release
 - Chrome / Edge / Brave 打包脚本会先删除同名旧 zip，再重新压缩 `manifest.json`、`dist/`、`icons/`、`popup/`，避免重复打包带入残留文件
-- `extension-v*` GitHub Actions release workflow 会同时运行 Chrome / Firefox 两条打包脚本并上传两个 zip；Firefox 140+ 也可本地构建 / 临时加载：`npm run build:firefox` 生成 `dist-firefox/`，`npm run package:firefox` 生成 `openbiliclaw-extension-vX.Y.Z-firefox.zip`；Firefox 打包脚本同样会先删除同名旧 zip
+- `extension-v*` GitHub Actions release workflow 会同时运行 Chrome / Firefox 两条打包脚本并上传两个 zip；发布尾部调用 `.github/scripts/sync-aggregate-release.sh`，把插件 zip 同步到当前 `openbiliclaw-v*` 聚合 Latest Release，并把该聚合页重新标记为 GitHub Latest。Firefox 140+ 也可本地构建 / 临时加载：`npm run build:firefox` 生成 `dist-firefox/`，`npm run package:firefox` 生成 `openbiliclaw-extension-vX.Y.Z-firefox.zip`；Firefox 打包脚本同样会先删除同名旧 zip
 - v0.3.62 起，Chrome / Firefox 发布包移除 `http://*/*` 宽泛主机权限，只保留四个受支持内容平台和 `127.0.0.1` / `localhost` 本机后端权限，避免 Chrome Web Store 把插件标为“所有网站权限”。
 - v0.3.64 起，Chrome / Firefox 发布包不再声明 `tabs` permission；后台任务仍可使用 `chrome.tabs.create/update/remove/onUpdated/sendMessage` 打开、导航和清理受支持平台任务页，发布包仅保留实际需要的最小 permission 集合。
 - 插件更新不走后端自动更新 API：商店安装版本由 Chrome / Edge / Firefox 原生更新，GitHub zip / sideload 用户按 release 页面下载新版并重新加载。
@@ -428,7 +430,7 @@ Chrome Web Store 上传自动化走官方 API v2，不使用第三方上传 acti
 - Chrome Web Store 详情页文案维护在 `docs/chrome-webstore-listing.md`；提交新版本、改安装路径或改项目入口时，将其中 `Detailed Description` 纯文本块复制到 Developer Dashboard 的商店详情页，避免公开页只展示无引导的短概述。
 - Chrome Web Store 隐私权政策网址可填写 `https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/privacy.md`；该文档说明插件单一用途、权限理由、数据类型、本地后端数据流和无远程代码声明。
 
-后端桌面包不走 GitHub Release 分发；后端源码更新只通过 `backend-v*` tag 标记，浏览器插件的 GitHub Release 保持为唯一下载包通道。
+后端源码更新仍只通过 `backend-v*` tag 标记，桌面安装包仍由 `desktop-v*` workflow 构建；两者都会同步到 `openbiliclaw-v*` 聚合 Release，避免 GitHub Releases 首页只露出某一个通道。
 
 ## 手动联调
 

@@ -40,9 +40,9 @@ A local-first AI discovery agent that learns your taste across Bilibili, Xiaohon
 
 Most users only need these four steps. Firefox, Docker, and manual setup paths are preserved later in [Setup Details](#setup-details).
 
-1. **Install the extension** — recommended: download the latest `extension-v*` zip from [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) and load it (always newest); or one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates, but the listed version can lag behind Releases due to review delays).
+1. **Install the extension** — recommended: open the latest aggregate `openbiliclaw-v*` page on [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases/latest), download `openbiliclaw-extension-v*.zip`, and load it (always newest); or one-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg) (auto-updates, but the listed version can lag behind Releases due to review delays).
 2. **Deploy the backend (two ways — pick one, both recommended)**:
-   - 🖥️ **Download the desktop installer (easiest)**: grab the macOS `.dmg` / Windows `.exe` from [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases), install, and launch — it bundles local embedding and lives in the menu bar / system tray. It's an **unsigned experimental pre-release**, so the first launch needs a system-prompt bypass; see [Setup Details](#setup-details).
+   - 🖥️ **Download the desktop installer (easiest)**: grab the macOS `.dmg` / Windows `.exe` from the same [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) aggregate page, install, and launch — it bundles local embedding and lives in the menu bar / system tray. It's an **unsigned experimental pre-release**, so the first launch needs a system-prompt bypass; see [Setup Details](#setup-details).
    - 🤖 **Let an AI coding agent deploy it (pick this to customize / edit the source)**: paste this prompt into Claude Code, Codex CLI, Cursor, Windsurf, or another coding agent.
 
 ```text
@@ -221,9 +221,9 @@ The extension is the main interface. It shows the sidebar on Bilibili, Xiaohongs
 
 Built on Manifest V3, the extension works in any Chrome-compatible browser — **Chrome, Edge, Brave, Arc, Vivaldi, Opera**, and more.
 
-**Recommended · download the latest build from Releases** (gets the newest features and fixes — the Chrome Web Store listing usually lags by a few days to a couple of weeks due to review scheduling):
+**Recommended · download the latest build from Latest Release** (gets the newest features and fixes — the Chrome Web Store listing usually lags by a few days to a couple of weeks due to review scheduling):
 
-1. Open [OpenBiliClaw Releases](https://github.com/whiteguo233/OpenBiliClaw/releases) and find the latest `extension-v*`
+1. Open [OpenBiliClaw Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest), the newest aggregate `openbiliclaw-v*` release
 2. Chrome / Edge / Brave users download `openbiliclaw-extension-v*.zip`; Firefox users download `openbiliclaw-extension-v*-firefox.zip`
 3. Open the extensions page (Chrome: `chrome://extensions/` · Edge: `edge://extensions/` · Brave: `brave://extensions/`), enable "Developer mode" in the top right
 4. Drag the downloaded `.zip` file into the page to install
@@ -266,7 +266,7 @@ Most users: the **desktop installer** is the least effort. Want to edit the sour
 
 #### Option A: Download the desktop installer (experimental, easiest)
 
-Grab the installer for your OS from [Releases](https://github.com/whiteguo233/OpenBiliClaw/releases):
+Grab the installer for your OS from the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest). If the desktop installer temporarily lags the backend source version, the release notes name the current `desktop-v*` package:
 
 - **macOS**: `.dmg` (separate Apple-silicon `arm64` / Intel `x64` builds) — drag OpenBiliClaw into Applications.
 - **Windows**: `.exe` installer — double-click to install.
@@ -654,7 +654,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.125: profile category taxonomy + Bilibili extension-search fallback (2026-06-16)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Extension packages and desktop installers live on [GitHub Releases](https://github.com/whiteguo233/OpenBiliClaw/releases); backend source updates use `backend-v*` tags.
+Latest: **v0.3.126 / extension v0.3.81: X text recommendation cards and profile-learning fixes (2026-06-17)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and desktop installers; backend source auto-update still follows `backend-v*` tags.
 
 ## 🗺️ Roadmap
 
