@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from openbiliclaw.llm.base import LLMProviderError, LLMResponse
+from openbiliclaw.llm.prompts import build_preference_analysis_prompt
 from openbiliclaw.llm.service import LLMServiceError
 
 
@@ -98,6 +99,18 @@ class ContextOverflowOnceStructuredService:
             content='{"interests": [{"name": "科技", "category": "知识", "weight": 0.7}]}',
             provider="openai",
         )
+
+
+def test_preference_prompt_treats_comment_feedback_as_direct_neutral_feedback() -> None:
+    messages = build_preference_analysis_prompt(events=[], existing_preference={})
+    system_prompt = messages[0]["content"]
+
+    assert "metadata.feedback_type 是 comment" in system_prompt
+    assert "中性反馈容器" in system_prompt
+    assert "直接反馈" in system_prompt
+    assert "根据备注" in system_prompt
+    assert "喜欢" in system_prompt
+    assert "不喜欢" in system_prompt
 
 
 class ServiceContextOverflowOnceStructuredService(ContextOverflowOnceStructuredService):

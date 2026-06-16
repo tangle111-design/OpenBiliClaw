@@ -373,8 +373,8 @@ def test_record_immediate_feedback_cognition_adds_comment_update(tmp_path: Path)
     assert len(updates) == 1
     assert updates[0]["kind"] == "profile_shift"
     assert "讲透城市与建筑" in str(updates[0]["summary"])
-    assert "更明确" in str(updates[0]["impact"])
-    assert "单条明确反馈" in str(updates[0]["reasoning"])
+    assert "结合评论内容判断" in str(updates[0]["impact"])
+    assert "中性直接反馈" in str(updates[0]["reasoning"])
     assert "讲透城市与建筑" in str(updates[0]["evidence"])
     assert "这个方向对，但希望更深入一点。" in str(updates[0]["evidence"])
     assert updates[0]["source"] == "feedback"
@@ -496,7 +496,7 @@ async def test_learn_from_dialogue_persists_event_and_candidate_below_threshold(
             {
                 "kind": "goal",
                 "content": "想更系统地理解国际局势",
-                "confidence": 0.82,
+                "confidence": 0.62,
                 "evidence": user_message,
             }
         ]
@@ -518,6 +518,145 @@ async def test_learn_from_dialogue_persists_event_and_candidate_below_threshold(
     candidates = memory.load_insight_candidates()
     assert candidates[0]["occurrences"] == 1
     assert candidates[0]["kind"] == "goal"
+
+
+@pytest.mark.asyncio
+async def test_learn_from_dialogue_updates_preference_for_single_high_confidence_candidate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+
+    async def fake_extract(
+        *,
+        user_message: str,
+        assistant_reply: str,
+        core_memory: dict[str, object],
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "kind": "interest",
+                "content": "国际新闻背后的因果链",
+                "confidence": 0.91,
+                "evidence": user_message,
+            }
+        ]
+
+    async def fake_analyze_events(
+        *,
+        events: list[dict[str, object]],
+        existing_preference: dict[str, object],
+    ) -> dict[str, object]:
+        assert events[0]["event_type"] == "dialogue_insight"
+        assert events[0]["metadata"]["occurrences"] == 1
+        return {
+            "interests": [
+                {
+                    "name": "国际时事",
+                    "category": "知识",
+                    "weight": 0.5,
+                    "source": "dialogue",
+                }
+            ],
+            "style": {},
+            "context": {},
+            "exploration_openness": 0.5,
+            "disliked_topics": [],
+            "favorite_up_users": [],
+        }
+
+    monkeypatch.setattr(engine._dialogue_insight_analyzer, "extract", fake_extract)
+    monkeypatch.setattr(engine._preference_analyzer, "analyze_events", fake_analyze_events)
+
+    result = await engine.learn_from_dialogue(
+        user_message="我很明确地想看国际新闻背后的因果链。",
+        assistant_reply="你是在找能解释结构和因果的内容。",
+        session="popup",
+    )
+
+    assert result["preference_updated"] is True
+    assert result["profile_rebuilt"] is False
+    candidates = memory.load_insight_candidates()
+    assert candidates[0]["applied"] is True
+    assert memory.get_layer("preference").data["interests"][0]["name"] == "国际时事"
+
+
+@pytest.mark.asyncio
+async def test_learn_from_dialogue_updates_preference_for_repeated_lower_confidence_candidate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    memory = MemoryManager(tmp_path)
+    memory.initialize()
+    engine = SoulEngine(llm=FakeRegistry("{}"), memory=memory)
+    memory.save_insight_candidates(
+        [
+            {
+                "id": "cand-1",
+                "kind": "goal",
+                "content": "想系统理解城市更新",
+                "confidence": 0.64,
+                "evidence": "之前聊过城市更新。",
+                "occurrences": 1,
+                "confirmed": False,
+                "applied": False,
+                "created_at": "2026-06-16T09:00:00",
+                "updated_at": "2026-06-16T09:00:00",
+            }
+        ]
+    )
+
+    async def fake_extract(
+        *,
+        user_message: str,
+        assistant_reply: str,
+        core_memory: dict[str, object],
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "kind": "goal",
+                "content": "想系统理解城市更新",
+                "confidence": 0.67,
+                "evidence": user_message,
+            }
+        ]
+
+    async def fake_analyze_events(
+        *,
+        events: list[dict[str, object]],
+        existing_preference: dict[str, object],
+    ) -> dict[str, object]:
+        assert events[0]["event_type"] == "dialogue_insight"
+        assert events[0]["metadata"]["occurrences"] == 2
+        return {
+            "interests": [
+                {
+                    "name": "城市更新",
+                    "category": "生活",
+                    "weight": 0.5,
+                    "source": "dialogue",
+                }
+            ],
+            "style": {},
+            "context": {},
+            "exploration_openness": 0.5,
+            "disliked_topics": [],
+            "favorite_up_users": [],
+        }
+
+    monkeypatch.setattr(engine._dialogue_insight_analyzer, "extract", fake_extract)
+    monkeypatch.setattr(engine._preference_analyzer, "analyze_events", fake_analyze_events)
+
+    result = await engine.learn_from_dialogue(
+        user_message="我还是想系统理解城市更新，不只是看单个案例。",
+        assistant_reply="这个方向你已经重复提到过了。",
+        session="popup",
+    )
+
+    assert result["preference_updated"] is True
+    candidates = memory.load_insight_candidates()
+    assert candidates[0]["applied"] is True
+    assert memory.get_layer("preference").data["interests"][0]["name"] == "城市更新"
 
 
 @pytest.mark.asyncio
@@ -551,7 +690,7 @@ async def test_learn_from_dialogue_records_immediate_cognition_for_strong_single
         session="popup",
     )
 
-    assert result["preference_updated"] is False
+    assert result["preference_updated"] is True
     cognition_updates = memory.load_cognition_updates()
     assert len(cognition_updates) == 1
     assert cognition_updates[0]["kind"] == "profile_shift"
@@ -639,7 +778,7 @@ async def test_learn_from_dialogue_records_immediate_cognition_for_interest_cand
         session="popup",
     )
 
-    assert result["preference_updated"] is False
+    assert result["preference_updated"] is True
     cognition_updates = memory.load_cognition_updates()
     assert len(cognition_updates) == 1
     assert cognition_updates[0]["kind"] == "interest_added"

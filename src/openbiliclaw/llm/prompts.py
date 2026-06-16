@@ -157,6 +157,7 @@ _PREFERENCE_ANALYSIS_SYSTEM_PROMPT = """
 8. 每条事件都自带一个 `context` 字段（v0.3.22+ 起所有源都统一填充），它是该事件的中文自然语言摘要（如"在 B 站收藏了《讲透历史叙事》,作者:历史实验室"或"小红书点赞:手冲咖啡入门 作者:豆子老师"）。**优先把 context 作为人类可读的事件描述**来理解用户行为；同时用 metadata 里的结构化字段（up_name、bvid、folder、source_platform 等）做精确匹配 / 复制。
 9. 用户的兴趣信号可能跨平台（B 站 / 小红书 / 等）；通过 metadata.source_platform 区分来源，但兴趣分析本身要把所有平台的信号一视同仁，不要因为来自小红书就降权。
 10. 如果事件的 inferred_satisfaction 是 negative，或 metadata.feedback_type 是 dislike / metadata.reaction 是 thumbs_down，表示负向证据。不要把负向事件提取为 interests / favorite_up_users；只能用于 disliked_topics、风格避让或降低相关偏好置信度。
+11. 如果 metadata.feedback_type 是 comment，它是用户对推荐内容的直接反馈和中性反馈容器，不预设正向或负向。必须根据备注、feedback_note、context 中的具体内容判断用户是喜欢、不喜欢，还是仅补充说明：正向才可强化 interests / style；负向只能用于 disliked_topics、风格避让或降低相关偏好置信度；不明确时不要强行改偏好。
 </rules>
 
 <output_schema>

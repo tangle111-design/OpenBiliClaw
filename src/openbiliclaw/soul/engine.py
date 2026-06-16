@@ -952,8 +952,8 @@ class SoulEngine:
                 summary = f"阿B 刚记下了：{note.strip()}"
                 evidence = note.strip()
                 context_line = "来自：这次推荐反馈"
-            impact = "画像里对这类方向的偏好会更明确，后面会更容易继续往深一点补。"
-            reasoning = "这属于单条明确反馈，先记作方向修正，不直接重写整张画像。"
+            impact = "画像会结合评论内容判断这是喜欢、不喜欢还是补充说明，不会默认当成正向偏好。"
+            reasoning = "这属于一条中性直接反馈，先记作方向修正，不直接重写整张画像。"
         elif normalized_feedback == "dislike":
             note_text = note.strip()
             generic_dislike_notes = {"太浅了", "不喜欢", "一般", "太水了", "没意思"}
@@ -1186,7 +1186,7 @@ class SoulEngine:
             return False
         confidence = self._to_float(candidate.get("confidence", 0.0))
         occurrences = self._to_int(candidate.get("occurrences", 0))
-        return confidence >= 0.8 and occurrences >= 2
+        return confidence >= 0.8 or occurrences >= 2
 
     def _candidate_ready_for_immediate_dialogue_cognition(
         self,

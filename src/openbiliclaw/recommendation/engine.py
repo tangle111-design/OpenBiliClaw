@@ -2464,6 +2464,8 @@ class RecommendationEngine:
                 content_id=str(row.get("content_id", "") or row.get("bvid", "")),
                 content_url=str(row.get("content_url", "")),
                 source_platform=str(row.get("source_platform", "") or "bilibili"),
+                content_type=str(row.get("content_type", "") or "video"),
+                body_text=str(row.get("body_text", "") or ""),
             )
             for row in rows
         ]

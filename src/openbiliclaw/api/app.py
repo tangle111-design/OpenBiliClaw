@@ -15,7 +15,7 @@ import time
 import uuid
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -397,6 +397,8 @@ def _select_init_platforms(enabled: set[str], selected: set[str] | None) -> set[
 
 def _normalize_source_platform(source: object) -> str:
     source_key = str(source or "").strip().lower()
+    if source_key in {"x", "twitter"}:
+        return "twitter"
     if source_key in {"xhs", "rednote"}:
         return "xiaohongshu"
     if source_key in {"yt", "youtube"}:
@@ -412,6 +414,9 @@ def _infer_source_platform_from_url(url: object) -> str:
     text = str(url or "").strip().lower()
     if "youtube.com" in text or "youtu.be" in text:
         return "youtube"
+    host = (urlparse(text if "://" in text else f"https://{text}").hostname or "").lower()
+    if host in {"x.com", "twitter.com"} or host.endswith(".x.com") or host.endswith(".twitter.com"):
+        return "twitter"
     if "xiaohongshu.com" in text or "xhslink.com" in text:
         return "xiaohongshu"
     if "douyin.com" in text:
@@ -435,6 +440,8 @@ def _fallback_recommendation_click_url(
         return f"https://www.youtube.com/watch?v={quote(item_id, safe='')}"
     if source_platform == "douyin":
         return f"https://www.douyin.com/video/{quote(item_id, safe='')}"
+    if source_platform == "twitter":
+        return f"https://x.com/i/status/{quote(item_id, safe='')}"
     if source_platform == "bilibili":
         return f"https://www.bilibili.com/video/{quote(bvid or item_id, safe='')}"
     return ""

@@ -315,7 +315,7 @@ updated_pref = await analyzer.analyze_events(
 5. **聊天信号受控学习**
    聊天提取出的长期信号会先写到 `insight_candidates.json`。
    只有当候选满足：
-   - `confidence >= 0.8`
+   - `confidence >= 0.8`，或
    - `occurrences >= 2`
    才会正式转换成 `dialogue_insight` 事件去更新偏好层。
 6. **画像重建阈值**

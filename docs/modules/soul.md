@@ -50,9 +50,9 @@
 | SoulEngine.generate_insight() | ✅ | 生成并持久化 `insight.json` |
 | SoulEngine.update_from_feedback() | ✅ | feedback 事件落库，并校准匹配的洞察假设——确认→`validated=True`+置信度抬到 ≥0.75；推翻→`validated=False`+压到 ≤0.35（软作废：不删除、靠 delight 置信度加权降权）。**已接线**到 `POST /api/insights/feedback`（插件 + web/桌面三端洞察卡片「准/不准」按钮驱动），返回 `{matched, validated, confidence}`；此前实现但无生产调用方。命中后经 `_sync_insight_to_soul_snapshot` **同步把校准写回 soul 层 `active_insights` 快照**（`get_profile` / profile-summary / delight 读的是该快照，不是 insight 层），否则校准要等下一次 12h 认知 sync 才对 UI / 推荐生效 |
 | SoulEngine.process_feedback_batch_if_needed() | ✅ | 达到反馈阈值后重分析偏好，并在变化明显时重建画像 |
-| SoulEngine.record_immediate_feedback_cognition() | ✅ | 单条 `dislike/comment` 可即时写入结构化 cognition card，供插件画像页展示；评论类更新会带上对应内容标题，避免脱离上下文 |
+| SoulEngine.record_immediate_feedback_cognition() | ✅ | 单条 `dislike/comment` 可即时写入结构化 cognition card，供插件画像页展示；评论类更新会带上对应内容标题，并以中性直接反馈记录，不预设正负向 |
 | DialogueInsightAnalyzer | ✅ | 从聊天轮次提取 `goal/value/interest/dislike/state` 候选信号 |
-| SoulEngine.learn_from_dialogue() | ✅ | 聊天落 `dialogue` 事件、累计 insight candidate；单条 `interest/value/goal/dislike` 聊天信号到中高置信度时会先写入轻量 cognition update，达阈值后再驱动偏好/画像更新 |
+| SoulEngine.learn_from_dialogue() | ✅ | 聊天落 `dialogue` 事件、累计 insight candidate；单条 `interest/value/goal/dislike` 聊天信号到中高置信度时会先写入轻量 cognition update，高置信度或重复出现达阈值后再驱动偏好/画像更新 |
 | 兴趣探针聊天情绪判断 | ✅ | `/api/interest-probes/respond` 的 chat 分支会先让对话引擎回复，再用非 JSON 的单词分类 LLM 调用判断 `strong_positive / weak_positive / neutral / negative`，失败时回退关键词；强正向直接确认，弱正向进入短期探索 buffer，避免一句“有点意思”立刻写成长期兴趣 |
 | 账户同步事件分析 | ✅ | 后台低频同步导入的 `view/favorite/follow` 事件会复用 `analyze_events()` 进入偏好与画像链 |
 | 小红书初始化画像信号 | ✅ | `openbiliclaw init` 会把插件解析到的小红书 `saved/liked/xhs_history` 转成 `favorite/like/view` 事件，并与 B 站历史、收藏、关注一起进入 `analyze_events()` 和初始画像 history |
@@ -339,7 +339,7 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 当前会进入画像更新链路的主要有 4 类信号：
 
 - **行为事件**：`view / search / favorite / like / follow` 等，通常先更新偏好层
-- **推荐反馈**：`like / dislike / comment`，会先记事件，再按批量阈值决定是否重分析偏好和重建画像
+- **推荐反馈**：`like / dislike / comment / dismiss`，会先记事件，再按批量阈值决定是否重分析偏好和重建画像；其中 `comment` 是中性直接反馈，不预设正负向
 - **聊天信号**：用户在对话里明确表达的 `interest / dislike / goal / value / state`
 - **人工生成的中间理解**：`awareness` 和 `insight` 不直接改偏好，但会在画像重建时作为输入材料参与描述
 
@@ -408,7 +408,7 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 
 若某个分片被 LLM 风控拒绝或返回非 JSON，`PreferenceAnalyzer` 仍会递归拆小该分片；最终只有仍失败的单条事件会被跳过。若 provider 返回明确的 context-window 错误（例如 `n_keep >= n_ctx`、`context length`、`prompt is too long`），偏好分析会按同一套拆分 / compact 逻辑重试；认证、网络、限流、模型不存在等非上下文错误仍会让调用失败，避免把服务不可用伪装成成功。
 
-`satisfaction_filter_enabled` 默认开启后，偏好分析会先把 `quick_exit` 等被动 negative 事件从 prompt 中移除，避免误把标题党点击学成兴趣。显式负反馈不走这条丢弃路径：`feedback_type=dislike` 或 `reaction=thumbs_down` 会保留在 prompt 里，但只能贡献 `disliked_topics`、风格避让或置信度下调，不能贡献正向 `interests` / `favorite_up_users`。
+`satisfaction_filter_enabled` 默认开启后，偏好分析会先把 `quick_exit` 等被动 negative 事件从 prompt 中移除，避免误把标题党点击学成兴趣。显式负反馈不走这条丢弃路径：`feedback_type=dislike` 或 `reaction=thumbs_down` 会保留在 prompt 里，但只能贡献 `disliked_topics`、风格避让或置信度下调，不能贡献正向 `interests` / `favorite_up_users`。`feedback_type=comment` 会被分类为 `neutral/direct_feedback`：它只表示“用户对推荐内容给了直接文字反馈”，PreferenceAnalyzer prompt 明确要求根据 `feedback_note` / 备注 / `context` 内容判断喜欢、不喜欢或中性说明，不能因为它是 comment 就默认当正向。
 
 这一层真正做的不是“生成画像”，而是把近期行为压缩成结构化偏好状态，例如：
 
@@ -448,7 +448,7 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 
 当前支持：
 
-- `comment` 且有文字：写入一条 `profile_shift` 风格的 cognition card
+- `comment` 且有文字：写入一条中性的 `profile_shift` 风格 cognition card，提示后续结合评论内容判断喜欢 / 不喜欢 / 补充说明，不默认当成正向偏好
 - `dislike`：写入一条 `dislike_added`
 - `like`：写入一条 `interest_added`
 
@@ -547,10 +547,9 @@ active 池会做两层多样性保护：词面 / specifics 的 novelty guard 阻
 要进入长期学习，候选必须满足 `_candidate_ready_for_learning()`：
 
 - `applied == False`
-- `confidence >= 0.8`
-- `occurrences >= 2`
+- `confidence >= 0.8` 或 `occurrences >= 2`
 
-也就是说，**同一个方向至少重复出现两次，而且置信度足够高**，才会被转成一条 `dialogue_insight` 事件，再送进 `PreferenceAnalyzer.analyze_events()`。
+也就是说，**单次非常明确的高置信聊天信号**，或**同一个方向至少重复出现两次**，都会被转成一条 `dialogue_insight` 事件，再送进 `PreferenceAnalyzer.analyze_events()`。
 
 之后的流程和反馈批量学习相同：
 
@@ -1066,7 +1065,7 @@ tone = build_tone_profile(
 14. **验证状态只由代码更新**：LLM 只生成 hypothesis/evidence/confidence，`validated` 不信任模型输出
 15. **反馈达到阈值后再学习**：默认累计 3 条新反馈才触发偏好重分析，避免单次噪声反馈频繁扰动画像
 16. **画像重建走显著变化阈值**：只有高权重兴趣明显变化或新增 `disliked_topics` 时才重建 `SoulProfile`
-17. **聊天信号受控生效**：聊天先落 `dialogue` 事件和 `insight_candidates.json`，只有高置信度且重复出现的候选才会进入偏好更新
+17. **聊天信号受控生效**：聊天先落 `dialogue` 事件和 `insight_candidates.json`，高置信度候选或重复出现的候选才会进入偏好更新
 18. **语气不单独持久化**：`ToneProfile` 是从画像、偏好和近期反馈实时推断出的派生层，避免把易调参的表达风格绑死在 `soul.json`
 19. **“老B友”是基础人格，不是固定模板**：聊天、推荐和画像总结共用同一套语气维度，但会随着用户画像和近期反馈在信息密度、温度、梗感和直给程度上细调
 20. **认知变化只在关键时刻生成**：只有新增高权重兴趣、明确避雷方向或画像明显转向时，才会形成 `cognition update`，避免把普通波动都做成提醒

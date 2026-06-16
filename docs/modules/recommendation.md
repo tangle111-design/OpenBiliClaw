@@ -54,6 +54,7 @@
 | v0.3.x available-target pool refill | ✅ | `count_pool_available_candidates_by_source()` 按 `count_pool_candidates()` 同口径统计各平台族的真实可换数量；`count_pool_raw_material_by_source()` 统计 fresh / 非 dislike / 未推荐 / 未看过的 raw material（含 `discovery_candidates` 待评估素材）用于 raw ceiling。补池不再因为 raw/linkable B 站库存达到 300 而停在前端 246 可换，raw trim 也不会在可换未达标时把库存压回 `pool_target_count`。 |
 | v0.3.x 统一 discovery 待评估池 | ✅ | 正常来源 ingest 不再直接写 `content_cache` 等推荐层分类；B 站 / XHS / 抖音 / YouTube raw candidates 先进入 `discovery_candidates`，由 discovery pipeline 统一 batch 评估并 admission 到 `content_cache`。`classify_pool_backlog()` 只作为 legacy / recovery 路径处理已在 `content_cache` 中但缺分类的旧行。 |
 | X (Twitter) 文字卡 + body_text | ✅ | X 推文 / thread 以 `content_type ∈ {tweet, thread}` + `body_text` 进入推荐池；前端在 `content_type` 为文字态或 `cover_url` 为空时渲染**无封面文字卡**（显示正文而非断图），franchise / diversity / MMR 对空 `cover_url` / `duration=0` 容错；推荐解释 / 评估 builder 的 user_prompt 带上 `body_text`，system prompt 仍保持字节静态（prompt-cache 约定），新 builder 已纳入不变量测试 |
+| X append 文字形态保持 | ✅ | `append_recommendations()` 从 discovery pool row 还原候选时保留 `content_type/body_text`，避免 X tweet 在续页链路退回默认 `video` 并丢正文；真实浏览器 E2E 覆盖 PC Web、移动 Web 与扩展 side panel |
 | v0.3.91 新兴趣放大保护 | ✅ | 新确认兴趣会生成 amplification key，`PoolCurator` 用最近 24h 推荐历史计算滚动占比，超过 25% 的方向会被降权；最终批量选择还会硬限制同一新方向最多 `max(1, floor(limit * 0.25))` 条，避免刚确认的兴趣短期刷屏 |
 | v0.3.91 推荐读取索引 | ✅ | `recommendations(created_at, id)` 与 `content_cache(content_id)` 在数据库初始化时自动创建索引，`/api/recommendations` 和 activity feed 的推荐历史读取不再因 `c.bvid = r.bvid OR c.content_id = r.bvid` 退化为双表扫描。 |
 | v0.3.74 recommendation/delight JSON 容错统一 | ✅ | `RecommendationEngine` 的内容分类、单条表达和批量表达解析，以及 `delight.precompute_delight_scores()` 的 batch scorer 都改用 `llm.json_utils`。MiMo / OpenAI-compatible provider 返回 object wrapper、fenced JSON、JSONL、schema echo 或 malformed `{ [ ... ] }` 时会优先提取满足字段 predicate 的真实结果 |
@@ -152,6 +153,7 @@ items = await engine.append_recommendations(
 - 若 API 看到 `pool_available_count=0`，会立即返回 `items=[]` 并按 30 秒 debounce 触发一次后台补货；不会读取画像或进入推荐引擎
 - 若 `excluded_bvids` 或最近已看过滤把候选清空，引擎直接返回空数组，不执行 curator、MMR embedding 或推荐历史写入
 - 仍然走 discovery pool 快路径，不等待新一轮 discover 完成
+- 从 pool row 还原 `DiscoveredContent` 时会保留 `content_type/body_text/content_id/content_url/source_platform`；X tweet / thread 在 append 续页里也必须继续按文字卡渲染
 - 同样复用 `topic_key + style_key + source` 的多样性选择逻辑，并只读取 pool 内已预生成好的推荐文案
 - 追加命中的内容也会立即写入 `recommendations` 表，并把对应池子项标记为 `shown`
 

@@ -26,7 +26,7 @@ def test_desktop_recommendation_filters_include_enabled_sources() -> None:
     """Recommendation source tabs come from enabled config, not only visible cards."""
     app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
 
-    assert 'const sourceFilterDefinitions = [' in app_js
+    assert "const sourceFilterDefinitions = [" in app_js
     assert '{ key: "twitter", label: "X (Twitter)" }' in app_js
     assert 'twitter: "X (Twitter)"' in app_js
 
@@ -48,6 +48,69 @@ def test_desktop_recommendation_filters_include_enabled_sources() -> None:
     )
     assert filtered_videos is not None, "desktop filteredVideos not found"
     assert "platformName(item.platform)" in filtered_videos.group("body")
+
+
+def test_desktop_renders_x_recommendations_as_text_cards() -> None:
+    """Desktop web should not render text-only X tweets as empty/broken covers."""
+    app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+    app_css = Path("src/openbiliclaw/web/desktop/assets/css/app.css").read_text(encoding="utf-8")
+
+    normalize_recommendation = re.search(
+        r"function normalizeRecommendation\(item\) \{(?P<body>.*?)\n    \}",
+        app_js,
+        flags=re.S,
+    )
+    assert normalize_recommendation is not None, "desktop normalizeRecommendation not found"
+    normalize_body = normalize_recommendation.group("body")
+    assert "content_type" in normalize_body
+    assert "body_text" in normalize_body
+    assert "normalizeSourcePlatform" in normalize_body
+
+    render_videos = re.search(
+        r"function renderVideos\(\) \{(?P<body>.*?)\n    \}",
+        app_js,
+        flags=re.S,
+    )
+    assert render_videos is not None, "desktop renderVideos not found"
+    render_body = render_videos.group("body")
+    assert "recommendationMediaHtml(item)" in render_body
+
+    media_html = re.search(
+        r"function recommendationMediaHtml\(item\) \{(?P<body>.*?)\n    \}",
+        app_js,
+        flags=re.S,
+    )
+    assert media_html is not None, "desktop recommendationMediaHtml not found"
+    assert "cover-text" in media_html.group("body")
+    assert "coverImg(item)" in media_html.group("body")
+
+    cover_class = re.search(
+        r"function recommendationCoverClass\(item\) \{(?P<body>.*?)\n    \}",
+        app_js,
+        flags=re.S,
+    )
+    assert cover_class is not None, "desktop recommendationCoverClass not found"
+    assert "is-text-card" in cover_class.group("body")
+    assert "tweet" in app_js
+
+    assert ".cover.is-text-card" in app_css
+    assert ".cover-text" in app_css
+
+
+def test_desktop_click_payload_keeps_x_source_metadata() -> None:
+    """Desktop click reporting must not rely on backend URL guessing for X."""
+    app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    click_fn = re.search(
+        r"function trackRecommendationClick\(item\) \{(?P<body>.*?)\n    \}",
+        app_js,
+        flags=re.S,
+    )
+    assert click_fn is not None, "desktop trackRecommendationClick not found"
+    body = click_fn.group("body")
+    assert "content_id" in body
+    assert "content_url" in body
+    assert "source_platform" in body
 
 
 def test_desktop_pool_update_does_not_replace_recommendation_list() -> None:

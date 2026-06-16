@@ -76,6 +76,8 @@ def _canonical_platform(raw_platform: object) -> str:
         return "douyin"
     if raw in {"yt", "youtube"}:
         return "youtube"
+    if raw in {"x", "twitter"}:
+        return "twitter"
     return raw or "unknown"
 
 

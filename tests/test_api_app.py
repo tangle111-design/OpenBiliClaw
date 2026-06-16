@@ -899,8 +899,7 @@ class TestBackendAPI:
         )
         assert captured["runtime_controller_kwargs"]["bilibili_producer"] is not None
         assert (
-            captured["bilibili_producer_kwargs"]["presence"]
-            is app.state.runtime_context.presence
+            captured["bilibili_producer_kwargs"]["presence"] is app.state.runtime_context.presence
         )
         assert captured["bilibili_producer_kwargs"]["bilibili_client"].cookie == ""
         assert captured["runtime_controller_kwargs"]["check_interval_seconds"] == 77
@@ -5372,6 +5371,66 @@ class TestBackendAPI:
         assert signal.payload["source_platform"] == "youtube"
         assert signal.payload["content_id"] == "KPoJ7p9iy4Q"
         assert signal.payload["content_url"] == "https://www.youtube.com/watch?v=KPoJ7p9iy4Q"
+
+    def test_recommendation_click_endpoint_infers_x_click_source_from_url(self) -> None:
+        """X recommendation clicks with only a URL should persist as twitter."""
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                self.events.append(event)
+
+        class FakeDatabase:
+            def get_recommendation_by_id(
+                self,
+                recommendation_id: int,
+            ) -> dict[str, object] | None:
+                return None
+
+        class SpyPipeline:
+            def __init__(self) -> None:
+                self.ingested: list[object] = []
+
+            async def ingest(self, signal: object) -> object:
+                self.ingested.append(signal)
+                from openbiliclaw.soul.pipeline import IngestResult
+
+                return IngestResult(signals_accepted=1)
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self.pipeline = SpyPipeline()
+
+        memory = FakeMemoryManager()
+        soul_engine = FakeSoulEngine()
+        app = create_app(
+            memory_manager=memory,
+            database=FakeDatabase(),
+            soul_engine=soul_engine,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/recommendation-click",
+            json={
+                "content_id": "1790000000000000001",
+                "content_url": "https://x.com/h/status/1790000000000000001",
+                "title": "A text tweet",
+            },
+        )
+
+        assert response.status_code == 200
+        assert memory.events, "X click should be persisted"
+        event = memory.events[0]
+        assert event["url"] == "https://x.com/h/status/1790000000000000001"
+        assert "X" in event["context"]
+        assert event["metadata"]["source_platform"] == "twitter"
+        signal = soul_engine.pipeline.ingested[0]
+        assert signal.payload["source_platform"] == "twitter"
+        assert signal.payload["content_url"] == "https://x.com/h/status/1790000000000000001"
 
     def test_recommendation_click_endpoint_persists_dwell_fields(self) -> None:
         """When the extension reports dwell on the click-through, those

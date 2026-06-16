@@ -226,7 +226,7 @@ X (Twitter) 的 steady-state discovery 走服务端 cookie 重放（对标抖音
 - `feed`：拉推荐流 For-You（`XClient.for_you()`）。这是最高曝光、最易被注意的行为，被压到很低的每日频次，并在连续失败后由 `XSourceHealthStore.feed_allowed()` 自动暂停。
 - `creator`：对 `x_creator_subscriptions` 里到期的订阅逐个调 `XClient.user_tweets(handle)`，按 `creator_refresh_hours` 控制刷新节奏。
 
-每条推文经 `discovery.x_normalize.normalize_tweet()` 映射为 `DiscoveredContent`（`content_type ∈ {tweet, thread}`、`body_text` 带全文），enqueue 进 `discovery_candidates` 待评估池——producer **只 fetch，不写 `content_cache`、不调评估器**，由共享混源 evaluator 完成 admission。每个策略 run 都把成功 / 失败结果回写 `XSourceHealthStore`（成功 `record_success()`，失败 `record_error(exc)` 按 401/403/429 落对应健康态）。预算护栏：`daily_search_budget` / `daily_feed_budget` / `daily_creator_budget`（`0` = 不设上限）+ 两次请求间 `request_interval_seconds` 间隔。`enabled=false` 时整条路径 no-op，绝不 import `twitter_cli` / `curl_cffi`。
+每条推文经 `discovery.x_normalize.normalize_tweet()` 映射为 `DiscoveredContent`（`content_type ∈ {tweet, thread}`、`body_text` 带全文），enqueue 进 `discovery_candidates` 待评估池——producer **只 fetch，不写 `content_cache`、不调评估器**，由共享混源 evaluator 完成 admission。runtime 的平台族统计会把 `x` / `x-*` / `twitter` 归一到 `twitter`，避免 X 配额、过滤 tab 和 pool 状态被拆成不同来源。每个策略 run 都把成功 / 失败结果回写 `XSourceHealthStore`（成功 `record_success()`，失败 `record_error(exc)` 按 401/403/429 落对应健康态）。预算护栏：`daily_search_budget` / `daily_feed_budget` / `daily_creator_budget`（`0` = 不设上限）+ 两次请求间 `request_interval_seconds` 间隔。`enabled=false` 时整条路径 no-op，绝不 import `twitter_cli` / `curl_cffi`。
 
 X 客户端 `XClient`（`sources/x_client.py`）封装可选 extra `openbiliclaw[x]` 的 `twitter-cli`，全程只读，方法用 `asyncio.to_thread` 包成 async；底层 `TwitterAPIError` / `AuthenticationError` 映射为 `XMissingCookieError` / `XAuthError`(401) / `XBlockedError`(403) / `XRateLimitError`(429)，供源健康状态机分流退避。
 

@@ -72,6 +72,8 @@ _BILIBILI_SOURCE_FAMILY = "bilibili"
 _BILIBILI_SOURCE_KEYS = ("search", "related_chain", "trending", "explore")
 _YOUTUBE_SOURCE_FAMILY = "youtube"
 _YOUTUBE_SOURCE_PREFIXES = ("yt-", "yt_", "youtube")
+_TWITTER_SOURCE_FAMILY = "twitter"
+_TWITTER_SOURCE_PREFIXES = ("x-", "x_", "twitter")
 _EXPLORE_HIGH_RISK_CLUSTERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "manufacturing",
@@ -271,6 +273,8 @@ def _pool_source_family(source: object, source_platform: object = "") -> str:
         _YOUTUBE_SOURCE_PREFIXES
     ):
         return _YOUTUBE_SOURCE_FAMILY
+    if platform in {_TWITTER_SOURCE_FAMILY, "x"} or source_key.startswith(_TWITTER_SOURCE_PREFIXES):
+        return _TWITTER_SOURCE_FAMILY
     if platform in {_BILIBILI_SOURCE_FAMILY, "bili"} or source_key in _BILIBILI_SOURCE_KEYS:
         return _BILIBILI_SOURCE_FAMILY
     return raw_source or "unknown"
@@ -285,6 +289,8 @@ def _normalize_source_platform_key(source_platform: object) -> str:
         return _DOUYIN_SOURCE_FAMILY
     if raw in {_YOUTUBE_SOURCE_FAMILY, "yt"}:
         return _YOUTUBE_SOURCE_FAMILY
+    if raw in {_TWITTER_SOURCE_FAMILY, "x"}:
+        return _TWITTER_SOURCE_FAMILY
     if raw in {_BILIBILI_SOURCE_FAMILY, "bili"}:
         return _BILIBILI_SOURCE_FAMILY
     return raw
@@ -5445,6 +5451,13 @@ class Database:
             return _DOUYIN_SOURCE_FAMILY
         if "youtube.com" in host or host == "youtu.be":
             return _YOUTUBE_SOURCE_FAMILY
+        if (
+            host == "x.com"
+            or host.endswith(".x.com")
+            or host == "twitter.com"
+            or host.endswith(".twitter.com")
+        ):
+            return _TWITTER_SOURCE_FAMILY
         return ""
 
     @staticmethod

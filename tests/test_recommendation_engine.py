@@ -1012,6 +1012,51 @@ async def test_append_recommendations_skips_excluded_bvids() -> None:
 
 
 @pytest.mark.asyncio
+async def test_append_recommendations_preserves_x_text_shape_fields() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = Database(Path(tmpdir) / "test.db")
+        db.initialize()
+        _seed_visible(
+            db,
+            "2064073338197328079",
+            title="A 12 step program for cats who can’t stop eating and licking plastic.",
+            up_name="@UprootedTexan99",
+            source="x-search",
+            source_platform="twitter",
+            content_id="2064073338197328079",
+            content_url="https://x.com/UprootedTexan99/status/2064073338197328079",
+            content_type="tweet",
+            body_text=(
+                "A 12 step program for cats who can’t stop eating and licking plastic.\n\n"
+                "Is this anything?"
+            ),
+            cover_url="",
+            relevance_score=0.67,
+            relevance_reason="X text item should keep the tweet body through append.",
+            pool_expression="这条是纯文字 X 推荐。",
+            pool_topic_label="猫咪离谱癖好梗",
+        )
+        engine = RecommendationEngine(llm=_DummyLLM(), database=db)
+
+        recommendations = await engine.append_recommendations(
+            profile=_build_profile(),
+            excluded_bvids=[],
+            limit=1,
+        )
+
+        assert len(recommendations) == 1
+        content = recommendations[0].content
+        assert content.source_platform == "twitter"
+        assert content.content_type == "tweet"
+        assert content.body_text == (
+            "A 12 step program for cats who can’t stop eating and licking plastic.\n\n"
+            "Is this anything?"
+        )
+        assert content.content_url == "https://x.com/UprootedTexan99/status/2064073338197328079"
+        db.close()
+
+
+@pytest.mark.asyncio
 async def test_serve_returns_immediately_when_pool_available_count_is_zero() -> None:
     class EmptyPoolDatabase:
         def count_pool_readiness(self, *, xhs_self_nickname: str = "") -> dict[str, int]:

@@ -91,6 +91,8 @@
     ];
     const sourceFilterOrder = sourceFilterDefinitions.map((source) => source.label);
     const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", twitter: "X (Twitter)", x: "X (Twitter)" };
+    const platformAliases = { bili: "bilibili", bilibili: "bilibili", xhs: "xiaohongshu", xiaohongshu: "xiaohongshu", rednote: "xiaohongshu", dy: "douyin", douyin: "douyin", tiktok: "douyin", yt: "youtube", youtube: "youtube", x: "twitter", twitter: "twitter" };
+    const textCardContentTypes = new Set(["tweet", "thread"]);
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must
     // stay checked to start.
@@ -586,16 +588,48 @@
       });
     }
 
+    function urlHostMatches(url, hostnames) {
+      const text = String(url || "").trim();
+      if (!text) return false;
+      try {
+        const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`;
+        const host = new URL(candidate).hostname.toLowerCase();
+        return hostnames.some((hostname) => host === hostname || host.endsWith(`.${hostname}`));
+      } catch {
+        return false;
+      }
+    }
+
+    function normalizeSourcePlatform(item) {
+      const explicit = String(item?.source_platform ?? item?.platform ?? "").trim().toLowerCase();
+      if (platformAliases[explicit]) return platformAliases[explicit];
+      const url = String(item?.content_url ?? "").trim().toLowerCase();
+      if (url) {
+        if (url.includes("bilibili.com") || url.includes("b23.tv")) return "bilibili";
+        if (url.includes("xiaohongshu.com") || url.includes("xhslink.com")) return "xiaohongshu";
+        if (url.includes("douyin.com")) return "douyin";
+        if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
+        if (urlHostMatches(url, ["x.com", "twitter.com"])) return "twitter";
+        return "web";
+      }
+      if (String(item?.bvid ?? "").trim()) return "bilibili";
+      return explicit || "bilibili";
+    }
+
     function normalizeRecommendation(item) {
+      const contentId = String(item?.content_id ?? item?.bvid ?? "");
       return {
         id: Number(item?.id ?? Date.now()),
-        bvid: String(item?.bvid ?? item?.content_id ?? ""),
+        bvid: String(item?.bvid ?? contentId),
+        content_id: contentId,
         title: decodeHtmlEntities(item?.title ?? "未命名内容"),
         up: decodeHtmlEntities(item?.up_name ?? item?.up ?? "未知创作者"),
         cover_url: normalizeImageUrl(item?.cover_url ?? item?.cover ?? item?.pic ?? item?.thumbnail_url ?? item?.thumbnail ?? item?.image_url),
         content_url: String(item?.content_url ?? ""),
         topic: decodeHtmlEntities(item?.topic_label ?? item?.topic ?? "未归类"),
-        platform: String(item?.source_platform ?? item?.platform ?? "bilibili"),
+        platform: normalizeSourcePlatform(item),
+        content_type: String(item?.content_type ?? "video").trim().toLowerCase() || "video",
+        body_text: decodeHtmlEntities(item?.body_text ?? ""),
         duration: String(item?.duration ?? ""),
         presented: Boolean(item?.presented),
         feedback_type: String(item?.feedback_type ?? item?.feedback ?? ""),
@@ -1429,7 +1463,29 @@
     function contentUrl(item) {
       if (item.content_url) return item.content_url;
       if (item.platform === "bilibili" && item.bvid) return `https://www.bilibili.com/video/${encodeURIComponent(item.bvid)}`;
+      if (item.platform === "youtube" && item.content_id) return `https://www.youtube.com/watch?v=${encodeURIComponent(item.content_id)}`;
+      if (item.platform === "twitter" && item.content_id) return `https://x.com/i/status/${encodeURIComponent(item.content_id)}`;
       return "";
+    }
+
+    function recommendationTextCardText(item) {
+      return String(item.body_text || item.title || "先看文字也行").trim();
+    }
+
+    function recommendationIsTextCard(item) {
+      const hasCover = Boolean(imageProxyUrl(item.cover_url));
+      return textCardContentTypes.has(String(item.content_type || "").toLowerCase()) || !hasCover;
+    }
+
+    function recommendationCoverClass(item) {
+      return recommendationIsTextCard(item) ? " is-text-card" : "";
+    }
+
+    function recommendationMediaHtml(item) {
+      if (recommendationIsTextCard(item)) {
+        return `<p class="cover-text">${escapeHtml(recommendationTextCardText(item))}</p>`;
+      }
+      return coverImg(item);
     }
 
     function recommendationMeta(item) {
@@ -1461,8 +1517,8 @@
         card.className = "video-card";
         card.dataset.bvid = item.bvid || item.id;
         card.innerHTML = `
-          <button class="cover" data-platform="${escapeHtml(item.platform)}" type="button" aria-label="打开 ${escapeHtml(item.title)}">
-            ${coverImg(item)}
+          <button class="cover${recommendationCoverClass(item)}" data-platform="${escapeHtml(item.platform)}" type="button" aria-label="打开 ${escapeHtml(item.title)}">
+            ${recommendationMediaHtml(item)}
             <span class="platform">${escapeHtml(platformName(item.platform))}</span>
           </button>
           <div>
@@ -1545,10 +1601,20 @@
     }
 
     function trackRecommendationClick(item) {
+      const url = contentUrl(item);
       void requestJson(ENDPOINTS.click, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bvid: item.bvid, title: item.title, recommendation_id: item.id, topic_label: item.topic, up_name: item.up })
+        body: JSON.stringify({
+          bvid: item.bvid,
+          content_id: item.content_id || item.bvid,
+          content_url: url || item.content_url,
+          source_platform: item.platform,
+          title: item.title,
+          recommendation_id: item.id,
+          topic_label: item.topic,
+          up_name: item.up
+        })
       }).catch(() => {});
     }
 

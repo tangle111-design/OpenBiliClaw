@@ -10,6 +10,7 @@
 - [隐私权政策](privacy.md) — Chrome Web Store / 插件数据收集披露与本地优先数据流说明
 - [Chrome Web Store 商店页文案](chrome-webstore-listing.md) — 可直接复制到商店后台的项目入口、安装使用说明和隐私引导
 - [v0.1 开发任务清单](v0.1-todolist.md) — 当前版本的开发主线
+- [技术债清单](technical-debt.md) — 已确认技术债、风险解析、建议治理方向和待确认 TODO 线索
 - [架构设计](architecture.md) — 系统架构与模块关系
 - [记忆系统设计](memory-design.md) — 多层网状记忆架构详解
 - [变更日志](changelog.md) — 各里程碑交付记录
@@ -23,8 +24,8 @@
 
 ## 可视化架构图
 
-- [Soul 模块架构与流程图](diagrams/soul-architecture.html) — 行为信号、五层画像、增量学习、正向兴趣和避雷探针闭环
-- [Soul 更新变化流程图](diagrams/soul-update-flow.html) — 用 SVG 说明事件、反馈、对话、探针和手动编辑如何影响五层画像
+- [Soul 模块架构与流程图](diagrams/soul-architecture.html) — Soul 真实写回口、pipeline 输入边界、完整 rebuild 与局部写回路径
+- [Soul 更新变化流程图](diagrams/soul-update-flow.html) — 事件来源矩阵、分层路由、典型场景和专属名词注释
 - [Recommendation 模块架构与流程图](diagrams/recommendation-architecture.html) — 候选池 readiness、serve 热路径、PoolCurator、MMR 和反馈回流
 - [Web HTML 模块架构与流程图](diagrams/web-architecture.html) — `/web` 桌面端、`/m` 移动端、REST hydration、runtime-stream 和用户动作边界
 - [Discovery 模块架构图](diagrams/discovery-architecture.html) — 多源发现、刷新调度、评估优化和模块协议边界
