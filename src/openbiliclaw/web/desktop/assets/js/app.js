@@ -82,8 +82,15 @@
 
     const $ = (selector) => document.querySelector(selector);
     const grid = $("#videoGrid");
-    const sourceFilterOrder = ["B 站", "YouTube", "抖音", "小红书"];
-    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书" };
+    const sourceFilterDefinitions = [
+      { key: "bilibili", label: "B 站" },
+      { key: "xiaohongshu", label: "小红书" },
+      { key: "douyin", label: "抖音" },
+      { key: "youtube", label: "YouTube" },
+      { key: "twitter", label: "X (Twitter)" }
+    ];
+    const sourceFilterOrder = sourceFilterDefinitions.map((source) => source.label);
+    const platformLabel = { bilibili: "B 站", youtube: "YouTube", douyin: "抖音", xiaohongshu: "小红书", xhs: "小红书", twitter: "X (Twitter)", x: "X (Twitter)" };
     // v0.3.118+: bilibili is selectable like every other source — default
     // checked (recommended) but no longer forced. At least one source must
     // stay checked to start.
@@ -1285,8 +1292,22 @@
       return platformLabel[String(value || "").toLowerCase()] || String(value || "").trim();
     }
 
+    function configuredSourceFilterLabels() {
+      const sources = state.config?.sources;
+      const shares = state.config?.scheduler?.pool_source_shares || {};
+      return sourceFilterDefinitions
+        .filter(({ key }) => {
+          const sourceConfig = sources?.[key];
+          if (sourceConfig && typeof sourceConfig === "object" && !Array.isArray(sourceConfig) && Object.prototype.hasOwnProperty.call(sourceConfig, "enabled")) {
+            return sourceConfig.enabled !== false;
+          }
+          return Number(shares[key] ?? 0) > 0;
+        })
+        .map((source) => source.label);
+    }
+
     function buildFilters() {
-      const sourceSet = new Set();
+      const sourceSet = new Set(configuredSourceFilterLabels());
       for (const item of state.videos) {
         const label = platformName(item.platform);
         if (label) sourceSet.add(label);

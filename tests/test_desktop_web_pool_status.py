@@ -22,6 +22,34 @@ def test_desktop_source_metric_uses_configured_source_count() -> None:
     assert "currentRecommendationSourceCount" not in app_js
 
 
+def test_desktop_recommendation_filters_include_enabled_sources() -> None:
+    """Recommendation source tabs come from enabled config, not only visible cards."""
+    app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    assert 'const sourceFilterDefinitions = [' in app_js
+    assert '{ key: "twitter", label: "X (Twitter)" }' in app_js
+    assert 'twitter: "X (Twitter)"' in app_js
+
+    build_filters = re.search(
+        r"function buildFilters\(\) \{(?P<body>.*?)\n    \}",
+        app_js,
+        flags=re.S,
+    )
+    assert build_filters is not None, "desktop buildFilters not found"
+    body = build_filters.group("body")
+    assert "configuredSourceFilterLabels()" in body
+    assert "state.videos" in body
+    assert "sourceFilterOrder.filter" in body
+
+    filtered_videos = re.search(
+        r"function filteredVideos\(\) \{(?P<body>.*?)\n    \}",
+        app_js,
+        flags=re.S,
+    )
+    assert filtered_videos is not None, "desktop filteredVideos not found"
+    assert "platformName(item.platform)" in filtered_videos.group("body")
+
+
 def test_desktop_pool_update_does_not_replace_recommendation_list() -> None:
     """refresh.pool_updated is a pool-status signal, not a list refresh.
 
