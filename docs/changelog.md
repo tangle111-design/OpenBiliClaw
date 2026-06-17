@@ -4,12 +4,18 @@
 
 ---
 
+## v0.3.128 / extension v0.3.83: 抖音 DOM-first discovery（2026-06-18）
+
+后端源码走 `backend-v0.3.128`，浏览器插件走 `extension-v0.3.83`。桌面安装包未改动；如冻结包用户需要同步本次 Web / 后端修复，可后续单独打 `desktop-v0.3.128`。
+
+- **抖音 search / hot / feed discovery 改为 DOM-first**：三类插件任务后台 tab 统一先打开抖音首页，再模拟真实 DOM 操作触发搜索、热点或推荐流加载；content script 不再主动跳 `/search/...`、`/hot/...` 快捷 URL，也不再主动调用 search / related / feed API bridge，只被动收集页面自己发出的响应和已渲染 DOM。插件任务为空 / 超时 / 失败时默认返回空结果，direct-cookie fallback 仅保留给显式 `allow_direct_fallback=True` 的诊断路径。
+- **抖音 discovery 真实浏览器联调修复**：feed 真实页面当前通过 XHR 发 `/aweme/v2/web/module/feed/`，MAIN-world passive tap 已覆盖 fetch / XHR 两种路径；search / hot / feed 回传前按目标 scope 过滤，避免首页 feed 响应被误计入 search / hot。真实干净会话里 feed 可从首页推荐流回传 `dy_feed` 候选；search / hot 在未登录或入口不可见时保持 DOM-first 但返回空结果。
+- **沉淀 agentic 开发过程文档**：新增 `docs/superpowers/` 下的本次设计说明与实施计划，记录抖音 DOM-first discovery 的目标行为、组件边界、测试路径和真实联调约束。
+
 ## v0.3.127 / extension v0.3.82: LLM 探针与 Soul 更新链路文档（2026-06-17）
 
 后端源码走 `backend-v0.3.127`，浏览器插件走 `extension-v0.3.82`。桌面安装包未改动；如冻结包用户需要同步本次 Web / 后端修复，可后续单独打 `desktop-v0.3.127`。
 
-- **抖音 search / hot / feed discovery 改为 DOM-first**：三类插件任务后台 tab 统一先打开抖音首页，再模拟真实 DOM 操作触发搜索、热点或推荐流加载；content script 不再主动跳 `/search/...`、`/hot/...` 快捷 URL，也不再主动调用 search / related / feed API bridge，只被动收集页面自己发出的响应和已渲染 DOM。插件任务为空 / 超时 / 失败时默认返回空结果，direct-cookie fallback 仅保留给显式 `allow_direct_fallback=True` 的诊断路径。
-- **抖音 discovery 真实浏览器联调修复**：feed 真实页面当前通过 XHR 发 `/aweme/v2/web/module/feed/`，MAIN-world passive tap 已覆盖 fetch / XHR 两种路径；search / hot / feed 回传前按目标 scope 过滤，避免首页 feed 响应被误计入 search / hot。真实干净会话里 feed 可从首页推荐流回传 `dy_feed` 候选；search / hot 在未登录或入口不可见时保持 DOM-first 但返回空结果。
 - **GitHub Releases 增加聚合 Latest 入口**：新增 `openbiliclaw-v*` 用户发布页，由 `backend-v*` / `extension-v*` / `desktop-v*` 三条 workflow 共同同步；页面会同时展示后端源码 tag、最新插件 zip 与桌面安装包，避免 Releases 首页被单一通道 release 占住。
 - **X / Twitter 推荐卡三端归一**：插件 side panel、移动 Web 与桌面 Web 会把 `x` / `twitter` / `x.com` / `twitter.com` 统一归一为 `source_platform="twitter"`，标签显示为 `X (Twitter)`；候选池 source family、点击上报 URL 推断和 fallback URL 也同步映射 X，不再退成 Web 或 B 站。
 - **X 文字卡真实 append 链路修复**：`/web`、`/m/` 与插件对 X tweet / thread 或无有效封面的候选渲染文本卡正文；真实后端 + 真实浏览器 E2E 复现到 `/api/recommendations/append` 会把 X tweet 从 pool row 还原成默认 `video` 且丢 `body_text`，现已在 `RecommendationEngine._rows_to_discovered()` 同步映射 `content_type/body_text`。
