@@ -35,12 +35,21 @@ latest_release_with_prefix() {
     return
   fi
 
-  gh release list \
-    --repo "$repo" \
-    --limit 100 \
-    --json tagName,isDraft \
-    --jq '.[] | select(.isDraft == false) | .tagName' |
-    awk -v prefix="$prefix" 'index($0, prefix) == 1 { print; exit }'
+  local releases
+  releases="$(
+    gh release list \
+      --repo "$repo" \
+      --limit 100 \
+      --json tagName,isDraft \
+      --jq '.[] | select(.isDraft == false) | .tagName'
+  )"
+
+  while IFS= read -r tag_name; do
+    if [[ "$tag_name" == "$prefix"* ]]; then
+      printf '%s\n' "$tag_name"
+      return
+    fi
+  done <<< "$releases"
 }
 
 extension_tag="$(latest_release_with_prefix "extension-v")"
