@@ -372,9 +372,9 @@ Bilibili discovery 的平台级开关。B 站账号登录 / Cookie 获取仍由 
 | `daily_search_budget` | int | `0` | 每日搜索插件任务预算，限制 `dy_tasks(type="search")` 入队次数；`0` 表示不设每日上限 |
 | `daily_hot_budget` | int | `0` | 每日热点插件任务预算，限制 `dy_tasks(type="hot")` 入队次数；`0` 表示不设每日上限，正数时 runtime 抖音缺口较大时会把有效预算临时抬高到 `max(配置值, min(缺口, 60))` |
 | `daily_feed_budget` | int | `0` | 每日首页推荐流插件任务预算，限制 `dy_tasks(type="feed")` 入队次数；`0` 表示不设每日上限 |
-| `request_interval_seconds` | int | `2` | direct 请求的建议最小间隔；当前插件签名链路主要由任务预算和 runtime producer 节流保护 |
+| `request_interval_seconds` | int | `2` | direct 诊断请求的建议最小间隔；当前默认 discovery 走插件 DOM-first 链路，主要由任务预算和 runtime producer 节流保护 |
 
-当前 `search` 子来源优先使用浏览器插件的 logged-in page + acrawler 签名桥，并以 `dy-plugin-search` 进入 discovery；`hot` 子来源优先使用插件 hot-related 链路，并以 `dy-plugin-hot-related` 进入 discovery；`feed` 子来源使用同一插件签名桥请求 `/aweme/v1/web/tab/feed/`，并以 `dy-plugin-feed` 进入 discovery。插件任务空 / 失败时 search / hot 会分别回退 direct-cookie search / hot，feed 也保留 direct-cookie 诊断 fallback；因 daemon 重启或插件未及时消费而被清理的 `failed/stale_pending` 任务不消耗正数每日预算。runtime 大缺口补池会优先 search / hot，feed 只用于小缺口补零散名额。`msToken` 如果存在会随 Cookie 一起使用，但扩展同步不再硬依赖它。若 Cookie 过期、签名被拒绝或插件未在线，命令可能返回 0 条并提示检查登录态。
+当前 `search` 子来源使用浏览器插件的登录会话，从抖音首页通过 DOM 搜索框输入 / 提交触发页面加载，并以 `dy-plugin-search` 进入 discovery；`hot` 子来源同样从首页点击热榜 / 热点入口和目标热词，并以 `dy-plugin-hot-related` 进入 discovery；`feed` 子来源在首页推荐流滚动触发加载，并以 `dy-plugin-feed` 进入 discovery。插件只被动监听页面自己发出的响应和已渲染 DOM，不主动跳 `/search/...`、`/hot/...` 快捷 URL，也不主动调用 search / related / feed API bridge。插件任务空 / 失败时默认返回 0 条；direct-cookie fallback 仅保留给显式 `allow_direct_fallback=True` 的诊断代码。因 daemon 重启或插件未及时消费而被清理的 `failed/stale_pending` 任务不消耗正数每日预算。runtime 大缺口补池会优先 search / hot，feed 只用于小缺口补零散名额。`msToken` 如果存在会随 Cookie 一起使用，但扩展同步不再硬依赖它。若 Cookie 过期、页面布局变化或插件未在线，命令可能返回 0 条并提示检查登录态。
 
 ### `[sources.youtube]`
 

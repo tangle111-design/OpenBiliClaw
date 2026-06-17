@@ -381,6 +381,31 @@ function isSearchResponseUrl(url: string): boolean {
   );
 }
 
+function isPassiveDiscoveryResponseUrl(url: string): boolean {
+  if (!url) return false;
+  const path = url.split("?", 1)[0] ?? "";
+  return (
+    isSearchResponseUrl(url) ||
+    path.includes("/aweme/v1/web/aweme/related/") ||
+    path.includes("/aweme/v1/web/tab/feed/") ||
+    path.includes("/aweme/v2/web/module/feed/")
+  );
+}
+
+function parsePassiveDiscoveryResponse(url: string, json: unknown): DouyinSearchItem[] {
+  const path = url.split("?", 1)[0] ?? "";
+  if (path.includes("/aweme/v1/web/aweme/related/")) {
+    return parseRelatedAwemeResponse(json);
+  }
+  if (path.includes("/aweme/v1/web/tab/feed/") || path.includes("/aweme/v2/web/module/feed/")) {
+    return parseFeedAwemeResponse(json);
+  }
+  if (isSearchResponseUrl(url)) {
+    return parseSearchAwemeResponse(json);
+  }
+  return [];
+}
+
 /**
  * Install the fetch-tap onto `target.fetch`. Wraps whatever
  * `target.fetch` is at install time, which in production is the
@@ -425,10 +450,10 @@ export function installFetchTap(
         // right move; we never want to throw inside fetch-tap because
         // the page's React app would observe the rejection.
       }
-    } else if (isSearchResponseUrl(url) && postSearchBack) {
+    } else if (isPassiveDiscoveryResponseUrl(url) && postSearchBack) {
       try {
         const json: unknown = await resp.clone().json();
-        const items = parseSearchAwemeResponse(json);
+        const items = parsePassiveDiscoveryResponse(url, json);
         if (items.length > 0) {
           postSearchBack(items);
         }
@@ -486,7 +511,7 @@ export function installXhrTap(
       if (this.readyState !== 4) return;
       const u = (this as unknown as { __obcUrl?: string }).__obcUrl ?? urlString;
       const scope = classifyDouyinResponseUrl(u);
-      if (!scope && !isSearchResponseUrl(u)) return;
+      if (!scope && !isPassiveDiscoveryResponseUrl(u)) return;
       try {
         const text = this.responseText;
         if (!text) return;
@@ -499,7 +524,7 @@ export function installXhrTap(
           if (items.length > 0) postBack(items, scope);
           return;
         }
-        const searchItems = parseSearchAwemeResponse(json);
+        const searchItems = parsePassiveDiscoveryResponse(u, json);
         if (searchItems.length > 0 && postSearchBack) postSearchBack(searchItems);
       } catch {
         // Best-effort: never throw inside XHR listener.

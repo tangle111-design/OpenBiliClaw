@@ -432,7 +432,7 @@ openbiliclaw setup-embedding
 # Manual content discovery
 openbiliclaw discover
 
-# Optional: Douyin discovery (requires [sources.douyin]; search / hot / feed use background plugin signing)
+# Optional: Douyin discovery (requires [sources.douyin]; search / hot / feed are triggered from the home page via DOM)
 openbiliclaw discover --source douyin
 
 # Optional: standalone Douyin search / hot / feed recall debugging
@@ -533,7 +533,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 - 🔮 **Challenge Interest Probes** — Uses psychological bridging logic to guess unexplored domains you might love, labels distance as near/lateral/bridge/wildcard, keeps 5 regular near slots plus 3 separate challenge slots, buffers weak positives, and guards against short-term over-amplification
 - 🧭 **Avoidance Probe System** — Proactively confirms content forms, low-quality expressions, and style boundaries you may want to avoid; confirmed answers write `disliked_topics`, unconfirmed probes stay out of ranking
 - 🌐 **Cross-Platform Sources** — Started on Bilibili, now extended to Xiaohongshu, Douyin, YouTube init signals, Douyin search / hot / feed discovery, X (Twitter) server-side cookie-replay discovery, and generic Web; the architecture is built to keep adding more platforms. Your interests no longer get siloed
-- 🔍 **Multi-Source Discovery Strategies** — Bilibili four strategies (Search · Related Chain · Trending · Cross-domain Explore, with extension-rendered search-page fallback during search cooldown) + Xiaohongshu safe discovery + Douyin plugin-signed search / hot / feed + X search / For-You / followed authors, coordinated cross-platform
+- 🔍 **Multi-Source Discovery Strategies** — Bilibili four strategies (Search · Related Chain · Trending · Cross-domain Explore, with extension-rendered search-page fallback during search cooldown) + Xiaohongshu safe discovery + Douyin DOM-first search / hot / feed + X search / For-You / followed authors, coordinated cross-platform
 - 🎯 **Smart Diversity** — PoolCurator five-dimension scoring + cross-source/round topic quota (any topic ≤10% of pool) + share-aware pool trimming that protects smaller sources; goodbye to "all AI all day"
 - ⚡ **Instant "Reshuffle"** — popup reshuffle ~0.6s (down from 2.6s in v0.3.0); rapid clicks stay snappy
 - 💬 **Warm Recommendations** — Not "because you watched similar videos", but friend-like explanations of why you'd enjoy something
@@ -576,7 +576,7 @@ The whole loop stays local — OpenClaw just calls the CLI bridge; your profile 
 
 ### Content Discovery Engine
 
-Four Bilibili strategies work in coordination, each with independent API quota; while backend Bilibili search is cooling down, the runtime can enqueue extension search fallback tasks, have the extension open a real rendered Bilibili search page in the logged-in browser, and accept the visible DOM results. The source layer also accepts Xiaohongshu extension-proxy signals, YouTube init signals plus a backend-direct YouTube producer, Douyin init signals / plugin-signed search / hot / feed discovery, and X (Twitter) server-side cookie-replay discovery (search / For-You / followed authors):
+Four Bilibili strategies work in coordination, each with independent API quota; while backend Bilibili search is cooling down, the runtime can enqueue extension search fallback tasks, have the extension open a real rendered Bilibili search page in the logged-in browser, and accept the visible DOM results. The source layer also accepts Xiaohongshu extension-proxy signals, YouTube init signals plus a backend-direct YouTube producer, Douyin init signals / DOM-first search / hot / feed discovery, and X (Twitter) server-side cookie-replay discovery (search / For-You / followed authors):
 
 | Strategy | Description | Quota |
 |----------|-------------|-------|
@@ -585,7 +585,7 @@ Four Bilibili strategies work in coordination, each with independent API quota; 
 | **Related Chain** | Expands from seed videos along recommendation chains | Fair share |
 | **Explore** | LLM-driven cross-domain exploration | Fair share |
 
-**Safe data fetching** — Bilibili and generic Web fetch backend-direct (Bilibili via WBI-signed APIs); if Bilibili search is blocked and cooling down, the backend task bridge can enqueue a search task, then the extension opens the real logged-in search page in a background tab and returns visible rendered DOM results as fallback candidates. Xiaohongshu / Douyin / YouTube are read by the browser extension inside your *already-logged-in* pages: init profiling doesn't deep-scroll by default and returns in batches, and the backend never crawls or logs in to those sites itself (YouTube can also import old history via Google Takeout). X is fetched backend-side via read-only server-side cookie replay using the x.com cookie the extension synced (`auth_token` + `ct0`); the extension only syncs the cookie and captures your own engagement. For steady-state refill, Douyin signs requests from a background tab in your logged-in browser without stealing focus, and YouTube is refilled backend-side by platform deficit.
+**Safe data fetching** — Bilibili and generic Web fetch backend-direct (Bilibili via WBI-signed APIs); if Bilibili search is blocked and cooling down, the backend task bridge can enqueue a search task, then the extension opens the real logged-in search page in a background tab and returns visible rendered DOM results as fallback candidates. Xiaohongshu / Douyin / YouTube are read by the browser extension inside your *already-logged-in* pages: init profiling doesn't deep-scroll by default and returns in batches, and the backend never crawls or logs in to those sites itself (YouTube can also import old history via Google Takeout). X is fetched backend-side via read-only server-side cookie replay using the x.com cookie the extension synced (`auth_token` + `ct0`); the extension only syncs the cookie and captures your own engagement. For steady-state refill, Douyin search / hot / feed background tabs first open the Douyin home page, perform real DOM interactions to trigger search, hot, or feed loading, then passively collect the page's own responses and rendered DOM; YouTube is refilled backend-side by platform deficit.
 
 **Unified evaluation** — every source first writes raw candidates to `discovery_candidates`. The backend then claims mixed-source batches and scores them with the Soul profile plus recent negative examples. The "will this user like it?" judgment lives in this shared evaluator, not inside each platform producer.
 
@@ -634,7 +634,7 @@ OpenBiliClaw/
 | LLM | Built-in Gemini / DeepSeek / OpenAI / Claude / OpenRouter / Ollama; any OpenAI-compatible endpoint works via custom base_url; OpenAI can experimentally reuse Codex CLI OAuth |
 | Bilibili API | Custom client (WBI signing · v_voucher auto-recovery · rate control) |
 | Xiaohongshu | Extension DOM/state extraction + task dispatch; scrolling init imports open `/explore` in the foreground, click the page's profile entry, then use bounded scrolling and partial batches; no backend crawling |
-| Douyin | Extension DOM + MAIN-world fetch/API harvester + task dispatch; init imports post / favorite / like / follow signals; search / hot / feed discovery use background tabs and the logged-in plugin signer; no backend crawling |
+| Douyin | Extension DOM + MAIN-world passive fetch tap + task dispatch; init imports post / favorite / like / follow signals; search / hot / feed discovery starts from the Douyin home page, uses DOM interactions to trigger loading, and passively collects page responses / rendered results; no backend crawling |
 | YouTube | Extension DOM task dispatch reads watch history / subscriptions / likes; Google Takeout can import older data offline |
 | X (Twitter) | Server-side cookie replay via lazy-imported `twitter-cli` (optional `openbiliclaw[x]`, read-only); the extension captures your engagement and syncs the x.com cookie; tweets render as text cards |
 | Storage | SQLite + Embedding vector index |

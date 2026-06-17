@@ -14,6 +14,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  douyinDiscoveryExecutionPolicy,
+  filterDiscoveryItemsForScope,
   isValidFeedExecuteMessage,
   isValidScopeExecuteMessage,
 } from "../src/content/douyin.ts";
@@ -96,4 +98,28 @@ test("isValidFeedExecuteMessage accepts feed payload and rejects malformed input
   assert.equal(isValidFeedExecuteMessage(null), false);
   assert.equal(isValidFeedExecuteMessage({ task_id: "", max_items: 10 }), false);
   assert.equal(isValidFeedExecuteMessage({ task_id: "feed-1", max_items: 0 }), false);
+});
+
+test("douyin discovery execution policy is dom first", () => {
+  assert.deepEqual(douyinDiscoveryExecutionPolicy(), {
+    search: { activeApiBridge: false, passiveFetchTap: true, domInteraction: true },
+    hot: { activeApiBridge: false, passiveFetchTap: true, domInteraction: true },
+    feed: { activeApiBridge: false, passiveFetchTap: true, domInteraction: true },
+  });
+});
+
+test("filterDiscoveryItemsForScope keeps only the requested discovery scope", () => {
+  const items = filterDiscoveryItemsForScope(
+    [
+      { scope: "dy_feed", aweme_id: "feed-1", url: "", title: "feed", author: "", author_sec_uid: "", cover_url: "" },
+      { scope: "dy_search", aweme_id: "search-1", url: "", title: "search", author: "", author_sec_uid: "", cover_url: "" },
+      { scope: "dy_search", aweme_id: "search-1", url: "", title: "duplicate", author: "", author_sec_uid: "", cover_url: "" },
+    ],
+    "dy_search",
+    5,
+  );
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0]!.scope, "dy_search");
+  assert.equal(items[0]!.aweme_id, "search-1");
 });

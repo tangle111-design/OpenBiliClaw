@@ -595,7 +595,7 @@ Before any non-interactive auto-init, ask:
 Then ask separately:
 
 > 「要把你的抖音发布 / 收藏 / 点赞 / 关注也混进初始画像吗？这会让抖音口味进入画像，
-> 但会让扩展打开抖音页面执行拉取；扩展也会把 douyin.com Cookie 同步给后续 discovery，search / hot / feed discovery 则优先复用登录浏览器插件签名桥。
+> 但会让扩展打开抖音页面执行拉取；扩展也会把 douyin.com Cookie 同步给后续 discovery，search / hot / feed discovery 会复用登录浏览器，从抖音首页开始模拟 DOM 操作触发加载，并被动收集页面响应 / 渲染结果。
 > 默认不启用；你明确说要用我才开。」
 
 Then ask separately:

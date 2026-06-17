@@ -288,11 +288,11 @@ Agent：那我理解了。这是一个很有意思的特质——你可能也会
 │           多源适配层 (SourceAdapter Protocol, v0.3.0+)         │
 │  ┌──────────────┐  ┌──────────────────┐  ┌─────────────┐    │
 │  │ B 站 Adapter  │  │ Bili/小红书/抖音/YouTube任务桥│ │ Web Adapter │  │
-│  │ (WBI API+DOM兜底)│ │ (扩展代理 + DOM/API)│  │ (Playwright │    │
+│  │ (WBI API+DOM兜底)│ │ (扩展代理 + DOM-first)│  │ (Playwright │    │
 │  │              │  │ + profile/search/feed/yt)│ │ + LLM 抽取)│    │
 │  └──────────────┘  └──────────────────┘  └─────────────┘    │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │ DouyinDiscoveryService: 后台插件搜索 / 热点 related / 首页 feed │   │
+│  │ DouyinDiscoveryService: 首页 DOM 触发 search / 热点 related / feed │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │ YoutubeDiscoveryProducer: 后端直连 yt_search/trending/channel │   │

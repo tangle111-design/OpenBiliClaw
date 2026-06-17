@@ -104,6 +104,7 @@ class DouyinPluginSearchClient:
         daily_feed_budget: int | None = None,
         kick: Callable[[], None] | None = None,
         raise_on_budget: bool = False,
+        allow_direct_fallback: bool = False,
     ) -> None:
         self._database = database
         self._direct_client = direct_client
@@ -114,6 +115,7 @@ class DouyinPluginSearchClient:
         # result) so a claimed keyword can be rolled back instead of burned.
         # OFF by default → legacy "budget → fall back to direct-cookie".
         self._raise_on_budget = bool(raise_on_budget)
+        self._allow_direct_fallback = bool(allow_direct_fallback)
         self._daily_search_budget = _normalize_daily_budget(
             daily_search_budget if daily_search_budget is not None else daily_budget
         )
@@ -131,7 +133,7 @@ class DouyinPluginSearchClient:
         return self._direct_client.cookie
 
     async def search_aweme(self, keyword: str, *, limit: int = 30) -> list[dict[str, object]]:
-        """Search via the browser plugin, falling back to direct-cookie."""
+        """Search via the browser plugin; direct-cookie fallback is opt-in diagnostics only."""
         keyword = keyword.strip()
         if not keyword or limit <= 0:
             return []
@@ -140,11 +142,14 @@ class DouyinPluginSearchClient:
         if plugin_items:
             return plugin_items[:limit]
 
-        logger.info("douyin plugin search empty; falling back to direct-cookie search")
-        return await self._direct_client.search_aweme(keyword, limit=limit)
+        if self._allow_direct_fallback:
+            logger.info("douyin plugin search empty; falling back to direct-cookie search")
+            return await self._direct_client.search_aweme(keyword, limit=limit)
+        logger.info("douyin plugin search empty; direct-cookie fallback disabled")
+        return []
 
     async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
-        """Resolve hot board through plugin related-video flow, then fallback."""
+        """Resolve hot candidates through the plugin; fallback is opt-in diagnostics only."""
         if limit <= 0:
             return []
 
@@ -153,8 +158,11 @@ class DouyinPluginSearchClient:
         if plugin_items:
             return plugin_items[:limit]
 
-        logger.info("douyin plugin hot empty; falling back to direct-cookie hot")
-        return await self._direct_client.get_hot_board(limit=limit)
+        if self._allow_direct_fallback:
+            logger.info("douyin plugin hot empty; falling back to direct-cookie hot")
+            return await self._direct_client.get_hot_board(limit=limit)
+        logger.info("douyin plugin hot empty; direct-cookie fallback disabled")
+        return []
 
     async def get_creator_posts(
         self,
@@ -175,13 +183,14 @@ class DouyinPluginSearchClient:
             return plugin_items[:limit]
 
         fallback = getattr(self._direct_client, "get_recommend_feed", None)
-        if callable(fallback):
+        if self._allow_direct_fallback and callable(fallback):
             logger.info("douyin plugin feed empty; falling back to direct-cookie feed")
             typed_fallback = cast(
                 "Callable[..., Awaitable[list[dict[str, object]]]]",
                 fallback,
             )
             return await typed_fallback(limit=limit)
+        logger.info("douyin plugin feed empty; direct-cookie fallback disabled")
         return []
 
     async def _search_via_plugin(self, keyword: str, *, limit: int) -> list[dict[str, object]]:
