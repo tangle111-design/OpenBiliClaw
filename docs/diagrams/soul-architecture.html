@@ -275,7 +275,7 @@
 <main>
   <header>
     <h1>Soul 模块架构全景</h1>
-    <p class="subtitle">这张图按当前源码梳理 Soul 的真实写回口：哪些输入会进入 ProfileUpdatePipeline，哪些路径会完整 rebuild，哪些只是局部写回或读时覆盖。</p>
+    <p class="subtitle">这张图按当前源码梳理 Soul 的真实写回口：哪些输入会进入 ProfileUpdatePipeline，哪些后台 loop 会定时触发，哪些路径会完整 rebuild，哪些只是局部写回或读时覆盖。</p>
     <p class="stamp">docs/diagrams/soul-architecture.html · updated 2026-06-17 · source-aligned architecture map</p>
     <div class="legend" aria-label="图例">
       <span><i class="dot" style="background:var(--blue)"></i>外部输入</span>
@@ -306,9 +306,17 @@
               <h3>推荐点击</h3>
               <p><code>/api/recommendation-click</code> 同时落 click event，并额外构造 <code>RECOMMENDATION_CLICK</code> 强画像信号。</p>
             </article>
+            <article class="card blue">
+              <h3>后台账户同步</h3>
+              <p><code>AccountSyncService</code> 默认每 6 小时增量同步 B 站 history / favorites / following；有新增事件时直接调用 <code>analyze_events()</code>。</p>
+            </article>
             <article class="card gold">
               <h3>反馈与对话旁路</h3>
               <p><code>/api/feedback</code> 和 <code>learn_from_dialogue()</code> 当前不走 pipeline，而是各自触发偏好重析或候选合并。</p>
+            </article>
+            <article class="card gold">
+              <h3>手动编辑 / 探针响应</h3>
+              <p>画像编辑写覆盖层；兴趣/避雷探针先写 speculator 状态，确认达标后通过 tick 或 force_tick 转正。</p>
             </article>
             <article class="card purple">
               <h3>初始化 / 手动 rebuild</h3>
@@ -331,6 +339,10 @@
                 <li>Core: 8 条 / 48 小时</li>
               </ul>
             </article>
+            <article class="card gold">
+              <h3>Runtime tick</h3>
+              <p><code>ContinuousRefreshController.run_forever()</code> 启动 <code>_loop_soul_pipeline()</code>，默认每 60 秒调用 <code>pipeline.tick()</code>；受 scheduler gate、插件断开暂停和 init-active gate 控制。</p>
+            </article>
             <article class="card purple">
               <h3>按层 Updater</h3>
               <p>Surface 用规则；Interest 调 <code>PreferenceAnalyzer</code>；Role / Values / Core 调 LLM delta prompt；Core 或 Values 变化后重生成 portrait。</p>
@@ -341,7 +353,7 @@
             </article>
             <article class="card red">
               <h3>Speculator / Consolidator</h3>
-              <p>兴趣探针转正、避雷转正、12 小时画像整理都可能局部写回 Soul 的兴趣树和避雷树。</p>
+              <p>兴趣探针转正、避雷转正、12 小时画像整理都可能局部写回 Soul 的兴趣树和避雷树；配置热重载后还会 one-shot force_tick 生成/轮换探针。</p>
             </article>
           </div>
         </div>
@@ -364,6 +376,10 @@
             <article class="card gold">
               <h3>pipeline_state.json</h3>
               <p>保存每层 buffer、上次更新时间和 update_count，防止重启丢掉未处理信号。</p>
+            </article>
+            <article class="card gold">
+              <h3>runtime state</h3>
+              <p>保存 probe feedback history、账户同步游标、cognition cycle 游标、consolidation run 记录等后台状态。</p>
             </article>
             <article class="card">
               <h3>profile_overrides.json</h3>
@@ -422,6 +438,18 @@
 
       <article class="path-card">
         <header>
+          <span class="kicker">LOOP</span>
+          <h3>后台定时触发</h3>
+        </header>
+        <ol>
+          <li><code>_loop_soul_pipeline()</code> 默认 60 秒 tick 一次，flush buffer 并跑低频维护。</li>
+          <li><code>AccountSyncService</code> 默认 6 小时同步账号信号，更新 preference；画像为空时自动 bootstrap。</li>
+          <li>CognitionCycle 与 ProfileConsolidator 默认 12 小时节流；speculator 空闲默认 30 分钟检查生命周期。</li>
+        </ol>
+      </article>
+
+      <article class="path-card">
+        <header>
           <span class="kicker">SYNC</span>
           <h3>同步与覆盖</h3>
         </header>
@@ -461,12 +489,16 @@
         <h3>effective profile</h3>
         <p>业务读取的最终画像：raw Soul + 用户手动 overrides + active speculations。</p>
       </article>
+      <article class="card">
+        <h3>runtime loop</h3>
+        <p>后端启动后的 asyncio 定时循环；当前 Soul 调度不依赖 <code>discovery_cron</code>。</p>
+      </article>
     </div>
   </section>
 
   <section>
     <div class="callout">
-      <strong>实现边界：</strong>当前普通 <code>/api/events</code>、Bili source task-result、X fetch、YouTube Takeout import 都不会自动进入 ProfileUpdatePipeline。它们要么只落 memory，要么走初始化/手动重析旁路。
+      <strong>实现边界：</strong>当前普通 <code>/api/events</code>、Bili source task-result、X fetch、YouTube Takeout import 都不会自动进入 ProfileUpdatePipeline。它们要么只落 memory，要么走初始化/手动重析旁路。账户同步是例外：它不进 pipeline，但会在后台定时直接调用 <code>analyze_events()</code> 更新 preference。
     </div>
   </section>
 </main>

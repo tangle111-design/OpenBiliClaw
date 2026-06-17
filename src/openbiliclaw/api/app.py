@@ -6979,6 +6979,7 @@ def create_app(
                     mod_cfg.model = str(mdata["model"])
 
     async def _probe_llm_config(cfg: Any) -> ConfigServiceProbeResponse:
+        from openbiliclaw.llm.base import LLM_CONNECTIVITY_PROBE_MAX_TOKENS
         from openbiliclaw.llm.registry import build_llm_registry
 
         started = time.perf_counter()
@@ -7007,6 +7008,7 @@ def create_app(
                         {"role": "user", "content": "OpenBiliClaw connectivity probe."},
                     ],
                     temperature=0,
+                    max_tokens=LLM_CONNECTIVITY_PROBE_MAX_TOKENS,
                     reasoning_effort="",
                     model=model or None,
                 ),

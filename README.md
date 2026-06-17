@@ -666,7 +666,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.126 / extension v0.3.81: X 文字推荐卡与画像学习修复（2026-06-17）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。普通用户从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合页同时下载插件包和桌面安装包；后端源码自动更新仍看 `backend-v*` tag。
+最新版本：**v0.3.127 / extension v0.3.82: LLM 探针与 Soul 更新链路文档（2026-06-17）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。普通用户从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合页同时下载插件包和桌面安装包；后端源码自动更新仍看 `backend-v*` tag。
 
 ## 🗺️ 后续规划
 

@@ -654,7 +654,7 @@ OpenBiliClaw/
 
 ## 📜 Release History
 
-Latest: **v0.3.126 / extension v0.3.81: X text recommendation cards and profile-learning fixes (2026-06-17)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and desktop installers; backend source auto-update still follows `backend-v*` tags.
+Latest: **v0.3.127 / extension v0.3.82: LLM probes and Soul update-path docs (2026-06-17)**. The recent updates section keeps the current release visible; full history lives in [docs/changelog.md](docs/changelog.md). Most users should use the `openbiliclaw-v*` aggregate [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) for extension packages and desktop installers; backend source auto-update still follows `backend-v*` tags.
 
 ## 🗺️ Roadmap
 

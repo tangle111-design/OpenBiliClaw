@@ -198,7 +198,7 @@ Content-Type: application/json
 
 | kind | 行为 | 成功条件 |
 |------|------|----------|
-| `llm` | 构建临时 `LLMRegistry`，对当前 `default_provider` 发送一条最小 chat completion 请求 | provider 已注册、chat-capable，并返回非异常响应 |
+| `llm` | 构建临时 `LLMRegistry`，对当前 `default_provider` 发送一条 `max_tokens=1024` 的最小 chat completion 请求 | provider 已注册、chat-capable，并返回非异常响应 |
 | `embedding` | 构建临时 `EmbeddingService`，调用 `EmbeddingService.probe()` 绕过缓存真实取一次向量 | provider 已配置，并返回非空向量 |
 
 响应统一为：
