@@ -74,10 +74,10 @@ def _render_tone_profile(
 ) -> str:
     """Render tone profile guidance for prompt builders."""
     tone = tone_profile or {
-        "density": "balanced",
-        "warmth": "warm",
-        "playfulness": "medium",
-        "directness": "balanced",
+        "density": "dense",
+        "warmth": "cold",
+        "playfulness": "low",
+        "directness": "direct",
     }
     return (
         _tone_context_line(source_platform_mix) + "\n"
@@ -904,14 +904,26 @@ _SINGLE_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "同一主题的不同切面必须归为同一个 topic_group。"
     '语义相同的主题必须用同一个词——"AI" "人工智能" "机器学习" 统一写成 "人工智能",'
     '"RL" "强化学习" 统一写成 "强化学习"。\n'
-    "7. style_key 从以下 11 个选项中选一个,描述该内容的呈现风格:\n"
-    "   game_strategy(游戏攻略/机制解析)/ news_brief(新闻资讯/时事快评)/ "
-    "practical_guide(教程/入门/实操指南)/ story_doc(纪录片/故事/人物传记)/ "
-    "visual_showcase(视觉向/混剪/空镜)/ tech_analysis(技术分析/硬件评测)/ "
-    "deep_dive(原理讲解/学术解析)/ "
-    "fun_variety(搞笑/吐槽/整活/挑战)/ lifestyle(日常/vlog/生活分享)/ "
-    "review_roundup(盘点/测评/推荐/合集)/ "
-    "light_chat(闲聊/杂谈/其他)\n"
+    "7. style_key 从以下 23 个选项中选一个,描述该内容的呈现风格:\n"
+    "   # 知识/信息类\n"
+    "   deep_dive(原理讲解/学术解析)/ tech_analysis(技术分析/硬件评测)/\n"
+    "   news_brief(新闻资讯/时事快评)/ sci_fact(科学事实/趣味冷知识)/\n"
+    "   # 教程/指南类\n"
+    "   practical_guide(教程/入门/实操指南)/ tutorial_short(极简教程/技巧速刷)/\n"
+    "   # 故事/叙事类\n"
+    "   story_doc(纪录片/故事/人物传记)/ emotional_narrative(情感故事/治愈/人文)/ true_crime(罪案纪实/悬疑案件)/\n"
+    "   # 观点/评论类\n"
+    "   opinion_stand(观点输出/立场评论)/ review_roundup(盘点/测评/推荐/合集)/\n"
+    "   # 生活/日常类\n"
+    "   lifestyle(日常/vlog/生活分享)/ light_chat(闲聊/杂谈/其他)/ unboxing_experience(开箱/体验/第一视角)/\n"
+    "   # 视觉/艺术类\n"
+    "   visual_showcase(视觉向/混剪/空镜)/\n"
+    "   # 游戏类\n"
+    "   game_strategy(游戏攻略/机制解析)/\n"
+    "   # 音频/音乐类\n"
+    "   audio_background(背景音乐/陪伴聆听)/ music_live(现场演奏/演唱会实录)/ music_analysis(乐理分析/编曲拆解)/\n"
+    "   # 娱乐/搞笑类\n"
+    "   fun_variety(搞笑/吐槽/整活/挑战)/ live_moment(直播切片/互动实录)/ parody_remix(二创/鬼畜/模仿/配音)/ sports_highlight(体育集锦/精彩回放)\n"
     "8. franchise_key(可空):内容如果明确属于某个具体 IP / 系列 / 作品 / 品牌,"
     "填它的规范名(中文优先),用于跨 topic_group 的同 IP 去重。例:\n"
     '   - 「AI 重绘原神地图」「提瓦特摄影」「蒙德角色真实化」 → "原神"\n'
@@ -1000,9 +1012,26 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "explore 允许主题陌生,但内容仍需具备可看性,过于学术艰深的应适当降分。\n"
     "5. topic_group 规则:2-4 个中文词的粗分类,同主题不同切面统一。"
     "语义相同必须用同一词(AI/人工智能/机器学习 统一为 人工智能)。\n"
-    "6. style_key 从 11 个选项中选:game_strategy / news_brief / "
-    "practical_guide / story_doc / visual_showcase / tech_analysis / "
-    "deep_dive / fun_variety / lifestyle / review_roundup / light_chat\n"
+    "6. style_key 从 23 个选项中选:\n"
+    "   # 知识/信息类\n"
+    "   deep_dive(原理讲解/学术解析)/ tech_analysis(技术分析/硬件评测)/\n"
+    "   news_brief(新闻资讯/时事快评)/ sci_fact(科学事实/趣味冷知识)/\n"
+    "   # 教程/指南类\n"
+    "   practical_guide(教程/入门/实操指南)/ tutorial_short(极简教程/技巧速刷)/\n"
+    "   # 故事/叙事类\n"
+    "   story_doc(纪录片/故事/人物传记)/ emotional_narrative(情感故事/治愈/人文)/ true_crime(罪案纪实/悬疑案件)/\n"
+    "   # 观点/评论类\n"
+    "   opinion_stand(观点输出/立场评论)/ review_roundup(盘点/测评/推荐/合集)/\n"
+    "   # 生活/日常类\n"
+    "   lifestyle(日常/vlog/生活分享)/ light_chat(闲聊/杂谈/其他)/ unboxing_experience(开箱/体验/第一视角)/\n"
+    "   # 视觉/艺术类\n"
+    "   visual_showcase(视觉向/混剪/空镜)/\n"
+    "   # 游戏类\n"
+    "   game_strategy(游戏攻略/机制解析)/\n"
+    "   # 音频/音乐类\n"
+    "   audio_background(背景音乐/陪伴聆听)/ music_live(现场演奏/演唱会实录)/ music_analysis(乐理分析/编曲拆解)/\n"
+    "   # 娱乐/搞笑类\n"
+    "   fun_variety(搞笑/吐槽/整活/挑战)/ live_moment(直播切片/互动实录)/ parody_remix(二创/鬼畜/模仿/配音)/ sports_highlight(体育集锦/精彩回放)\n"
     "7. franchise_key 规则:内容如果明确属于某个具体 IP / 系列 / 作品 / 品牌,"
     "填它的规范名(中文优先),用于跨 topic_group 的同 IP 去重。例:\n"
     "   - 「AI 重绘原神地图」「提瓦特摄影」「蒙德角色真实化」"

@@ -1664,18 +1664,7 @@ class RecommendationEngine:
             },
             recent_feedback=[],
         )
-        style_key = RecommendationEngine._style_token(content)
-        if style_key in {"lifestyle", "fun_variety", "light_chat"}:
-            adjusted = _clone_tone_profile(tone)
-            adjusted["density"] = "light"
-            if adjusted["playfulness"] == "low":
-                adjusted["playfulness"] = "medium"
-            return adjusted
-        if style_key in {"story_doc", "review_roundup", "visual_showcase"}:
-            adjusted = _clone_tone_profile(tone)
-            if adjusted["density"] == "dense":
-                adjusted["density"] = "balanced"
-            return adjusted
+        # 语气固定为用户配置的 profile，不做 style_key 驱动的动态调整
         return tone
 
     def mark_presented(self, recommendation_ids: list[int]) -> None:
@@ -1726,28 +1715,61 @@ class RecommendationEngine:
     def _fallback_expression(content: DiscoveredContent) -> str:
         title = content.title or "这条内容"
         style_key = content.style_key.strip()
-        if style_key == "game_strategy":
-            return f"《{title}》偏你会点开的那种机制/攻略向，不只是热闹，重点是真有东西能翻。"
-        if style_key == "news_brief":
-            return f"《{title}》这条胜在信息来得快，而且不是纯复读，适合你先抓重点。"
-        if style_key == "practical_guide":
-            return f"《{title}》偏实操一点，信息是能直接拿来用的，不会只有概念。"
-        if style_key == "story_doc":
-            return f"《{title}》这条没那么硬，但会把故事和信息一起带出来，适合你换口气的时候看。"
-        if style_key == "visual_showcase":
-            return f"《{title}》更偏轻一点，适合你换换脑子，但内容不空。"
-        if style_key == "tech_analysis":
-            return f"《{title}》这条偏技术拆解，但入口不算高，适合你先抓重点再决定要不要细看。"
+        # 知识/信息类
         if style_key == "deep_dive":
-            return f"《{title}》还是你常吃那一路，偏讲透来龙去脉，不会只给结论。"
-        if style_key == "fun_variety":
-            return f"《{title}》这条更偏轻松整活，拿来换个脑子刚好，也不是纯吵闹。"
-        if style_key == "lifestyle":
-            return f"《{title}》这条是轻一点的生活向，顺手点开不累，氛围和信息都还在线。"
+            return f"《{title}》偏讲透来龙去脉，不会只给结论。"
+        if style_key == "tech_analysis":
+            return f"《{title}》偏技术拆解，入口不算高，适合先抓重点再决定要不要细看。"
+        if style_key == "news_brief":
+            return f"《{title}》胜在信息来得快，不是纯复读，适合你先抓重点。"
+        if style_key == "sci_fact":
+            return f"《{title}》偏趣味冷知识，胜在新鲜和意外感。"
+        # 教程/指南类
+        if style_key == "practical_guide":
+            return f"《{title}》偏实操，信息能直接拿来用，不只有概念。"
+        if style_key == "tutorial_short":
+            return f"《{title}》偏极简技巧速刷，节奏快，能快速上手。"
+        # 故事/叙事类
+        if style_key == "story_doc":
+            return f"《{title}》把故事和信息一起带出来，适合换口气的时候看。"
+        if style_key == "emotional_narrative":
+            return f"《{title}》偏情感叙事，有温度，不是纯信息堆叠。"
+        if style_key == "true_crime":
+            return f"《{title}》偏罪案纪实，有悬念感，叙事驱动。"
+        # 观点/评论类
+        if style_key == "opinion_stand":
+            return f"《{title}》偏观点输出，有立场，不是纯客观陈述。"
         if style_key == "review_roundup":
-            return f"《{title}》这种盘点/测评向比较省力，先快速过一遍重点会很顺。"
+            return f"《{title}》偏盘点/测评，省力，先快速过一遍重点会很顺。"
+        # 生活/日常类
+        if style_key == "lifestyle":
+            return f"《{title}》是轻一点的生活向，顺手点开不累。"
         if style_key == "light_chat":
-            return f"《{title}》这条不是硬讲解那路，胜在讲得顺、看着不累，适合随手点开。"
+            return f"《{title}》胜在讲得顺、看着不累，适合随手点开。"
+        if style_key == "unboxing_experience":
+            return f"《{title}》偏第一视角体验，有现场感。"
+        # 视觉/艺术类
+        if style_key == "visual_showcase":
+            return f"《{title}》更偏轻一点，适合换换脑子，内容不空。"
+        # 游戏类
+        if style_key == "game_strategy":
+            return f"《{title}》偏机制/攻略向，重点是真有东西能翻。"
+        # 音频/音乐类
+        if style_key == "audio_background":
+            return f"《{title}》偏背景音乐/陪伴聆听，适合当背景。"
+        if style_key == "music_live":
+            return f"《{title}》偏现场演奏/演唱会实录，有临场感。"
+        if style_key == "music_analysis":
+            return f"《{title}》偏乐理分析/编曲拆解，适合深度听。"
+        # 娱乐/搞笑类
+        if style_key == "fun_variety":
+            return f"《{title}》偏轻松整活，拿来换个脑子刚好。"
+        if style_key == "live_moment":
+            return f"《{title}》偏直播切片，有互动感和即时感。"
+        if style_key == "parody_remix":
+            return f"《{title}》偏二创/鬼畜，有解构感和娱乐性。"
+        if style_key == "sports_highlight":
+            return f"《{title}》偏体育集锦，节奏快，有竞技感。"
         return f"《{title}》这条切口挺顺的，先丢给你看看，说不定正好能对上你当下的兴趣。"
 
     @staticmethod
@@ -2282,17 +2304,30 @@ class RecommendationEngine:
     @staticmethod
     def _accessible_style_priority(item: DiscoveredContent) -> int:
         style_key = RecommendationEngine._style_token(item)
-        if style_key == "lifestyle":
+        # 数值越高越容易被优先展示（用于补足多样性槽位）
+        # 音频/音乐类优先级最高（听觉沉浸适合当背景）
+        if style_key in {"audio_background", "music_live", "music_analysis"}:
+            return 8
+        # 生活/体验类次高（轻松顺手）
+        if style_key in {"unboxing_experience"}:
+            return 7
+        # 娱乐/生活类较高（轻量内容填充）
+        if style_key in {"lifestyle", "fun_variety", "parody_remix", "sports_highlight"}:
             return 6
-        if style_key == "fun_variety":
-            return 5
         if style_key == "light_chat":
+            return 5
+        # 故事/叙事/观点类中等
+        if style_key in {"emotional_narrative", "true_crime", "opinion_stand"}:
             return 4
         if style_key == "review_roundup":
             return 3
-        if style_key == "story_doc":
+        if style_key in {"story_doc", "visual_showcase"}:
             return 2
-        if style_key == "visual_showcase":
+        # 知识/教程/游戏类最低（需要专注）
+        if style_key in {
+            "deep_dive", "tech_analysis", "news_brief", "sci_fact",
+            "practical_guide", "tutorial_short", "game_strategy", "live_moment",
+        }:
             return 1
         return 0
 

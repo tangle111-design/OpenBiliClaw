@@ -331,17 +331,38 @@ class DiscoveredContent:
 # Shared across discovery and recommendation — must stay in sync.
 VALID_STYLE_KEYS: frozenset[str] = frozenset(
     {
-        "game_strategy",
-        "news_brief",
-        "practical_guide",
-        "story_doc",
-        "visual_showcase",
-        "tech_analysis",
+        # 知识/信息类
         "deep_dive",
-        "fun_variety",
-        "lifestyle",
+        "tech_analysis",
+        "news_brief",
+        "sci_fact",
+        # 教程/指南类
+        "practical_guide",
+        "tutorial_short",
+        # 故事/叙事类
+        "story_doc",
+        "emotional_narrative",
+        "true_crime",
+        # 观点/评论类
+        "opinion_stand",
         "review_roundup",
+        # 生活/日常类
+        "lifestyle",
         "light_chat",
+        "unboxing_experience",
+        # 视觉/艺术类
+        "visual_showcase",
+        # 游戏类
+        "game_strategy",
+        # 音频/音乐类
+        "audio_background",
+        "music_live",
+        "music_analysis",
+        # 娱乐/搞笑类
+        "fun_variety",
+        "live_moment",
+        "parody_remix",
+        "sports_highlight",
     }
 )
 
@@ -1394,17 +1415,38 @@ class ContentDiscoveryEngine:
         )
 
         valid_styles = {
-            "game_strategy",
-            "news_brief",
-            "practical_guide",
-            "story_doc",
-            "visual_showcase",
-            "tech_analysis",
+            # 知识/信息类
             "deep_dive",
-            "fun_variety",
-            "lifestyle",
+            "tech_analysis",
+            "news_brief",
+            "sci_fact",
+            # 教程/指南类
+            "practical_guide",
+            "tutorial_short",
+            # 故事/叙事类
+            "story_doc",
+            "emotional_narrative",
+            "true_crime",
+            # 观点/评论类
+            "opinion_stand",
             "review_roundup",
+            # 生活/日常类
+            "lifestyle",
             "light_chat",
+            "unboxing_experience",
+            # 视觉/艺术类
+            "visual_showcase",
+            # 游戏类
+            "game_strategy",
+            # 音频/音乐类
+            "audio_background",
+            "music_live",
+            "music_analysis",
+            # 娱乐/搞笑类
+            "fun_variety",
+            "live_moment",
+            "parody_remix",
+            "sports_highlight",
         }
 
         assert self._llm_service is not None

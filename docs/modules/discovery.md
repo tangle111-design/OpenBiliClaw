@@ -539,12 +539,48 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 ### style_key
 
-`style_key` 不是题材，而是内容风格信号。当前文档和代码里常见的有：
+`style_key` 不是题材，而是内容风格信号。当前文档和代码里常见的有（23 个）：
 
-- `deep_dive`：硬核解析、原理讲透、理论拆解
+#### 知识/信息类
+- `deep_dive`：原理讲解、学术解析、理论拆解
+- `tech_analysis`：技术分析、硬件评测、大模型解读
+- `news_brief`：新闻资讯、时事快评、热点锐评
+- `sci_fact`：科学事实、趣味冷知识、奇怪知识
+
+#### 教程/指南类
+- `practical_guide`：教程、入门、实操指南
+- `tutorial_short`：极简教程、技巧速刷
+
+#### 故事/叙事类
 - `story_doc`：纪录片、故事化讲述、过程复盘
-- `news_brief`：快讯、局势更新、热点锐评
-- `practical_guide`：教程、入门、指南
+- `emotional_narrative`：情感故事、治愈、人文
+- `true_crime`：罪案纪实、悬疑案件、侦探
+
+#### 观点/评论类
+- `opinion_stand`：观点输出、立场评论
+- `review_roundup`：盘点、测评、推荐、合集
+
+#### 生活/日常类
+- `lifestyle`：日常、vlog、生活分享
+- `light_chat`：闲聊、杂谈、访谈
+- `unboxing_experience`：开箱、体验、第一视角
+
+#### 视觉/艺术类
+- `visual_showcase`：视觉向、混剪、空镜
+
+#### 游戏类
+- `game_strategy`：游戏攻略、机制解析
+
+#### 音频/音乐类
+- `audio_background`：背景音乐、陪伴聆听
+- `music_live`：现场演奏、演唱会实录
+- `music_analysis`：乐理分析、编曲拆解
+
+#### 娱乐/搞笑类
+- `fun_variety`：搞笑、吐槽、整活、挑战
+- `live_moment`：直播切片、互动实录
+- `parody_remix`：二创、鬼畜、模仿、配音
+- `sports_highlight`：体育集锦、精彩回放
 
 这个字段的作用，是让下游推荐层能避免一整批都变成同一种表达密度和观看体感。
 
