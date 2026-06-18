@@ -570,6 +570,7 @@ class BilibiliAPIClient:
 
         Args:
             max_items: Maximum number of history items to fetch.
+                0 means fetch all available history.
 
         Returns:
             List of history item dicts.
@@ -580,7 +581,7 @@ class BilibiliAPIClient:
 
         items: list[dict[str, Any]] = []
         cursor_params: dict[str, Any] = {"type": "archive"}
-        while len(items) < max_items:
+        while max_items == 0 or len(items) < max_items:
             data = await self._get_json(
                 "/x/web-interface/history/cursor",
                 params=cursor_params,
@@ -599,22 +600,103 @@ class BilibiliAPIClient:
                 "max": next_max,
                 "view_at": next_view_at,
             }
-        return items[:max_items]
+        if max_items > 0:
+            return items[:max_items]
+        return items
 
-    async def get_favorites(self, media_id: int) -> list[dict[str, Any]]:
-        """Get content from a favorites folder.
+    async def get_favorites(self, media_id: int, *, max_items: int = 0) -> list[dict[str, Any]]:
+        """Get content from a favorites folder with pagination support.
 
         Args:
             media_id: Favorites folder media ID.
+            max_items: Maximum items to fetch (0 = fetch all).
 
         Returns:
             List of favorite item dicts.
         """
-        data = await self._get_json(
-            "/x/v3/fav/resource/list",
-            params={"media_id": media_id, "pn": 1, "ps": 20},
-        )
-        return _json_list(data.get("medias", []))
+        items: list[dict[str, Any]] = []
+        page = 1
+        page_size = 20
+        max_pages = 100
+        consecutive_empty_pages = 0
+        total_count = 0
+        exit_reason = "unknown"
+
+        while page <= max_pages:
+            try:
+                data = await self._get_json(
+                    "/x/v3/fav/resource/list",
+                    params={"media_id": media_id, "pn": page, "ps": page_size},
+                )
+            except Exception as exc:
+                logger.warning("收藏夹 %d 第 %d 页请求失败: %s", media_id, page, exc)
+                if page == 1:
+                    exit_reason = f"first_page_error_{type(exc).__name__}"
+                    break
+                consecutive_empty_pages += 1
+                if consecutive_empty_pages >= 3:
+                    exit_reason = f"consecutive_errors_{consecutive_empty_pages}"
+                    break
+                page += 1
+                continue
+
+            batch = _json_list(data.get("medias", []))
+            info = _json_object(data.get("info", {}))
+            total_count = info.get("media_count", 0)
+
+            logger.debug(
+                "收藏夹 %d 第 %d 页: 返回 %d 条 (累计 %d/%d)",
+                media_id, page, len(batch), len(items), total_count,
+            )
+
+            if not batch:
+                consecutive_empty_pages += 1
+                if consecutive_empty_pages >= 3:
+                    exit_reason = f"consecutive_empty_{consecutive_empty_pages}_page_{page}"
+                    logger.info(
+                        "收藏夹 %d 分页结束 @ 第 %d 页: 连续 %d 次空响应 (累计 %d/%d) → 原因: %s",
+                        media_id, page, consecutive_empty_pages, len(items), total_count, exit_reason,
+                    )
+                    break
+                logger.debug("收藏夹 %d 第 %d 页为空, 继续尝试下一页... (%d/3)", media_id, page, consecutive_empty_pages)
+                page += 1
+                continue
+
+            consecutive_empty_pages = 0
+            items.extend(batch)
+
+            if max_items > 0 and len(items) >= max_items:
+                exit_reason = f"max_items_reached_{len(items)}"
+                logger.info(
+                    "收藏夹 %d 分页结束 @ 第 %d 页: 达到上限 %d (累计 %d/%d) → 原因: %s",
+                    media_id, page, max_items, len(items), total_count, exit_reason,
+                )
+                break
+
+            if len(items) >= total_count and total_count > 0:
+                exit_reason = f"total_count_reached_{len(items)}"
+                logger.info(
+                    "收藏夹 %d 分页结束 @ 第 %d 页: 已拉取全部声明数量 (累计 %d/%d) → 原因: %s",
+                    media_id, page, len(items), total_count, exit_reason,
+                )
+                break
+
+            page += 1
+
+        if page > max_pages:
+            exit_reason = f"max_pages_limit_{max_pages}"
+            logger.warning(
+                "⚠️ 收藏夹 %d 达到最大页数限制 %d (累计 %d/%d) → 原因: %s",
+                media_id, max_pages, len(items), total_count, exit_reason,
+            )
+
+        result = items[:max_items] if max_items > 0 else items
+        if total_count > 0 and len(result) < total_count:
+            logger.warning(
+                "⚠️ 收藏夹 %d 数据不完整: 声明 %d 条, 实际获取 %d 条 (%.1f%%). 退出原因: %s. 可能是 B站 API 限制或网络问题.",
+                media_id, total_count, len(result), (len(result) / total_count * 100), exit_reason,
+            )
+        return result
 
     async def get_favorite_folders(self) -> list[FavoriteFolder]:
         """Get the authenticated user's favorite folder metadata."""
@@ -641,19 +723,35 @@ class BilibiliAPIClient:
     ) -> list[FavoriteFolderWithItems]:
         """Get favorite folders and fetch each folder's items within budget."""
         folders = await self.get_favorite_folders()
+        logger.info("发现 %d 个收藏夹元数据", len(folders))
         aggregated: list[FavoriteFolderWithItems] = []
-        for folder in folders[:max_folders]:
-            items = await self.get_favorites(folder.media_id)
-            limited_items = items[:max_items_per_folder]
-            aggregated.append(
-                FavoriteFolderWithItems(
-                    folder=folder,
-                    items=limited_items,
-                    truncated=(
-                        len(items) > len(limited_items) or folder.media_count > len(limited_items)
-                    ),
+        total_items = 0
+        for idx, folder in enumerate(folders[:max_folders], 1):
+            try:
+                items = await self.get_favorites(folder.media_id)
+                limited_items = items[:max_items_per_folder]
+                is_truncated = len(items) > len(limited_items) or folder.media_count > len(limited_items)
+                total_items += len(limited_items)
+                logger.info(
+                    "收藏夹 [%d/%d] '%s': 声明 %d 条 → 实际拉取 %d 条 → 截断后 %d 条%s",
+                    idx,
+                    min(len(folders), max_folders),
+                    folder.title,
+                    folder.media_count,
+                    len(items),
+                    len(limited_items),
+                    " (⚠️ 已截断)" if is_truncated else "",
                 )
-            )
+                aggregated.append(
+                    FavoriteFolderWithItems(
+                        folder=folder,
+                        items=limited_items,
+                        truncated=is_truncated,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("收藏夹 [%d] '%s' 拉取失败: %s", idx, folder.title, exc, exc_info=True)
+        logger.info("收藏夹遍历完成: 共处理 %d 个收藏夹, 累计 %d 条内容", len(aggregated), total_items)
         return aggregated
 
     async def get_following(

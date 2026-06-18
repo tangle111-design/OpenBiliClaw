@@ -634,6 +634,7 @@ def build_insight_prompt(
     awareness_notes: list[dict[str, object]],
     preference_summary: dict[str, object],
     soul_profile: dict[str, object],
+    existing_hypotheses: list[dict[str, object]] | None = None,
 ) -> list[dict[str, str]]:
     """Build a structured prompt for insight-hypothesis generation."""
     system_prompt = """
@@ -646,6 +647,7 @@ def build_insight_prompt(
 2. hypothesis 是假设，不是结论，措辞必须保守。
 3. 每条必须附 1~3 条 evidence。
 4. confidence 保持在 0~1，且不要过高。
+5. 如果提供了 <existing_hypotheses>，避免生成重复或高度相似的假设；应在此基础上深化或提出全新角度。
 </rules>
 
 <output_schema>
@@ -658,19 +660,28 @@ def build_insight_prompt(
 ]
 </output_schema>
 """.strip()
-    user_prompt = "\n\n".join(
-        [
-            "<awareness_notes>",
-            json.dumps(awareness_notes, ensure_ascii=False, indent=2),
-            "</awareness_notes>",
-            "<preference_summary>",
-            json.dumps(preference_summary, ensure_ascii=False, indent=2),
-            "</preference_summary>",
-            "<soul_profile>",
-            json.dumps(soul_profile, ensure_ascii=False, indent=2),
-            "</soul_profile>",
-        ]
-    )
+    parts = [
+    "<awareness_notes>",
+    json.dumps(awareness_notes, ensure_ascii=False, indent=2),
+    "</awareness_notes>",
+    "<preference_summary>",
+    json.dumps(preference_summary, ensure_ascii=False, indent=2),
+    "</preference_summary>",
+    "<soul_profile>",
+    json.dumps(soul_profile, ensure_ascii=False, indent=2),
+    "</soul_profile>",
+]
+
+    # ← 新增：当 existing_hypotheses 非空时追加到 prompt
+    if existing_hypotheses:
+        parts.extend([
+            "<existing_hypotheses>",
+            json.dumps(existing_hypotheses, ensure_ascii=False, indent=2),
+            "(以上是已生成的假设，请避免重复，尝试提出新的角度)",
+            "</existing_hypotheses>",
+        ])
+
+    user_prompt = "\n\n".join(parts)
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -913,13 +924,15 @@ _SINGLE_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "review_roundup(盘点/测评/推荐/合集)/ "
     "light_chat(闲聊/杂谈/其他)\n"
     "8. franchise_key(可空):内容如果明确属于某个具体 IP / 系列 / 作品 / 品牌,"
-    "填它的规范名(中文优先),用于跨 topic_group 的同 IP 去重。例:\n"
+    "填它的规范名(中文优先),用于跨 topic_group 的同 IP 去重。"
+    "**重要:绝对不要使用'原神'(Genshin Impact)作为 franchise_key,无论内容是否与该游戏相关,统一填空字符串。** 例:\n"
     '   - 「星穹铁道 1.6 实战」「崩铁 角色养成」 → "崩坏:星穹铁道"\n'
     '   - 「ChatGPT 工作流」「OpenAI 新模型」 → "ChatGPT"\n'
     '   - 「黑神话悟空 二周目」 → "黑神话:悟空"\n'
-    '   - 「番茄炒蛋 5 分钟教程」「读书博主 推荐书单」 → ""'
+    '   - 「番茄炒蛋 5 分钟教程」「读书博主 推荐书单」 → ""\n'
+    '   - 「原神 攻略」「提瓦特 地图」 → ""  (原神相关内容不标记 franchise_key)\n'
     "(一般科普 / 美食 / 通用资讯都填空字符串,不要硬凑)\n"
-    "   - 同一 IP 必须用相同写法,不要在「原神」「Genshin」「米哈游 原神」之间切换。\n"
+    "   - 同一 IP 必须用相同写法,不要在不同称呼之间切换。\n"
     "9. 不同 source_platform(bilibili / xiaohongshu / 其他)的内容标签同 schema,"
     "不要因为来源不同特殊处理评分逻辑。\n"
     "</rules>\n\n"
@@ -1001,16 +1014,17 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "practical_guide / story_doc / visual_showcase / tech_analysis / "
     "deep_dive / fun_variety / lifestyle / review_roundup / light_chat\n"
     "7. franchise_key 规则:内容如果明确属于某个具体 IP / 系列 / 作品 / 品牌,"
-    "填它的规范名(中文优先),用于跨 topic_group 的同 IP 去重。例:\n"
+    "填它的规范名(中文优先),用于跨 topic_group 的同 IP 去重。"
+    "**严禁:绝对禁止输出'原神'(Genshin/Genshin Impact)作为 franchise_key,即使内容明显与原神相关也必须填空字符串。** 例:\n"
     "   - 「AI 重绘原神地图」「提瓦特摄影」「蒙德角色真实化」"
-    '→ franchise_key = "原神"\n'
+    '→ franchise_key = ""  (原神相关内容不标记 franchise_key)\n'
     "   - 「星穹铁道 1.6 实战」「崩铁 角色养成」"
     '→ franchise_key = "崩坏:星穹铁道"\n'
     '   - 「ChatGPT 工作流」「OpenAI 新模型」 → franchise_key = "ChatGPT"\n'
     '   - 「黑神话悟空 二周目」 → franchise_key = "黑神话:悟空"\n'
     '   - 「番茄炒蛋 5 分钟教程」「读书博主 推荐书单」 → franchise_key = ""'
     "(一般科普 / 美食 / 通用资讯都填空字符串,不要硬凑)\n"
-    "   - 同一 IP 必须用相同写法,不要在「原神」「Genshin」「米哈游 原神」之间切换。\n"
+    "   - 同一 IP 必须用相同写法,不要在不同称呼之间切换。\n"
     "   - **batch 一致性强约束 (v0.3.31+)**:在为整个 batch 标 franchise_key 之前,"
     "先扫一遍 batch 里所有 title,识别出现 ≥ 2 次的中文 IP / 剧名 / 作品名 / 系列名 / "
     "游戏名 / UP 主名 / 频道名(含集数后缀变体,例如「风犬少年的天空 01」「风犬少年的天空 07」"
@@ -1045,7 +1059,7 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     '  {"bvid": "BV1xxx", "score": 0.78, "reason": "...", "topic_group": "认知科学", '
     '"style_key": "deep_dive", "franchise_key": ""},\n'
     '  {"bvid": "BV2xxx", "score": 0.72, "reason": "...", "topic_group": "游戏摄影", '
-    '"style_key": "visual_showcase", "franchise_key": "原神"},\n'
+'"style_key": "visual_showcase", "franchise_key": ""},\n'
     '  {"bvid": "BV3xxx", "score": 0.45, "reason": "...", "topic_group": "美食", '
     '"style_key": "light_chat", "franchise_key": ""}\n'
     "]\n"

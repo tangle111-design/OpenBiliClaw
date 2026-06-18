@@ -1507,6 +1507,7 @@ def create_app(
         from openbiliclaw.cli import (
             _INIT_BILIBILI_FAVORITE_LIMIT,
             _INIT_BILIBILI_FOLLOW_LIMIT,
+            _INIT_BILIBILI_HISTORY_LIMIT,
             _INIT_POOL_TARGET_COUNT,
             GuidedInitError,
             run_guided_init,
@@ -1533,6 +1534,7 @@ def create_app(
                 client=ctx.bilibili_client,
                 memory=ctx.memory_manager,
                 soul_engine=ctx.soul_engine,
+                history_limit=_INIT_BILIBILI_HISTORY_LIMIT,
                 favorite_limit=_INIT_BILIBILI_FAVORITE_LIMIT,
                 follow_limit=_INIT_BILIBILI_FOLLOW_LIMIT,
                 include_bili="bilibili" in effective,

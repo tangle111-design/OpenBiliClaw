@@ -17,7 +17,7 @@ from .base import LLMProviderError, LLMRateLimitError
 from .prompts import build_socratic_dialogue_prompt
 
 logger = logging.getLogger(__name__)
-DEFAULT_LLM_CONCURRENCY = 3
+DEFAULT_LLM_CONCURRENCY = 16
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
