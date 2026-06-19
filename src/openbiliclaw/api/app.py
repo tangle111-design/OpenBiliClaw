@@ -53,6 +53,7 @@ from openbiliclaw.api.models import (
     DouyinSourceConfigOut,
     EmbeddingConfigOut,
     EventIngestResponse,
+    EventRejectedOut,
     FavoriteAddIn,
     FavoriteItem,
     FavoriteListResponse,
@@ -2560,8 +2561,11 @@ def create_app(
         from openbiliclaw.sources.event_format import build_event
 
         accepted = 0
-        for item in payload.events:
+        rejected: list[EventRejectedOut] = []
+        for index, item in enumerate(payload.events):
             source_platform = (item.source_platform or "bilibili").strip() or "bilibili"
+            raw_event_type = str(item.type or "").strip()
+            event_type = "feedback" if raw_event_type == "dislike" else raw_event_type
             # Coerce context to a string for downstream LLM consumers.
             # Pre-v0.3.22 this passed item.context through verbatim — when
             # the extension sent a dict (e.g. structured click context),
@@ -2582,6 +2586,9 @@ def create_app(
                 **item.metadata,
                 "timestamp": item.timestamp,
             }
+            if raw_event_type == "dislike":
+                metadata.setdefault("feedback_type", "dislike")
+                metadata.setdefault("reaction", "thumbs_down")
             if not isinstance(raw_context, str) and raw_context:
                 metadata.setdefault("raw_context", raw_context)
             # v0.3.x event-satisfaction: fold top-level dwell into
@@ -2593,7 +2600,7 @@ def create_app(
             if item.video_duration_seconds is not None:
                 metadata.setdefault("video_duration_seconds", item.video_duration_seconds)
             event = build_event(
-                event_type=item.type,
+                event_type=event_type,
                 source_platform=source_platform,
                 title=item.title or "",
                 url=item.url or "",
@@ -2601,7 +2608,17 @@ def create_app(
                 context=context_str,
                 metadata=metadata,
             )
-            await ctx.memory_manager.propagate_event(event)
+            try:
+                await ctx.memory_manager.propagate_event(event)
+            except ValueError as exc:
+                rejected.append(
+                    EventRejectedOut(
+                        index=index,
+                        type=raw_event_type,
+                        reason=str(exc),
+                    )
+                )
+                continue
             accepted += 1
         refresh_after_event_ingest = getattr(
             ctx.runtime_controller, "refresh_after_event_ingest", None
@@ -2623,7 +2640,7 @@ def create_app(
                             "count": accepted,
                         }
                     )
-        return EventIngestResponse(accepted=accepted)
+        return EventIngestResponse(accepted=accepted, rejected=rejected)
 
     @app.get("/api/recommendations", response_model=RecommendationListResponse)
     async def recommendations() -> RecommendationListResponse:

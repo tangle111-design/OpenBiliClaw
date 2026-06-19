@@ -586,10 +586,19 @@ class ProfileSummaryResponse(BaseModel):
     overrides: dict[str, object] = Field(default_factory=dict)
 
 
+class EventRejectedOut(BaseModel):
+    """One event skipped during batch ingest."""
+
+    index: int
+    type: str
+    reason: str
+
+
 class EventIngestResponse(BaseModel):
     """Response after accepting a batch of events."""
 
     accepted: int
+    rejected: list[EventRejectedOut] = Field(default_factory=list)
 
 
 class FeedbackIn(BaseModel):

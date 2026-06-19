@@ -4,6 +4,15 @@
 
 ---
 
+## v0.3.129 / extension v0.3.84: 跨平台行为捕捉统一（2026-06-19）
+
+后端源码走 `backend-v0.3.129`，浏览器插件走 `extension-v0.3.84`。桌面安装包未改动；如冻结包用户需要同步本次捕捉链路修复，可后续单独打 `desktop-v0.3.129`。
+
+- **事件入口批处理不再被单条坏事件打崩**：`POST /api/events` 继续返回 `accepted`，并新增 `rejected` 明细；raw `dislike` 会统一规范为 `feedback` + `feedback_type=dislike`，未知事件只拒绝该条，不再让整批 500 后被插件重试造成重复写入。
+- **浏览器插件跨平台行为采集补齐统一 adapter**：B 站、小红书、抖音、YouTube 和 X 都走同一 `PlatformAdapter` / generic collector 事件形态；抖音和 YouTube 除原有 bootstrap / task executor 外，也开始上报普通页面行为事件。
+- **统一动作语义和 flush 策略**：B 站补 `follow/share`，小红书补 `share`，抖音 / YouTube 覆盖 `like/favorite/comment/share/follow/dislike`；所有平台 `dislike` 只发送 `feedback`。`follow/share/view` 和带视频停留 metadata 的 `click` 现在会即时 flush，高频 `scroll/hover/snapshot` 仍缓冲去重。
+- **真实站点嵌套按钮命中修复**：generic collector 的 click action 识别不再只看原始 `event.target`，会从内部 `span/svg` 向上解析动作元素，并优先选择最近的 `button/[role=button]`，再回退到 `a/[aria-label]/[title]`，避免 X 这类“整张推文卡片也是链接”的 DOM 把 Share 误判成 Reply；X 的 DOM fallback 同时补齐 `aria-label="Share"` 到 `share` 事件的映射。真实 B 站、YouTube、X 视频 / 推文页点击分享按钮已验证会同时写入普通 `click` 和强信号动作事件。
+
 ## v0.3.128 / extension v0.3.83: 抖音 DOM-first discovery（2026-06-18）
 
 后端源码走 `backend-v0.3.128`，浏览器插件走 `extension-v0.3.83`。桌面安装包未改动；如冻结包用户需要同步本次 Web / 后端修复，可后续单独打 `desktop-v0.3.128`。

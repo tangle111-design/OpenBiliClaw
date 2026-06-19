@@ -1784,6 +1784,91 @@ class TestBackendAPI:
         assert ev["metadata"]["watch_seconds"] == 600
         assert ev["metadata"]["video_duration_seconds"] == 700
 
+    def test_events_endpoint_normalizes_dislike_to_feedback(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                self.events.append(event)
+
+        memory = FakeMemoryManager()
+        app = create_app(memory_manager=memory)
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/events",
+            json={
+                "events": [
+                    {
+                        "type": "dislike",
+                        "url": "https://www.bilibili.com/video/BV1TEST",
+                        "title": "不想看",
+                        "timestamp": 1710000000000,
+                        "context": {"pageType": "video"},
+                        "metadata": {"bvid": "BV1TEST"},
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["accepted"] == 1
+        assert response.json()["rejected"] == []
+        assert memory.events[0]["event_type"] == "feedback"
+        assert memory.events[0]["metadata"]["feedback_type"] == "dislike"
+        assert memory.events[0]["metadata"]["reaction"] == "thumbs_down"
+
+    def test_events_endpoint_rejects_bad_event_without_failing_batch(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeMemoryManager:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def propagate_event(self, event: dict[str, object]) -> None:
+                if event["event_type"] == "unsupported":
+                    raise ValueError("Unsupported event type: unsupported")
+                self.events.append(event)
+
+        memory = FakeMemoryManager()
+        app = create_app(memory_manager=memory)
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/events",
+            json={
+                "events": [
+                    {
+                        "type": "click",
+                        "url": "https://www.bilibili.com/video/BV1OK",
+                        "title": "正常事件",
+                        "timestamp": 1710000000000,
+                    },
+                    {
+                        "type": "unsupported",
+                        "url": "https://www.bilibili.com/video/BV1BAD",
+                        "title": "未知事件",
+                        "timestamp": 1710000000001,
+                    },
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["accepted"] == 1
+        assert body["rejected"] == [
+            {
+                "index": 1,
+                "type": "unsupported",
+                "reason": "Unsupported event type: unsupported",
+            }
+        ]
+        assert [event["event_type"] for event in memory.events] == ["click"]
+
     def test_events_endpoint_handles_extension_cors_preflight(self) -> None:
         from fastapi.testclient import TestClient
 

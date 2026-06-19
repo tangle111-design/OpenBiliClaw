@@ -26,6 +26,31 @@ import type {
   DouyinSearchScope,
 } from "../main/dy-fetch-tap.js";
 import { apiUrl } from "../shared/backend-endpoint.ts";
+import { douyinAdapter } from "../shared/platforms/douyin.ts";
+
+let behaviorCollectorStarted = false;
+
+function startDouyinBehaviorCollector(): void {
+  if (behaviorCollectorStarted) return;
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  if (typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
+
+  const start = (): void => {
+    if (behaviorCollectorStarted) return;
+    behaviorCollectorStarted = true;
+    void import("./kernel.js").then(({ startCollector }) => {
+      startCollector(douyinAdapter);
+    });
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", start, { once: true });
+    return;
+  }
+  start();
+}
+
+startDouyinBehaviorCollector();
 
 // TEMP DEBUG: relay content-script events to daemon (see debug-log.ts).
 function debugLog(event: string, data?: unknown): void {
