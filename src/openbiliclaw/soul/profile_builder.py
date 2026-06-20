@@ -225,10 +225,10 @@ class ProfileBuilder:
 
         portrait = str(payload.get("personality_portrait", "")).strip()
         portrait_len = len(portrait)
-        if portrait_len < 120 or portrait_len > 500:
+        if portrait_len < 300 or portrait_len > 800:
             raise SoulProfileBuildError(
                 f"LLM soul profile portrait length out of range "
-                f"(got {portrait_len}, expected 120-500 chars)."
+                f"(got {portrait_len}, expected 300-800 chars)."
             )
 
         list_fields = (

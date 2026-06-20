@@ -412,7 +412,21 @@ class PreferenceAnalyzer:
                     return []
                 return await _split_or_compact_chunk(chunk)
 
-        outcome_groups = await _asyncio.gather(*(_run_chunk_resilient(chunk) for chunk in chunks))
+        outcome_groups: list[list[tuple[dict[str, object], dict[str, object]]]] = []
+        batch_size = 16
+        for batch_start in range(0, len(chunks), batch_size):
+            batch_end = min(batch_start + batch_size, len(chunks))
+            batch_chunks = chunks[batch_start:batch_end]
+            logger.info(
+                "preference batch %d-%d: processing %d chunks",
+                batch_start + 1,
+                batch_end,
+                len(batch_chunks),
+            )
+            batch_outcomes = await _asyncio.gather(
+                *(_run_chunk_resilient(chunk) for chunk in batch_chunks)
+            )
+            outcome_groups.extend(batch_outcomes)
         outcomes = [item for group in outcome_groups for item in group]
 
         # Fold each chunk's normalized preference into the running merge

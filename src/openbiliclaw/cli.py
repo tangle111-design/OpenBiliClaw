@@ -782,6 +782,7 @@ def _history_item_to_event(item: dict[str, Any]) -> dict[str, Any]:
         metadata={
             "bvid": bvid,
             "view_at": view_at,
+            "signal_strength": 0.35,  # 观看历史：低信号强度
         },
     )
 
@@ -4722,6 +4723,7 @@ async def run_guided_init(
                 metadata={
                     "folder": folder,
                     "upper": upper,
+                    "signal_strength": 1.0,  # 收藏：最高信号强度
                 },
             )
         )
@@ -4740,6 +4742,7 @@ async def run_guided_init(
                 metadata={
                     "up_name": name,
                     "sign": sign,
+                    "signal_strength": 0.6,  # 关注：中等信号强度
                 },
             )
         )
@@ -4810,7 +4813,7 @@ async def run_guided_init(
     effective_concurrency = min(num_chunks, llm_concurrency)
     await _run_with_progress(
         soul_engine.analyze_events(events, event_chunk_size=chunk_size),
-        label=f"分析偏好({effective_concurrency} 个并发分片)",
+        label=f"分析偏好({num_chunks} 个分片，分 {effective_concurrency} 批处理)",
         eta_seconds=180,
     )
     await _stage_done(2)
@@ -5454,10 +5457,14 @@ def rebuild_profile(
     if not no_analyze:
         _print_section_title("1/2 分析偏好")
         console.print(f"  总信号量: [green]{len(events)}[/green] 条")
+        chunk_size = 200
+        num_chunks = max(1, (len(events) + chunk_size - 1) // chunk_size)
+        llm_concurrency = getattr(soul_engine, "_llm_concurrency", 16)
+        effective_concurrency = min(num_chunks, llm_concurrency)
         asyncio.run(
             _run_with_progress(
-                soul_engine.analyze_events(events, event_chunk_size=200),
-                label="分析偏好（分片并发）",
+                soul_engine.analyze_events(events, event_chunk_size=chunk_size),
+                label=f"分析偏好({num_chunks} 个分片，分 {effective_concurrency} 批处理)",
                 eta_seconds=180,
             )
         )
@@ -6061,13 +6068,13 @@ def import_youtube(
     llm_concurrency = getattr(soul_engine, "_llm_concurrency", 16)
     effective_concurrency = min(num_chunks, llm_concurrency)
     console.print(
-        f"  分析 {stats.total} 条 YouTube 信号（{effective_concurrency} 个并发分片，"
+        f"  分析 {stats.total} 条 YouTube 信号（{num_chunks} 个分片，分 {effective_concurrency} 批处理，"
         f"每片 {chunk_size} 条）…"
     )
     asyncio.run(
         _run_with_progress(
             soul_engine.analyze_events(result.events, event_chunk_size=chunk_size),
-            label="分析偏好（YouTube 信号）",
+            label=f"分析偏好({num_chunks} 个分片，分 {effective_concurrency} 批处理)",
             eta_seconds=90,
         )
     )

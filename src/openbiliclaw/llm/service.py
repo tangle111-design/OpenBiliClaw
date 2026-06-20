@@ -194,6 +194,23 @@ class PrioritySemaphore:
         finally:
             self.release()
 
+    def resize(self, new_capacity: int) -> None:
+        if new_capacity < 1:
+            raise ValueError("capacity must be >= 1")
+        old_capacity = self._capacity
+        self._capacity = new_capacity
+        
+        if new_capacity > old_capacity:
+            additional_slots = new_capacity - old_capacity
+            for _ in range(additional_slots):
+                if self._waiters:
+                    _, _, fut = heapq.heappop(self._waiters)
+                    if not fut.done():
+                        self._in_flight += 1
+                        fut.set_result(None)
+                else:
+                    break
+
 
 def _coerce_concurrency(value: object) -> int:
     """Return a positive LLM concurrency value, falling back to the default."""
@@ -272,6 +289,10 @@ class LLMService:
     def __post_init__(self) -> None:
         self.concurrency = _coerce_concurrency(self.concurrency)
         self._priority_sem = _build_priority_semaphore(self.concurrency)
+
+    def set_concurrency(self, new_concurrency: int) -> None:
+        self.concurrency = _coerce_concurrency(new_concurrency)
+        self._priority_sem.resize(self.concurrency)
 
     @classmethod
     def _resolve_priority(cls, caller: str) -> int:
