@@ -347,7 +347,7 @@ CLI 入口：
 
 - 后端连接状态检查
 - 设置页「后端地址」（默认 `127.0.0.1`，接受裸 IPv4 / 主机名）和「后端端口」（默认 `8420`，仅接受 `1-65535` 的完整十进制整数）由 `popup-backend-config.js` 一起写入 `chrome.storage.local`；popup 自身的 `/api/...` HTTP 请求与 `runtime-stream` WebSocket，以及 service worker / cookie 同步 / 各源任务派发都通过 `apiUrl()` / `wsUrl()` 在调用时解析当前 origin，service worker 通过 `chrome.storage.onChanged` 同步收到变更并立即重连。endpoint 不会写入后端 `config.toml`；本机改端口时用 `openbiliclaw start --port <同一端口>`。Chrome Web Store / AMO 发布包为缩短审核和降低权限提示，默认只声明 `127.0.0.1` / `localhost` 后端 host 权限；连接局域网其他机器或远程域名需要带对应 host 权限的开发者构建，或后续补充 `optional_host_permissions` 的用户授权流程
-- 顶部手机图标会打开移动端二维码面板，二维码完全在 popup 本地生成，指向当前插件后端地址的 `/m/`；如果当前 host 仍是 `127.0.0.1` / `localhost`，面板会提示手机通常无法访问，需要先把插件后端地址改成电脑局域网 IP；在 460px 以下侧边栏宽度，顶部 Web / 二维码 / 消息 / 设置按钮会换到品牌区下一行靠右排列，避免和标题 / 状态徽标重叠
+- 顶部手机图标会打开移动端二维码面板，二维码完全在 popup 本地生成，指向当前插件后端地址的 `/m/`；打开后的 `/m/` 页面已带 PWA manifest 与 iOS Web Clip 元数据，可从手机浏览器保存到主屏幕；当前不提供离线缓存，仍需手机能访问运行中的本地后端。如果当前 host 仍是 `127.0.0.1` / `localhost`，面板会提示手机通常无法访问，需要先把插件后端地址改成电脑局域网 IP；在 460px 以下侧边栏宽度，顶部 Web / 二维码 / 消息 / 设置按钮会换到品牌区下一行靠右排列，避免和标题 / 状态徽标重叠
 - 设置页调度区的「停止后台 LLM 请求」写入 `scheduler.enabled=false`；开启后会暂停 daemon-owned 定时发现、候选池预计算和画像更新里的 LLM / embedding 调用，推荐列表不会自动补充新内容，候选池为空时可能暂时没有推荐。「关闭浏览器后停止后台」写入 `scheduler.pause_on_extension_disconnect=true`，断开宽限秒数写入 `scheduler.extension_disconnect_grace_seconds`；所有扩展窗口断开并超过宽限期后，后台 LLM / embedding 工作暂停，重新打开浏览器后恢复。手动刷新和显式 CLI / API 操作仍按用户动作执行
 - 从 `/api/recommendations` 拉取推荐列表
 - 从 `/api/profile-summary` 同步 `speculative_interests` 与 `speculative_avoidances`，分别渲染待确认兴趣和待确认避雷方向；正向兴趣项会保留 `probe_mode` / `challenge`，profile 页面点击“喜欢”会带 `surface="profile"`，不和 runtime inbox 的默认 probe 确认混在一起

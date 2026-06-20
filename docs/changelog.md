@@ -13,6 +13,7 @@
 - **多模态 evaluator 明确图片绑定规则**：batch prompt 现在要求模型把 `content_batch[].cover_image_ref = "cover:<content_id>"` 与同一 user message 里对应的图片锚点匹配；有图条目必须结合封面图判断主题、风格、视觉质感和点击诱因，没有 `cover_image_ref` 的条目只按文本字段评估，避免把第 N 张图和候选顺序隐式绑定。
 - **浏览器扩展 DOM 采集补齐指标**：小红书被动卡片和抖音 DOM / passive fetch 路径会解析可见的浏览、点赞、收藏、评论、分享数字并回传后端，补齐插件来源候选的评估上下文。
 - **插件设置补齐封面图评估开关**：浏览器插件 side panel 的调度 tab 现在也能开关 `[discovery].multimodal_evaluation_enabled`，并编辑图文 batch、封面最大边、JPEG 质量和图片准备超时；保存时保留既有 discovery 配置，避免插件与桌面 Web 设置面脱节。
+- **移动 Web 添加到主屏幕补强**：`/m/` manifest 增加 `id` / `scope` / maskable 图标声明，HTML head 增加 `mobile-web-app-capable`、iOS Web Clip 标题与 touch icon；新增后端静态资源契约测试，并修复 degraded 模式下 `/favicon.ico` 被 503 拦截的问题，确保手机保存桌面图标时使用稳定名称、图标和启动路径（不引入 service worker / 离线缓存）。README / README_EN 和官网首页同步补充 iOS「添加到主屏幕」与 Android「安装应用 / 添加到主屏幕」使用说明。
 - **补充机会系统统一规格草案**：新增 `docs/plans/2026-06-18-opportunity-system-spec.md`，沉淀画像准确性、OpenCloud / HMA / WorkValue 客户端边界与后续机会系统路线。
 
 ## v0.3.130: DeepSeek reasoning_effort 配置保存修复（2026-06-20）
