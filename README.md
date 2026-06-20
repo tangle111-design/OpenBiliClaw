@@ -194,12 +194,12 @@
 
 ## 最近更新
 
-最新版本：**v0.3.131 / extension v0.3.85: 多源评估指标与封面图评估（2026-06-20）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
+最新版本：**v0.3.132 / extension v0.3.86: 初始化向导与推荐语气修复（2026-06-21）**。完整变更详见 [docs/changelog.md](docs/changelog.md)。
 
-- **多源互动指标进入评估器** —— B 站 / 小红书 / 抖音 / YouTube / X 候选能带观看、点赞、收藏、评论、分享等指标进入 discovery evaluator。
-- **可选封面图多模态评估** —— 开启后会压缩候选头图并随 batch 输入评估器，小红书等来源优先复用本地图片缓存。
-- **PC Web 与插件配置同步** —— 桌面 Web 和插件 side panel 都能开关多模态评估并调整 batch、封面尺寸、JPEG 质量和超时。
-- **真实插件链路验证** —— 已用真实浏览器验证 Web 配置页、插件配置页和真实 discover / E2E 捕捉链路。
+- **初始化来源勾选即生效** —— `/setup/`、桌面 Web 和插件不再要求先到设置开启小红书 / 抖音 / YouTube / X；勾选就是本轮初始化 opt-in。
+- **保存模型配置不提前初始化** —— 首启向导第一页只保存 LLM/provider/model，不再触发画像生成、兴趣探针或补池后台工作。
+- **模型名成为必填项** —— `/setup/` 把模型名移出高级折叠，并按 provider 自动填入推荐默认模型。
+- **推荐语气跟随画像** —— `style_key` 只影响理由切入角度，不再自动把推荐文案调轻或调油。
 
 ## 用户交流群
 
@@ -674,7 +674,7 @@ OpenBiliClaw/
 
 ## 📜 更新日志
 
-最新版本：**v0.3.131 / extension v0.3.85: 多源评估指标与封面图评估（2026-06-20）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。普通用户从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合页下载插件包和可用桌面安装包；自动化频道 release 仍分别保留 `backend-v*`、`extension-v*`、`desktop-v*`。
+最新版本：**v0.3.132 / extension v0.3.86: 初始化向导与推荐语气修复（2026-06-21）**。最近更新见上方摘要；完整历史见 [docs/changelog.md](docs/changelog.md)。普通用户从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合页下载插件包和可用桌面安装包；自动化频道 release 仍分别保留 `backend-v*`、`extension-v*`、`desktop-v*`。
 
 ## 🗺️ 后续规划
 
