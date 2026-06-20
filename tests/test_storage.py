@@ -266,9 +266,60 @@ class TestDatabase:
 
             row = db.get_cached_content(limit=1)[0]
 
-            assert row["style_key"] == "game_strategy"
+            assert row["style_key"] == "hands_on"
 
             db.close()
+
+    def test_initialize_normalizes_legacy_style_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            db = Database(db_path)
+            db.initialize()
+            db.cache_content(
+                "BV1LEGACY",
+                title="旧版风格",
+                up_name="legacy",
+                source="search",
+                style_key="deep_dive",
+            )
+            db.enqueue_discovery_candidates(
+                [
+                    DiscoveryCandidateWrite(
+                        candidate_key="xhs:legacy-note",
+                        source_platform="xiaohongshu",
+                        source_strategy="xhs-extension-search",
+                        content_id="legacy-note",
+                        content_url="https://www.xiaohongshu.com/explore/legacy-note",
+                        title="legacy note",
+                    )
+                ]
+            )
+            db.conn.execute(
+                "UPDATE content_cache SET style_key = ? WHERE bvid = ?",
+                ("story_doc", "BV1LEGACY"),
+            )
+            db.conn.execute(
+                "UPDATE discovery_candidates SET style_key = ? WHERE candidate_key = ?",
+                ("lifestyle", "xhs:legacy-note"),
+            )
+            db.conn.commit()
+            db.close()
+
+            migrated = Database(db_path)
+            migrated.initialize()
+            content_row = migrated.conn.execute(
+                "SELECT style_key FROM content_cache WHERE bvid = ?",
+                ("BV1LEGACY",),
+            ).fetchone()
+            candidate_row = migrated.conn.execute(
+                "SELECT style_key FROM discovery_candidates WHERE candidate_key = ?",
+                ("xhs:legacy-note",),
+            ).fetchone()
+
+            assert content_row["style_key"] == "story_immersion"
+            assert candidate_row["style_key"] == "daily_wander"
+
+            migrated.close()
 
     def test_cache_content_persists_pool_copy_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1610,7 +1661,7 @@ class TestDatabase:
 
             items = db.get_pool_candidates(limit=10)
 
-            assert items[0]["style_key"] == "visual_showcase"
+            assert items[0]["style_key"] == "aesthetic_browse"
 
             db.close()
 

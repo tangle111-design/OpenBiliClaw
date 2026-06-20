@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from openbiliclaw.discovery.style_keys import VALID_STYLE_KEYS, normalize_style_key
 from openbiliclaw.llm.json_utils import extract_llm_json_list, extract_llm_json_object
 from openbiliclaw.llm.service import is_llm_rate_limit_error
 from openbiliclaw.soul.tone import ToneProfile, build_tone_profile
@@ -1077,7 +1078,6 @@ class RecommendationEngine:
         Mutates each item in-place: sets ``relevance_score``,
         ``relevance_reason``, ``topic_group``, and ``style_key``.
         """
-        from openbiliclaw.discovery.engine import VALID_STYLE_KEYS
         from openbiliclaw.llm.prompts import build_batch_content_evaluation_prompt
 
         profile_data = _recommendation_profile_summary(profile)
@@ -1181,7 +1181,7 @@ class RecommendationEngine:
             score = max(0.0, min(1.0, float(score_value)))
             reason = str(result.get("reason", "")).strip()
             topic_group = str(result.get("topic_group", "")).strip()
-            style_key = str(result.get("style_key", "")).strip().lower()
+            style_key = normalize_style_key(result.get("style_key", ""))
 
             content.relevance_score = score or 0.01  # never leave at 0.0
             content.relevance_reason = reason
@@ -1306,7 +1306,7 @@ class RecommendationEngine:
                 "up_name": content.up_name,
                 "description": (content.description or "")[:400],
                 "source_strategy": content.source_strategy,
-                "style_key": content.style_key,
+                "style_key": normalize_style_key(content.style_key),
                 "topic_group": content.topic_group,
                 "relevance_score": content.relevance_score,
                 "content_type": content.content_type,
@@ -1364,7 +1364,7 @@ class RecommendationEngine:
                 "up_name": item.up_name,
                 "description": (item.description or "")[:400],
                 "source_strategy": item.source_strategy,
-                "style_key": item.style_key,
+                "style_key": normalize_style_key(item.style_key),
                 "topic_group": item.topic_group,
                 "relevance_score": item.relevance_score,
                 "content_type": item.content_type,
@@ -1621,7 +1621,7 @@ class RecommendationEngine:
                 "up_name": content.up_name,
                 "description": content.description,
                 "source_strategy": content.source_strategy,
-                "style_key": content.style_key,
+                "style_key": normalize_style_key(content.style_key),
                 "topic_group": content.topic_group,
                 "relevance_score": content.relevance_score,
                 "content_type": content.content_type,
@@ -1664,14 +1664,21 @@ class RecommendationEngine:
             },
             recent_feedback=[],
         )
-        style_key = RecommendationEngine._style_token(content)
-        if style_key in {"lifestyle", "fun_variety", "light_chat"}:
+        style_key = normalize_style_key(content.style_key)
+        if style_key in {
+            "daily_wander",
+            "mood_release",
+            "social_chat",
+            "ambient_companion",
+            "live_pulse",
+            "curiosity_spark",
+        }:
             adjusted = _clone_tone_profile(tone)
             adjusted["density"] = "light"
             if adjusted["playfulness"] == "low":
                 adjusted["playfulness"] = "medium"
             return adjusted
-        if style_key in {"story_doc", "review_roundup", "visual_showcase"}:
+        if style_key in {"story_immersion", "decision_support", "aesthetic_browse"}:
             adjusted = _clone_tone_profile(tone)
             if adjusted["density"] == "dense":
                 adjusted["density"] = "balanced"
@@ -1725,29 +1732,33 @@ class RecommendationEngine:
     @staticmethod
     def _fallback_expression(content: DiscoveredContent) -> str:
         title = content.title or "这条内容"
-        style_key = content.style_key.strip()
-        if style_key == "game_strategy":
-            return f"《{title}》偏你会点开的那种机制/攻略向，不只是热闹，重点是真有东西能翻。"
-        if style_key == "news_brief":
-            return f"《{title}》这条胜在信息来得快，而且不是纯复读，适合你先抓重点。"
-        if style_key == "practical_guide":
-            return f"《{title}》偏实操一点，信息是能直接拿来用的，不会只有概念。"
-        if style_key == "story_doc":
-            return f"《{title}》这条没那么硬，但会把故事和信息一起带出来，适合你换口气的时候看。"
-        if style_key == "visual_showcase":
-            return f"《{title}》更偏轻一点，适合你换换脑子，但内容不空。"
-        if style_key == "tech_analysis":
-            return f"《{title}》这条偏技术拆解，但入口不算高，适合你先抓重点再决定要不要细看。"
-        if style_key == "deep_dive":
-            return f"《{title}》还是你常吃那一路，偏讲透来龙去脉，不会只给结论。"
-        if style_key == "fun_variety":
-            return f"《{title}》这条更偏轻松整活，拿来换个脑子刚好，也不是纯吵闹。"
-        if style_key == "lifestyle":
-            return f"《{title}》这条是轻一点的生活向，顺手点开不累，氛围和信息都还在线。"
-        if style_key == "review_roundup":
-            return f"《{title}》这种盘点/测评向比较省力，先快速过一遍重点会很顺。"
-        if style_key == "light_chat":
-            return f"《{title}》这条不是硬讲解那路，胜在讲得顺、看着不累，适合随手点开。"
+        style_key = normalize_style_key(content.style_key)
+        if style_key == "deep_focus":
+            return f"《{title}》偏需要认真看进去，但会把结构和原理讲清楚。"
+        if style_key == "quick_scan":
+            return f"《{title}》适合快速抓重点，先把发生了什么和关键变化过一遍。"
+        if style_key == "hands_on":
+            return f"《{title}》偏能照着用的实操内容，不只是概念。"
+        if style_key == "decision_support":
+            return f"《{title}》适合用来做判断，能帮你快速比较重点和取舍。"
+        if style_key == "story_immersion":
+            return f"《{title}》更像进入一个故事，信息会跟着人物和事件一起展开。"
+        if style_key == "opinion_sparring":
+            return f"《{title}》偏观点碰撞，适合拿来校准一下自己的判断。"
+        if style_key == "social_chat":
+            return f"《{title}》胜在像有人把话讲开，适合随手点开听一会儿。"
+        if style_key == "daily_wander":
+            return f"《{title}》是低目标的生活流，看起来不费劲，氛围也顺。"
+        if style_key == "mood_release":
+            return f"《{title}》偏轻松释放，拿来换个脑子刚好。"
+        if style_key == "aesthetic_browse":
+            return f"《{title}》更偏审美浏览，适合先让画面和气质带你进去。"
+        if style_key == "ambient_companion":
+            return f"《{title}》适合当背景陪伴，不一定要一直盯着看。"
+        if style_key == "live_pulse":
+            return f"《{title}》偏现场和即时感，节奏会更直接。"
+        if style_key == "curiosity_spark":
+            return f"《{title}》胜在切口新鲜，适合点开看看这个陌生角度。"
         return f"《{title}》这条切口挺顺的，先丢给你看看，说不定正好能对上你当下的兴趣。"
 
     @staticmethod
@@ -2282,17 +2293,17 @@ class RecommendationEngine:
     @staticmethod
     def _accessible_style_priority(item: DiscoveredContent) -> int:
         style_key = RecommendationEngine._style_token(item)
-        if style_key == "lifestyle":
+        if style_key in {"ambient_companion", "daily_wander", "mood_release"}:
+            return 7
+        if style_key in {"social_chat", "aesthetic_browse", "live_pulse"}:
             return 6
-        if style_key == "fun_variety":
-            return 5
-        if style_key == "light_chat":
+        if style_key in {"curiosity_spark", "decision_support"}:
             return 4
-        if style_key == "review_roundup":
+        if style_key in {"story_immersion", "opinion_sparring"}:
             return 3
-        if style_key == "story_doc":
+        if style_key in {"quick_scan", "hands_on"}:
             return 2
-        if style_key == "visual_showcase":
+        if style_key == "deep_focus":
             return 1
         return 0
 
@@ -2343,7 +2354,7 @@ class RecommendationEngine:
         Without this, unclassified items would all bypass style_counts and
         could flood a batch with visually monotonous rows.
         """
-        token = RecommendationEngine._normalize_topic_token(item.style_key)
+        token = RecommendationEngine._normalize_topic_token(normalize_style_key(item.style_key))
         return token or "unknown"
 
     @staticmethod

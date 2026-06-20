@@ -405,7 +405,7 @@ class TestXhsObservedUrls:
         assert row["source_platform"] == "xiaohongshu"
         assert row["source"] == "xhs-extension-search"
         assert row["topic_group"] == "生活方式"
-        assert row["style_key"] == "story_doc"
+        assert row["style_key"] == "story_immersion"
         assert row["relevance_score"] == 0.88
         user_input = str(llm.calls[0]["user_input"])
         assert '"source_platform": "xiaohongshu"' in user_input

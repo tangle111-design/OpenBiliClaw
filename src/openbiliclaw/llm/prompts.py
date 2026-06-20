@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from openbiliclaw.discovery.style_keys import STYLE_KEY_PROMPT_TEXT, normalize_style_key
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
 
 if TYPE_CHECKING:
@@ -86,6 +87,45 @@ def _render_tone_profile(
         f"- 梗感强度: {tone['playfulness']}\n"
         f"- 直给程度: {tone['directness']}"
     )
+
+
+def _normalize_prompt_style_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        style_key = normalize_style_key(item)
+        if style_key and style_key not in seen:
+            result.append(style_key)
+            seen.add(style_key)
+    return result
+
+
+def _normalize_content_style_fields(content: dict[str, object]) -> dict[str, object]:
+    normalized = dict(content)
+    if "style_key" in normalized:
+        normalized["style_key"] = normalize_style_key(normalized.get("style_key"))
+    return normalized
+
+
+def _normalize_pool_hints(pool_hints: dict[str, object] | None) -> dict[str, object]:
+    normalized = dict(pool_hints or {})
+    if "avoid_styles" in normalized:
+        normalized["avoid_styles"] = _normalize_prompt_style_list(normalized.get("avoid_styles"))
+    return normalized
+
+
+def _normalize_platform_blocks(platform_blocks: list[dict[str, object]]) -> list[dict[str, object]]:
+    normalized_blocks: list[dict[str, object]] = []
+    for block in platform_blocks:
+        normalized = dict(block)
+        if "avoid_styles" in normalized:
+            normalized["avoid_styles"] = _normalize_prompt_style_list(
+                normalized.get("avoid_styles")
+            )
+        normalized_blocks.append(normalized)
+    return normalized_blocks
 
 
 def build_socratic_dialogue_prompt(
@@ -719,6 +759,7 @@ def build_search_queries_prompt(
    禁止同一概念换皮出现多次。
 9. 如果 user 消息包含 <pool_distribution_hints>，这些是当前推荐池已经拥挤或欠覆盖的方向。
    avoid_topics / avoid_styles / avoid_franchises 是软避让信号；prefer_axes 是优先补货方向。
+   avoid_styles 是封闭 style_key 观看模式，不是题材标签。
    source_deficits 是平台/来源缺口信号，不是内容轴；不要把平台名当成 query 主题。
    不要为了避让而生成与用户画像无关的 query。
 </rules>
@@ -766,7 +807,7 @@ def build_search_queries_prompt(
     ]
     compact_pool_hints = {
         key: value
-        for key, value in (pool_hints or {}).items()
+        for key, value in _normalize_pool_hints(pool_hints).items()
         if value not in (None, "", [], {}, ())
     }
     if compact_pool_hints:
@@ -904,14 +945,9 @@ _SINGLE_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "同一主题的不同切面必须归为同一个 topic_group。"
     '语义相同的主题必须用同一个词——"AI" "人工智能" "机器学习" 统一写成 "人工智能",'
     '"RL" "强化学习" 统一写成 "强化学习"。\n'
-    "7. style_key 从以下 11 个选项中选一个,描述该内容的呈现风格:\n"
-    "   game_strategy(游戏攻略/机制解析)/ news_brief(新闻资讯/时事快评)/ "
-    "practical_guide(教程/入门/实操指南)/ story_doc(纪录片/故事/人物传记)/ "
-    "visual_showcase(视觉向/混剪/空镜)/ tech_analysis(技术分析/硬件评测)/ "
-    "deep_dive(原理讲解/学术解析)/ "
-    "fun_variety(搞笑/吐槽/整活/挑战)/ lifestyle(日常/vlog/生活分享)/ "
-    "review_roundup(盘点/测评/推荐/合集)/ "
-    "light_chat(闲聊/杂谈/其他)\n"
+    "7. style_key(13选1) 描述用户消费这条内容时的观看状态,不是题材分类。"
+    "必须从以下观看模式中选一个:\n"
+    f"{STYLE_KEY_PROMPT_TEXT}\n"
     "8. franchise_key(可空):内容如果明确属于某个具体 IP / 系列 / 作品 / 品牌,"
     "填它的规范名(中文优先),用于跨 topic_group 的同 IP 去重。例:\n"
     '   - 「AI 重绘原神地图」「提瓦特摄影」「蒙德角色真实化」 → "原神"\n'
@@ -929,7 +965,7 @@ _SINGLE_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     '  "score": 0.78,\n'
     '  "reason": "这个视频的选题角度新颖,节奏轻快,契合你对该领域的好奇心。",\n'
     '  "topic_group": "生活方式",\n'
-    '  "style_key": "light_chat",\n'
+    '  "style_key": "social_chat",\n'
     '  "franchise_key": ""\n'
     "}\n"
     "</output_schema>"
@@ -967,7 +1003,12 @@ def build_content_evaluation_prompt(
             json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</profile_summary>",
             "<content_summary>",
-            json.dumps(content_summary, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                _normalize_content_style_fields(content_summary),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "</content_summary>",
         ]
     )
@@ -993,16 +1034,16 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "1. 输出必须是严格 JSON 数组,不要附带解释。\n"
     "2. 数组长度必须与输入内容数量一致,顺序一一对应。\n"
     "3. 每项必须原样带回输入里的 bvid 或 content_id,并包含 score(0-1)、"
-    "reason(一句中文)、topic_group(2-4词粗分类)、style_key(11选1)、"
+    "reason(一句中文)、topic_group(2-4词粗分类)、style_key(13选1)、"
     "franchise_key(可空)。\n"
     "4. 根据 <source_context> 调整评判宽容度:search 要求高度匹配;"
     "trending 基础分 >= 0.6;related_chain 允许适度偏移;"
     "explore 允许主题陌生,但内容仍需具备可看性,过于学术艰深的应适当降分。\n"
     "5. topic_group 规则:2-4 个中文词的粗分类,同主题不同切面统一。"
     "语义相同必须用同一词(AI/人工智能/机器学习 统一为 人工智能)。\n"
-    "6. style_key 从 11 个选项中选:game_strategy / news_brief / "
-    "practical_guide / story_doc / visual_showcase / tech_analysis / "
-    "deep_dive / fun_variety / lifestyle / review_roundup / light_chat\n"
+    "6. style_key(13选1) 描述用户消费这条内容时的观看状态,不是题材分类。"
+    "必须从以下观看模式中选一个:\n"
+    f"{STYLE_KEY_PROMPT_TEXT}\n"
     "7. franchise_key 规则:内容如果明确属于某个具体 IP / 系列 / 作品 / 品牌,"
     "填它的规范名(中文优先),用于跨 topic_group 的同 IP 去重。例:\n"
     "   - 「AI 重绘原神地图」「提瓦特摄影」「蒙德角色真实化」"
@@ -1027,8 +1068,8 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "   - 反过来,如果 depth_preference 偏高、preferred_duration 偏长,"
     "但 humor_preference >= 0.4、exploration_openness >= 0.6,"
     '或 cognitive_style 里写明 "兼顾/调节/穿插轻松" 这类双轨倾向,'
-    "说明用户也需要轻内容做心理调节、喘气。这时 fun_variety / light_chat / "
-    "lifestyle / story_doc / visual_showcase 风格的内容只要本身可看(话题清晰、"
+    "说明用户也需要轻内容做心理调节、喘气。这时 mood_release / social_chat / "
+    "daily_wander / story_immersion / aesthetic_browse 观看模式的内容只要本身可看(话题清晰、"
     'UP 主观察角度有意思),不要因为"不够深"就一律压到 0.5 以下,'
     "应当给到 0.6-0.75,与画像中的娱乐/二次元/生活类兴趣标签保持权重一致。\n"
     "9. 不同 source_platform(bilibili / xiaohongshu / 其他)的内容标签同 schema,"
@@ -1063,11 +1104,11 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "<output_schema>\n"
     "[\n"
     '  {"bvid": "BV1xxx", "score": 0.78, "reason": "...", "topic_group": "认知科学", '
-    '"style_key": "deep_dive", "franchise_key": ""},\n'
+    '"style_key": "deep_focus", "franchise_key": ""},\n'
     '  {"bvid": "BV2xxx", "score": 0.72, "reason": "...", "topic_group": "游戏摄影", '
-    '"style_key": "visual_showcase", "franchise_key": "原神"},\n'
+    '"style_key": "aesthetic_browse", "franchise_key": "原神"},\n'
     '  {"bvid": "BV3xxx", "score": 0.45, "reason": "...", "topic_group": "美食", '
-    '"style_key": "light_chat", "franchise_key": ""}\n'
+    '"style_key": "social_chat", "franchise_key": ""}\n'
     "]\n"
     "</output_schema>"
 )
@@ -1138,7 +1179,7 @@ def build_batch_content_evaluation_prompt(
         [
             "<content_batch>",
             json.dumps(
-                content_items,
+                [_normalize_content_style_fields(item) for item in content_items],
                 ensure_ascii=False,
                 indent=2,
                 sort_keys=True,
@@ -1180,8 +1221,9 @@ _RECOMMENDATION_EXPRESSION_SYSTEM_PROMPT = """
 8. 如果 profile_summary.style 里 depth_preference 不高、preferred_duration 偏短,
    或 humor_preference 偏高,expression 要更轻、更顺口,少用"认知偏好 / 底层结构 /
    深层需求"这类抽象词,不要把推荐说得比内容本身还硬。
-9. 如果 content_summary.style_key 是 lifestyle / light_chat / fun_variety /
-   review_roundup / story_doc / visual_showcase,优先从人物、场景、信息点或情绪切口来推荐,
+9. 如果 content_summary.style_key 是 daily_wander / social_chat / mood_release /
+   decision_support / story_immersion / aesthetic_browse / ambient_companion / live_pulse,
+   优先从人物、场景、信息点、情绪或使用场景切口来推荐,
    不要硬写成"系统闭环 / 底层逻辑 / 认知防御"。
 10. 严格遵循 <tone_profile> 里给的密度 / 温度 / 梗感 / 直给度 4 个参数。
 11. 避开 profile_summary.disliked_topics 中的主题或话术模式；如果候选明显命中这些避雷点,
@@ -1228,7 +1270,12 @@ def build_recommendation_expression_prompt(
             json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</profile_summary>",
             "<content_summary>",
-            json.dumps(content_summary, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                _normalize_content_style_fields(content_summary),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "</content_summary>",
         ]
     )
@@ -1257,8 +1304,9 @@ _BATCH_EXPRESSION_SYSTEM_PROMPT = (
     "6. 每条 expression 的开头措辞必须不同,禁止重复同一句式。\n"
     "7. 如果 profile_summary.style 显示 depth_preference 不高、preferred_duration 偏短,"
     "或 humor_preference 偏高,整体措辞要更轻、更顺口,不要把轻内容硬写成分析报告。\n"
-    "8. 如果某条 content.style_key 是 lifestyle / light_chat / fun_variety / "
-    "review_roundup / story_doc / visual_showcase,就优先从人物、场景、信息点或情绪切口下笔,"
+    "8. 如果某条 content.style_key 是 daily_wander / social_chat / mood_release / "
+    "decision_support / story_immersion / aesthetic_browse / ambient_companion / live_pulse,"
+    "就优先从人物、场景、信息点、情绪或使用场景切口下笔,"
     "不要把它写成心理机制拆解。\n"
     "9. 严格遵循 <tone_profile> 里给的密度 / 温度 / 梗感 / 直给度 4 个参数。\n"
     "10. 避开 profile_summary.disliked_topics 中的主题或话术模式;如果候选明显命中这些避雷点,"
@@ -1297,7 +1345,12 @@ def build_batch_expression_prompt(
             json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</profile_summary>",
             "<content_batch>",
-            json.dumps(content_items, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                [_normalize_content_style_fields(item) for item in content_items],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "</content_batch>",
         ]
     )
@@ -1401,7 +1454,12 @@ def build_delight_score_batch_prompt(
             json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</profile_summary>",
             "<content_batch>",
-            json.dumps(content_batch, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                [_normalize_content_style_fields(item) for item in content_batch],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "</content_batch>",
         ]
     )
@@ -1440,7 +1498,12 @@ def build_delight_reason_prompt(
             json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</profile_summary>",
             "<content_summary>",
-            json.dumps(content_summary, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                _normalize_content_style_fields(content_summary),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "</content_summary>",
             "<reason_stub>",
             reason_stub,
@@ -1857,7 +1920,7 @@ _PROFILE_CONSOLIDATION_SYSTEM_PROMPT = (
     "<rules>\n"
     "1. 只能输出操作（op），不能输出整理后的列表。每个操作是 merge 或 keep。\n"
     "2. merge 的 members 必须从该簇的 members 中【逐字原样复制】；普通成员可用字符串，\n"
-    "   同名异类成员必须用 {\"name\": 原名, \"category\": 原分类} 精确引用。\n"
+    '   同名异类成员必须用 {"name": 原名, "category": 原分类} 精确引用。\n'
     "3. 每个簇内的每个主题，必须被 merge 或 keep 恰好覆盖一次，不能遗漏、不能重复。\n"
     "4. merge 至少 2 个 members。canonical 是合并后的规范名：优先从 members 里选\n"
     "   最准确的一个；只有当所有 members 都不够准确时才起新名，新名必须与\n"
@@ -1995,8 +2058,8 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "但不要为了凑数编造与画像无关的词。\n"
     "4. 每个关键词都要是适合在该平台搜索框直接输入的短词 / 短组合,不要写成长句。\n"
     "5. **不要重复**该平台 recent_keywords 里已有的词(换皮、加无意义尾词也算重复)。\n"
-    "6. 避开该平台的 avoid_topics / avoid_styles / avoid_franchises;这些是软避让信号,"
-    "不要为了避让而生成与用户画像无关的词。\n"
+    "6. 避开该平台的 avoid_topics / avoid_styles / avoid_franchises;这些是软避让信号。"
+    "avoid_styles 是封闭 style_key 观看模式,不是题材标签。不要为了避让而生成与用户画像无关的词。\n"
     "7. 把同一个兴趣映射到该平台 <supply_advantage> 里描述的强项形态上,保持该平台的"
     "原生搜索风格。若该平台块带非空 supply_hint,优先往这些已被实际验证有产出的方向上"
     "映射(它和 avoid_* 不会重叠);supply_hint 为空时只依据 <supply_advantage> 静态表。\n"
@@ -2097,7 +2160,12 @@ def build_merged_keywords_prompt(
             json.dumps(profile_summary, ensure_ascii=False, indent=2, sort_keys=True),
             "</profile_summary>",
             "<platforms>",
-            json.dumps(platform_blocks, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(
+                _normalize_platform_blocks(platform_blocks),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
             "</platforms>",
         ]
     )

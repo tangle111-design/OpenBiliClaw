@@ -41,7 +41,8 @@ def test_build_pool_snapshot_marks_saturated_topics_and_styles(tmp_path):
     # 12 AI items capped to 3 by max_per_topic_group + 3 doc items = 6 servable
     assert snapshot.pool_available_count == 6
     assert "AI 编程" in snapshot.saturated_topics
-    assert "deep_dive" in snapshot.saturated_styles
+    assert "deep_focus" in snapshot.saturated_styles
+    assert "deep_dive" not in snapshot.saturated_styles
     assert snapshot.source_deficits["bilibili"] == 33
 
 
@@ -107,8 +108,24 @@ def test_pool_snapshot_uses_default_pool_saturation_thresholds(tmp_path):
     )
 
     assert "AI 编程" in snapshot.saturated_topics
-    assert "deep_dive" in snapshot.saturated_styles
+    assert "deep_focus" in snapshot.saturated_styles
+    assert "deep_dive" not in snapshot.saturated_styles
     assert "原神" in snapshot.saturated_franchises
+
+
+def test_pool_snapshot_prompt_hints_normalize_legacy_style_keys():
+    snapshot = PoolDistributionSnapshot(
+        pool_target_count=100,
+        pool_available_count=20,
+        source_targets={},
+        source_counts={},
+        source_deficits={},
+        saturated_styles=("deep_dive", "story_doc", "deep_focus", "not_real"),
+    )
+
+    hints = snapshot.to_prompt_hints()
+
+    assert hints["avoid_styles"] == ["deep_focus", "story_immersion"]
 
 
 def test_prompt_hints_caps_positive_source_deficits_by_priority():

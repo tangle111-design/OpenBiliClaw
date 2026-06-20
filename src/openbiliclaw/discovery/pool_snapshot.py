@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from openbiliclaw.discovery.style_keys import normalize_style_key
+
 _FRANCHISE_SATURATION_THRESHOLD = 10
 
 
@@ -31,7 +33,7 @@ class PoolDistributionSnapshot:
     def to_prompt_hints(self) -> dict[str, object]:
         return {
             "avoid_topics": list(self.saturated_topics[:12]),
-            "avoid_styles": list(self.saturated_styles[:8]),
+            "avoid_styles": list(_normalized_style_values(self.saturated_styles)[:8]),
             "avoid_franchises": list(self.saturated_franchises[:8]),
             "prefer_axes": list(self.undercovered_axes[:8]),
             "source_deficits": _top_positive_counts(self.source_deficits, limit=8),
@@ -68,7 +70,7 @@ def build_pool_distribution_snapshot(
         topic_threshold,
     )
     saturated_styles = _keys_at_or_above(
-        distribution_counts.get("style_key", {}),
+        _normalized_style_counts(distribution_counts.get("style_key", {})),
         style_threshold,
     )
     saturated_franchises = _keys_at_or_above(
@@ -95,6 +97,26 @@ def _keys_at_or_above(counts: dict[str, int], threshold: int) -> tuple[str, ...]
         for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
         if int(count) >= threshold
     )
+
+
+def _normalized_style_counts(counts: dict[str, int]) -> dict[str, int]:
+    normalized: dict[str, int] = {}
+    for key, count in counts.items():
+        style_key = normalize_style_key(key)
+        if style_key:
+            normalized[style_key] = normalized.get(style_key, 0) + int(count)
+    return normalized
+
+
+def _normalized_style_values(values: tuple[str, ...]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        style_key = normalize_style_key(value)
+        if style_key and style_key not in seen:
+            normalized.append(style_key)
+            seen.add(style_key)
+    return tuple(normalized)
 
 
 def _top_positive_counts(counts: dict[str, int], *, limit: int) -> dict[str, int]:

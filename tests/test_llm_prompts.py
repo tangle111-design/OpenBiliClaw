@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from openbiliclaw.discovery.style_keys import VALID_STYLE_KEYS
 from openbiliclaw.llm.prompts import (
     _AWARENESS_SYSTEM_PROMPT,
     _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT,
@@ -10,6 +11,9 @@ from openbiliclaw.llm.prompts import (
     build_awareness_prompt,
     build_batch_content_evaluation_prompt,
     build_batch_expression_prompt,
+    build_content_evaluation_prompt,
+    build_delight_reason_prompt,
+    build_delight_score_batch_prompt,
     build_explore_domains_prompt,
     build_merged_keywords_prompt,
     build_recommendation_expression_prompt,
@@ -923,6 +927,83 @@ def test_batch_eval_prompt_carries_body_text_in_user_message_only() -> None:
     assert system == _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT
 
 
+def test_content_evaluation_prompts_use_viewing_mode_style_keys() -> None:
+    single = build_content_evaluation_prompt(
+        profile_summary={"interests": ["系统设计"]},
+        content_summary={"title": "讲透复杂系统"},
+        source_context="search",
+        source_platform="bilibili",
+    )[0]["content"]
+    batch = _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT
+
+    for system in (single, batch):
+        assert "style_key(13选1)" in system
+        for style_key in VALID_STYLE_KEYS:
+            assert style_key in system
+        assert "deep_dive / fun_variety / lifestyle" not in system
+        assert "11 个选项" not in system
+
+
+def test_prompt_builders_normalize_legacy_style_keys_in_user_payload() -> None:
+    single_eval = build_content_evaluation_prompt(
+        profile_summary={"interests": ["系统设计"]},
+        content_summary={"title": "讲透复杂系统", "style_key": "deep_dive"},
+        source_context="search",
+        source_platform="bilibili",
+    )[1]["content"]
+    batch_eval = build_batch_content_evaluation_prompt(
+        profile_summary={"interests": ["系统设计"]},
+        content_items=[{"title": "城市纪录片", "style_key": "story_doc"}],
+        source_context="search",
+        source_platform="bilibili",
+    )[1]["content"]
+    single_expression = build_recommendation_expression_prompt(
+        profile_summary={"interests": ["生活"]},
+        content_summary={"title": "通勤穿搭", "style_key": "lifestyle"},
+        tone_profile=None,
+        source_platform="xiaohongshu",
+    )[1]["content"]
+    batch_expression = build_batch_expression_prompt(
+        profile_summary={"interests": ["游戏"]},
+        content_items=[{"title": "配队攻略", "style_key": "game_strategy"}],
+        tone_profile=None,
+        source_platform="bilibili",
+    )[1]["content"]
+    delight_score = build_delight_score_batch_prompt(
+        profile_summary={"interests": ["音乐"]},
+        content_batch=[{"title": "现场演出", "style_key": "music_live"}],
+    )[1]["content"]
+    delight_reason = build_delight_reason_prompt(
+        profile_summary={"interests": ["科技"]},
+        content_summary={"title": "AI 芯片解析", "style_key": "tech_analysis"},
+        reason_stub="fit",
+        tone_profile=None,
+        source_platform="bilibili",
+    )[1]["content"]
+
+    combined = "\n".join(
+        [
+            single_eval,
+            batch_eval,
+            single_expression,
+            batch_expression,
+            delight_score,
+            delight_reason,
+        ]
+    )
+
+    for legacy_key in ("deep_dive", "story_doc", "lifestyle", "game_strategy", "music_live"):
+        assert legacy_key not in combined
+    for canonical_key in (
+        "deep_focus",
+        "story_immersion",
+        "daily_wander",
+        "hands_on",
+        "live_pulse",
+    ):
+        assert canonical_key in combined
+
+
 def test_recommendation_expression_prompt_carries_body_text_in_user_only() -> None:
     item = _twitter_content_item()
     messages = build_recommendation_expression_prompt(
@@ -935,6 +1016,40 @@ def test_recommendation_expression_prompt_carries_body_text_in_user_only() -> No
 
     assert "TWEET_BODY_MARKER" in user
     assert "TWEET_BODY_MARKER" not in system
+
+
+def test_search_keyword_prompts_normalize_legacy_avoid_styles() -> None:
+    search_user = build_search_queries_prompt(
+        profile_summary={"interests": ["AI"]},
+        pool_hints={
+            "avoid_topics": ["人工智能"],
+            "avoid_styles": ["deep_dive", "story_doc", "not_real"],
+        },
+    )[1]["content"]
+    merged_user = build_merged_keywords_prompt(
+        profile_summary={"interests": ["AI"]},
+        platform_blocks=[
+            {
+                "platform": "bilibili",
+                "need": 2,
+                "recent_keywords": [],
+                "avoid_topics": ["人工智能"],
+                "avoid_styles": ["lifestyle", "fun_variety", "not_real"],
+                "avoid_franchises": [],
+            }
+        ],
+    )[1]["content"]
+
+    assert "deep_focus" in search_user
+    assert "story_immersion" in search_user
+    assert "deep_dive" not in search_user
+    assert "story_doc" not in search_user
+    assert "daily_wander" in merged_user
+    assert "mood_release" in merged_user
+    assert "lifestyle" not in merged_user
+    assert "fun_variety" not in merged_user
+    assert "not_real" not in search_user
+    assert "not_real" not in merged_user
 
 
 def test_batch_expression_prompt_carries_body_text_in_user_only() -> None:

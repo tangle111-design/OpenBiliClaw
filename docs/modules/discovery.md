@@ -173,7 +173,7 @@
 
    当前压缩主要看三个维度：
    - `topic_key`：防止同一搜索 query、同一相关推荐链、同一主题桶连着塞进来
-   - `style_key`：防止全是同一种观看体感，比如一批全是 `deep_dive` 或全是 `news_brief`
+   - `style_key`：防止全是同一种观看体感，比如一批全是 `deep_focus` 或全是 `quick_scan`
    - `source_strategy`：防止 `explore`、`related_chain` 之类单一来源刷满前排
 
    实现上不是一刀切删掉重复内容，而是：
@@ -259,7 +259,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 - 解析 JSON 失败就放弃这轮 LLM 结果
 - query 去重
 - 最多取配置允许的前几条
-- 如果收到 `PoolDistributionSnapshot`，会把 `to_prompt_hints()` 注入 prompt 的 `<pool_distribution_hints>`，让模型把 `avoid_topics` / `avoid_styles` / `avoid_franchises` / `prefer_axes` 当作软指导；这些信号不能覆盖画像相关性，也不能把 `source_deficits` 里的平台名当成搜索主题
+- 如果收到 `PoolDistributionSnapshot`，会把 `to_prompt_hints()` 注入 prompt 的 `<pool_distribution_hints>`，让模型把 `avoid_topics` / `avoid_styles` / `avoid_franchises` / `prefer_axes` 当作软指导；`avoid_styles` 会先归一化为封闭观看模式 key，这些信号不能覆盖画像相关性，也不能把 `source_deficits` 里的平台名当成搜索主题
 - 如果 snapshot hint 构造失败，会记录异常并回退到普通 query 生成
 - 如果 LLM 完全不可用，就回退到“兴趣名 / 核心特质”直接拼出的本地 query
 
@@ -544,14 +544,23 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 ### style_key
 
-`style_key` 不是题材，而是内容风格信号。当前文档和代码里常见的有：
+`style_key` 不是题材，而是用户消费内容时的观看状态信号。题材和开放分类继续交给 `topic_group` / 标签 / embedding；`style_key` 固定为封闭的观看模式词表：
 
-- `deep_dive`：硬核解析、原理讲透、理论拆解
-- `story_doc`：纪录片、故事化讲述、过程复盘
-- `news_brief`：快讯、局势更新、热点锐评
-- `practical_guide`：教程、入门、指南
+- `deep_focus`：深度专注，原理、结构、系统分析
+- `quick_scan`：快速扫信息，热点、更新、短知识
+- `hands_on`：跟做学习，教程、攻略、实操步骤
+- `decision_support`：辅助决策，测评、盘点、对比
+- `story_immersion`：叙事沉浸，纪录片、人物、事件复盘
+- `opinion_sparring`：观点碰撞，评论、立场、辩论
+- `social_chat`：陪聊 / 对谈，闲聊、访谈、播客感
+- `daily_wander`：日常漫游，vlog、生活流、低目标浏览
+- `mood_release`：情绪释放，搞笑、整活、吐槽、二创
+- `aesthetic_browse`：审美浏览，视觉、混剪、空镜、展示
+- `ambient_companion`：背景陪伴，背景音乐、白噪音、长陪伴
+- `live_pulse`：现场脉冲，直播切片、现场、赛事高光
+- `curiosity_spark`：新鲜猎奇，奇怪事实、冷门切口、意外发现
 
-这个字段的作用，是让下游推荐层能避免一整批都变成同一种表达密度和观看体感。
+这个字段的作用，是让下游推荐层能避免一整批都占用同一种注意力状态。
 
 ## 为什么要多策略并存
 
@@ -614,7 +623,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | M118 topic_key 与池子层压缩 | ✅ | Search / Related 现在会给候选带稳定 `topic_key`，发现引擎会先压缩同 topic 重复项，再写入 discovery pool |
 | M119 style_key 风格标注 | ✅ | discovery 入池时会按标题/描述轻规则补 `style_key`，为推荐层的风格多样性约束提供稳定信号 |
 | M120 候选池来源交错取样 | ✅ | `get_pool_candidates()` 现在会按 `search / trending / related_chain / explore` 交错取样，避免候选窗口被单一来源刷满 |
-| M122 来源优先补齐与风格误判修正 | ✅ | 池子压缩时会优先保留不同 `source` 的候选，再限制重复 `style`；同时补强 `style_key` 规则，减少硬内容误判成 `light_chat` |
+| M122 来源优先补齐与观看模式误判修正 | ✅ | 池子压缩时会优先保留不同 `source` 的候选，再限制重复 `style`；同时补强 `style_key` 规则，减少深度内容误判成轻聊天模式 |
 | M123 按平台缺口补池子 | ✅ | runtime 在补货时会先按 `[scheduler.pool_source_shares]` 统计平台族余量；默认保存的 B 站 / 小红书 / 抖音 / YouTube share = 8 / 1 / 1 / 1，但默认只有 B 站启用，disabled 平台会从有效配比中剔除。B 站缺口会按前端真实可换来源数计算，并用 raw-material headroom 夹住请求量，再合并四个策略生产 raw candidates；小红书 / 抖音缺口分别交给对应 producer；YouTube 缺口交给 `YoutubeDiscoveryProducer` 独立 loop。所有来源再统一进入 `discovery_candidates` batch 评估；超 raw-ceiling 配额的平台族才会被压回 raw 配额内 |
 | runtime 调度参数配置 | ✅ | 后台 discovery 不使用 `discovery_cron`；`ContinuousRefreshController` 从 `[scheduler]` 读取 `refresh_check_interval_seconds`、`signal_event_threshold`、`trending_refresh_hours`、`explore_refresh_hours`、`discovery_limit` 和 `proactive_push_interval_seconds`，配置热重载后重建 controller 生效 |
 | M124 LLM 评估窗口控费 | ✅ | runtime 按平台自身缺口传递补货 limit；各策略在 LLM 评估前把候选窗口收缩到 `max(6, limit*2)`、上限 90，少量补货时不再把几十条候选送去评分后立刻 suppressed；batch parser 兼容 fenced JSON、回显输入后追加结果、NDJSON object 序列，避免退回 N 次单条评估 |
@@ -822,7 +831,7 @@ hints = snapshot.to_prompt_hints()
 - `PoolDistributionSnapshot` 是冻结 dataclass，记录 `pool_target_count`、`pool_available_count`、各平台族目标数量 / 当前数量 / 缺口，以及已饱和的 `topic_group`、`style_key`、`franchise_key`；其中 `pool_available_count` 使用 recommendation serve 同口径的默认每 `topic_group` 最多 3 条候选窗口。
 - 默认饱和阈值按池目标数换算：topic 为 `max(8, pool_target_count // 20)`，style 为 `max(12, pool_target_count // 8)`，franchise 固定为 10；以默认 `pool_target_count=300` 为例，topic 15 条、style 37 条、franchise 10 条即进入软避让。
 - `source_deficits` 只表示平台 / 来源族缺口，例如 `bilibili`、`xiaohongshu`、`douyin`、`youtube` 距离目标配比还差多少；它和内容轴分开处理，不会被解释成“应该搜索某个平台名”。
-- `to_prompt_hints()` 输出面向后续 prompt 的轻量 dict：`avoid_topics`、`avoid_styles`、`avoid_franchises`、`prefer_axes` 和 `source_deficits`。其中 `avoid_*`、`prefer_axes` 都是软信号，只影响 query 生成和引擎层软重排，不是硬过滤条件。
+- `to_prompt_hints()` 输出面向后续 prompt 的轻量 dict：`avoid_topics`、`avoid_styles`、`avoid_franchises`、`prefer_axes` 和 `source_deficits`。其中 `avoid_styles` 会把旧缓存 key 合并到新观看模式（如 `deep_dive` → `deep_focus`），`avoid_*`、`prefer_axes` 都是软信号，只影响 query 生成和引擎层软重排，不是硬过滤条件。
 - 当前 runtime 构建的 snapshot 不会把平台缺口自动合成内容 `prefer_axes`；`undercovered_axes` / `prefer_axes` 保留给手动传入或未来更细的内容轴缺口判断。
 - 统计口径复用候选池可见性：只看 fresh、非 dislike、未推荐、已预生成 pool copy 且可打开的候选；`pool_available_count` 额外复用 serve 候选窗口，避免拥挤主题把补货状态误判为可换库存充足。
 - runtime refresh 会在每次 B 站 discovery 前构建 snapshot，并通过 `ContentDiscoveryEngine.discover(..., pool_snapshot=...)` 传入；构建失败只记录日志，不阻塞补货。
@@ -1233,10 +1242,10 @@ for each epoch:
 9. **引擎层仍不负责依赖创建**：`ContentDiscoveryEngine` 接收外部注入的 `llm_service` / `database`，策略继续显式注入 client/service
 10. **补货是显式分层而不是无脑放宽**：主发现优先，backfill 只在候选不足时介入，并通过 `candidate_tier` 保留来源语义
 11. **池子层先做一次轻压缩**：topic 多样性不能只在推荐层补救，发现结果在写入 `content_cache` 前也会先压一轮同 topic 重复项，防止单一 seed chain 灌满候选池
-12. **风格信号先在入池时做轻标注**：`style_key` 不追求完美分类，但必须足够稳定，保证推荐层能区分“硬核解析 / 新闻快讯 / 故事纪录 / 游戏攻略”等内容风格
+12. **观看状态先在入池时做轻标注**：`style_key` 不追求题材完备，但必须足够稳定，保证推荐层能区分“深度专注 / 快速扫信息 / 跟做学习 / 叙事沉浸”等观看模式
 13. **候选窗口本身也要按来源打散**：如果 `get_pool_candidates()` 的前 30 条几乎全是 `explore`，下游再怎么多样化都很难救；因此 discovery pool 读取阶段也会做来源交错取样
 14. **来源补齐优先级高于风格上限**：在 discovery 压缩时，新的 `search / trending / related_chain` 候选应优先获得一个坑位，不能先被重复的 `style_key` 卡死
-15. **`style_key` 规则宁可偏粗，也不能把硬内容全掉进 `light_chat`**：芯片、显微镜、理论、哲学这类更适合 `deep_dive`；全过程、制造过程、工艺难度更适合 `story_doc`
+15. **`style_key` 规则宁可偏粗，也不能混淆题材和体感**：芯片、显微镜、理论、哲学这类更适合 `deep_focus`；全过程、制造过程、人物事件复盘更适合 `story_immersion`
 16. **补货要看来源缺口，不只看池子总量**：如果池子总数够了但 `trending` 或 `xiaohongshu` 一直接近 0、`explore` 却超标，体感仍会单一；runtime refresh 现在按来源族配额评估缺口，B 站策略只补 B 站缺口，小红书缺口交给 xhs producer / 扩展任务链
 17. **`explore` 也要控内部子簇，不只控总量**：即使 `explore` 总数没超标，制造 / 工艺 / 材料、博弈 / 桌游 / 机制这类相邻方向也可能在内部堆成一大簇；refresh 现在会把过量部分温和压到非 `fresh`，避免”可换窗口只剩一个味”
 18. **四个策略统一走 LLM 评估**：`SearchStrategy` 不再只用本地启发式打分，默认也走 `evaluate_content()`；这让评估系统可以统一优化 `content_evaluation_prompt` 对全部策略生效

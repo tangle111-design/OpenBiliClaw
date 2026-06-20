@@ -1642,43 +1642,60 @@ def test_infer_style_key_classifies_hard_courses_and_documentaries() -> None:
             title="【强化学习的数学原理】课程：从零开始到透彻理解",
             source_strategy="explore",
         )
-        == "practical_guide"
+        == "hands_on"
     )
     assert (
         ContentDiscoveryEngine.infer_style_key(
             title="精密加工的磨床纪录片",
             source_strategy="explore",
         )
-        == "story_doc"
+        == "story_immersion"
     )
     assert (
         ContentDiscoveryEngine.infer_style_key(
             title="CPU芯片经显微镜放大到纳米级别",
             source_strategy="explore",
         )
-        == "tech_analysis"
+        == "deep_focus"
     )
     assert (
         ContentDiscoveryEngine.infer_style_key(
             title="钛制造全过程，一般人没见过，工艺难度超乎你的想象",
             source_strategy="explore",
         )
-        == "story_doc"
+        == "story_immersion"
     )
     assert (
         ContentDiscoveryEngine.infer_style_key(
             title="【从零看懂fsf】世界观/伪从者设定解析",
             source_strategy="explore",
         )
-        == "deep_dive"
+        == "deep_focus"
     )
     assert (
         ContentDiscoveryEngine.infer_style_key(
             title="囚犯盒子问题，史上最烧脑的逻辑谜题，超乎你的想象！",
             source_strategy="explore",
         )
-        == "deep_dive"
+        == "curiosity_spark"
     )
+
+
+def test_infer_style_key_classifies_viewing_mode_examples() -> None:
+    cases = [
+        ("最新局势快讯，三分钟看懂发生了什么", "quick_scan"),
+        ("耳机购买前必看，五款横向测评", "decision_support"),
+        ("老友访谈：聊聊最近的创作状态", "social_chat"),
+        ("下班后的日常 vlog，一起做饭收拾房间", "daily_wander"),
+        ("高能整活名场面合集", "mood_release"),
+        ("城市雨夜空镜混剪", "aesthetic_browse"),
+        ("专注学习背景音乐 白噪音 两小时", "ambient_companion"),
+        ("演唱会 live 现场高光", "live_pulse"),
+        ("你知道吗？这些冷知识很反直觉", "curiosity_spark"),
+    ]
+
+    for title, expected in cases:
+        assert ContentDiscoveryEngine.infer_style_key(title=title) == expected
 
 
 @pytest.mark.asyncio

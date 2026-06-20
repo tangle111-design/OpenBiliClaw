@@ -14,6 +14,7 @@
 - **浏览器扩展 DOM 采集补齐指标**：小红书被动卡片和抖音 DOM / passive fetch 路径会解析可见的浏览、点赞、收藏、评论、分享数字并回传后端，补齐插件来源候选的评估上下文。
 - **抖音 hot discovery 恢复真实召回**：hot board 的 `group_id` 会作为 `seed_aweme_id` 透传到插件任务；扩展后台优先执行带 seed 的热词，并在 DOM 点击 / 被动监听不足时用已登录页面的 related API bridge 拉取 `dy_hot` 候选。MAIN-world fetch tap 同时兼容抖音新搜索页的 `/general/search/stream/` chunked JSON 响应；真实环境中 search 若仍返回 `search_nil_info.search_nil_item="hit_shark"`，会继续按抖音反爬空结果处理。
 - **抖音 search 任务补齐真实导航校验**：content script 在首页搜索框输入关键词并点击搜索后，会等待 URL 进入 `/jingxuan/search/<keyword>` 等真实搜索结果路由；任务 debug 新增 `search_navigation_ok` / `search_submit_method`，避免把“只弹出搜索建议或登录弹窗”误报成搜索页已打开。
+- **`style_key` 收敛为观看模式词表**：发现 / 推荐链路的 `style_key` 从题材式风格名收敛为 13 个封闭观看状态（如 `deep_focus`、`quick_scan`、`ambient_companion`、`curiosity_spark`）；LLM evaluator prompt、搜索 / 关键词 prompt hints、推荐表达 prompt、规则兜底、推荐兜底文案和轻入口补位同步更新。历史安装的本地数据库会在启动时把已知旧 `style_key` 物理迁移到新 key，运行时也会兼容旧缓存 key。
 - **README / 首页同步 release 结构**：用户下载说明明确 `openbiliclaw-v*` 是聚合 Latest Release，`backend-v*` / `extension-v*` / `desktop-v*` 是自动化频道；桌面安装包可能落后于后端源码版本，以聚合页 `Current Channels` 和附带 `.dmg` / `.exe` 为准。
 - **插件设置补齐封面图评估开关**：浏览器插件 side panel 的调度 tab 现在也能开关 `[discovery].multimodal_evaluation_enabled`，并编辑图文 batch、封面最大边、JPEG 质量和图片准备超时；保存时保留既有 discovery 配置，避免插件与桌面 Web 设置面脱节。
 - **移动 Web 添加到主屏幕补强**：`/m/` manifest 增加 `id` / `scope` / maskable 图标声明，HTML head 增加 `mobile-web-app-capable`、iOS Web Clip 标题与 touch icon；新增后端静态资源契约测试，并修复 degraded 模式下 `/favicon.ico` 被 503 拦截的问题，确保手机保存桌面图标时使用稳定名称、图标和启动路径（不引入 service worker / 离线缓存）。README / README_EN 和官网首页同步补充 iOS「添加到主屏幕」与 Android「安装应用 / 添加到主屏幕」使用说明。

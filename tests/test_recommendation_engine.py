@@ -779,7 +779,7 @@ async def test_generate_expression_uses_old_friend_tone_prompt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_expression_passes_style_key_to_prompt() -> None:
+async def test_generate_expression_normalizes_style_key_for_prompt() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         db = Database(Path(tmpdir) / "test.db")
         db.initialize()
@@ -800,7 +800,8 @@ async def test_generate_expression_passes_style_key_to_prompt() -> None:
         )
 
         user_input = str(llm.calls[0]["user_input"])
-        assert '"style_key": "lifestyle"' in user_input
+        assert '"style_key": "daily_wander"' in user_input
+        assert '"style_key": "lifestyle"' not in user_input
         assert '"topic_group": "社会民生"' in user_input
 
 
@@ -1548,7 +1549,7 @@ def test_build_debug_summary_counts_styles_sources_and_topics() -> None:
     )
 
     assert summary["count"] == 3
-    assert summary["styles"] == {"deep_dive": 2, "news_brief": 1}
+    assert summary["styles"] == {"deep_focus": 2, "quick_scan": 1}
     assert summary["sources"] == {"search": 2, "trending": 1}
     assert summary["topics"] == {"国际时事:地缘政治": 2, "国际时事:贸易": 1}
     assert summary["platforms"] == {"bilibili": 3}
@@ -1840,14 +1841,14 @@ async def test_classify_pool_backlog_fills_metadata() -> None:
 
         xhs1 = by_bvid.get("xhs_001")
         assert xhs1 is not None
-        assert xhs1["style_key"] == "lifestyle"
+        assert xhs1["style_key"] == "daily_wander"
         assert xhs1["topic_group"] == "美食烹饪"
         assert xhs1["topic_key"] == "美食烹饪"  # backfilled from topic_group
         assert float(xhs1["relevance_score"]) == pytest.approx(0.85)
 
         xhs2 = by_bvid.get("xhs_002")
         assert xhs2 is not None
-        assert xhs2["style_key"] == "game_strategy"
+        assert xhs2["style_key"] == "hands_on"
         assert xhs2["topic_group"] == "游戏攻略"
 
 
@@ -2193,8 +2194,8 @@ async def test_classify_pool_backlog_accepts_jsonl_output(caplog: pytest.LogCapt
 
         assert classified == 2
         rows = {row["bvid"]: row for row in db.get_cached_content(limit=10)}
-        assert rows["xhs_jsonl_001"]["style_key"] == "lifestyle"
-        assert rows["xhs_jsonl_002"]["style_key"] == "deep_dive"
+        assert rows["xhs_jsonl_001"]["style_key"] == "daily_wander"
+        assert rows["xhs_jsonl_002"]["style_key"] == "deep_focus"
         assert "classify_pool_backlog: batch failed" not in caplog.text
 
 
@@ -2259,7 +2260,7 @@ async def test_classify_pool_backlog_accepts_wrapped_output(
         row = next(
             r for r in db.get_cached_content(limit=10) if r["bvid"] == f"xhs_wrapped_{wrapper_key}"
         )
-        assert row["style_key"] == "tech_analysis"
+        assert row["style_key"] == "deep_focus"
         assert row["topic_group"] == "工具效率"
         assert "classify_pool_backlog: batch failed" not in caplog.text
 
@@ -2762,7 +2763,7 @@ def test_re_ingest_does_not_overwrite_classified_fields() -> None:
         row = next(r for r in rows if r["bvid"] == "xhs_reingest")
 
         # All classified fields must survive the re-ingest
-        assert row["style_key"] == "lifestyle"
+        assert row["style_key"] == "daily_wander"
         assert row["topic_group"] == "美食烹饪"
         assert row["topic_key"] == "美食烹饪"
         assert float(row["relevance_score"]) == pytest.approx(0.85)

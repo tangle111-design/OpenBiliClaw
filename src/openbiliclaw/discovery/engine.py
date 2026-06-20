@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 from openbiliclaw.discovery.strategies._utils import build_profile_summary
+from openbiliclaw.discovery.style_keys import VALID_STYLE_KEYS, normalize_style_key
 from openbiliclaw.llm.json_utils import extract_llm_json_list, parse_llm_json_tolerant
 from openbiliclaw.llm.service import is_llm_rate_limit_error
 
@@ -367,24 +368,6 @@ class DiscoveredContent:
         }
 
 
-# Canonical set of LLM-returned style_key values accepted by evaluation.
-# Shared across discovery and recommendation — must stay in sync.
-VALID_STYLE_KEYS: frozenset[str] = frozenset(
-    {
-        "game_strategy",
-        "news_brief",
-        "practical_guide",
-        "story_doc",
-        "visual_showcase",
-        "tech_analysis",
-        "deep_dive",
-        "fun_variety",
-        "lifestyle",
-        "review_roundup",
-        "light_chat",
-    }
-)
-
 # v0.3.50+: per-batch franchise cap for ``_evaluate_batch``. The LLM
 # correctly identifies when a batch has many same-IP items (the prompt
 # mandates batch-wide franchise consistency), but pre-v0.3.50 we kept
@@ -396,7 +379,7 @@ _BATCH_FRANCHISE_CAP: int = 4
 
 # v0.3.51+: per-batch style cap. Mirrors the franchise cap above —
 # without it, a single eval_batch easily had 9-12 items of the same
-# style (fun_variety / story_doc / light_chat / practical_guide all
+# style (mood_release / story_immersion / social_chat / hands_on all
 # observed at 30-40% concentration in production). 8/30 = ~27% which
 # still lets a dominant style breathe but blocks single-style
 # domination of the pool.
@@ -1005,6 +988,7 @@ class ContentDiscoveryEngine:
         cached = self._eval_cache.get(cache_key)
         if cached is not None:
             score, reason, topic_group, style_key, franchise_key = cached
+            style_key = normalize_style_key(style_key)
             content.relevance_score = score
             content.relevance_reason = reason
             if topic_group:
@@ -1083,20 +1067,17 @@ class ContentDiscoveryEngine:
             score = self._clamp_score(payload.get("score", 0.0))
             reason = str(payload.get("reason", "")).strip()
             topic_group = str(payload.get("topic_group", "")).strip()
-            style_key = str(payload.get("style_key", "")).strip().lower()
+            style_key = normalize_style_key(payload.get("style_key", ""))
             franchise_key = str(payload.get("franchise_key", "")).strip()
         except Exception:
             logger.exception("Failed to evaluate discovered content: %s", content.bvid)
             return 0.0
 
-        # Validate LLM-returned style_key against allowed values
-        valid_styles = VALID_STYLE_KEYS
-
         content.relevance_score = score
         content.relevance_reason = reason
         if topic_group:
             content.topic_group = topic_group
-        if style_key in valid_styles:
+        if style_key in VALID_STYLE_KEYS:
             content.style_key = style_key
         if franchise_key:
             content.franchise_key = franchise_key
@@ -1218,6 +1199,7 @@ class ContentDiscoveryEngine:
                 else:
                     score, reason, topic_group, style_key = cached
                     franchise_key = ""
+                style_key = normalize_style_key(style_key)
                 content.relevance_score = score
                 content.relevance_reason = reason
                 if topic_group:
@@ -1519,20 +1501,6 @@ class ContentDiscoveryEngine:
             negative_examples=negative_examples,
         )
 
-        valid_styles = {
-            "game_strategy",
-            "news_brief",
-            "practical_guide",
-            "story_doc",
-            "visual_showcase",
-            "tech_analysis",
-            "deep_dive",
-            "fun_variety",
-            "lifestyle",
-            "review_roundup",
-            "light_chat",
-        }
-
         assert self._llm_service is not None
         try:
             multimodal_call = getattr(
@@ -1626,14 +1594,14 @@ class ContentDiscoveryEngine:
             score = self._clamp_score(item_result.get("score", 0.0))
             reason = str(item_result.get("reason", "")).strip()
             topic_group = str(item_result.get("topic_group", "")).strip()
-            style_key = str(item_result.get("style_key", "")).strip().lower()
+            style_key = normalize_style_key(item_result.get("style_key", ""))
             franchise_key = str(item_result.get("franchise_key", "")).strip()
 
             content.relevance_score = score
             content.relevance_reason = reason
             if topic_group:
                 content.topic_group = topic_group
-            if style_key in valid_styles:
+            if style_key in VALID_STYLE_KEYS:
                 content.style_key = style_key
             if franchise_key:
                 content.franchise_key = franchise_key
@@ -1690,8 +1658,8 @@ class ContentDiscoveryEngine:
 
         # v0.3.51+: same-style cap (mirrors v0.3.50 franchise cap).
         # Production logs (2026-05-05) showed single-style concentration
-        # 7-12/30 in many eval batches (fun_variety×10, story_doc×11,
-        # light_chat×11, practical_guide×10). Pool inherits this skew
+        # 7-12/30 in many eval batches (mood_release×10,
+        # story_immersion×11, social_chat×11, hands_on×10). Pool inherits this skew
         # because eval_batch keeps all 30 — diversifier at serve time
         # can't unbias a pool that's already 30%+ same-style.
         # Cap=8 (27% of a 30-batch) lets a style have a small foothold
@@ -1702,7 +1670,7 @@ class ContentDiscoveryEngine:
             for i, content in enumerate(batch):
                 if i >= len(results) or results[i] <= 0:
                     continue
-                style_key = (content.style_key or "").strip().lower()
+                style_key = normalize_style_key(content.style_key)
                 if not style_key:
                     continue
                 style_buckets.setdefault(style_key, []).append(i)
@@ -2127,6 +2095,17 @@ class ContentDiscoveryEngine:
         values = getattr(pool_snapshot, attribute, ()) or ()
         if not isinstance(values, (list, tuple, set, frozenset)):
             return set()
+        if attribute == "saturated_styles":
+            return {
+                token
+                for value in values
+                if isinstance(value, str)
+                if (
+                    token := ContentDiscoveryEngine._normalize_topic_token(
+                        normalize_style_key(value)
+                    )
+                )
+            }
         return {
             token
             for value in values
@@ -2427,7 +2406,7 @@ class ContentDiscoveryEngine:
 
     @staticmethod
     def _style_bucket(item: DiscoveredContent) -> str:
-        return ContentDiscoveryEngine._normalize_topic_token(item.style_key)
+        return ContentDiscoveryEngine._normalize_topic_token(normalize_style_key(item.style_key))
 
     @staticmethod
     def _normalize_topic_token(value: str) -> str:

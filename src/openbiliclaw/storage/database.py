@@ -64,6 +64,32 @@ _DELIGHT_CLAIM_GUARD_SQL = f"""
                   )
 """
 
+_LEGACY_STYLE_KEY_MAP: dict[str, str] = {
+    "deep_dive": "deep_focus",
+    "tech_analysis": "deep_focus",
+    "music_analysis": "deep_focus",
+    "news_brief": "quick_scan",
+    "practical_guide": "hands_on",
+    "tutorial_short": "hands_on",
+    "game_strategy": "hands_on",
+    "review_roundup": "decision_support",
+    "unboxing_experience": "decision_support",
+    "story_doc": "story_immersion",
+    "emotional_narrative": "story_immersion",
+    "true_crime": "story_immersion",
+    "opinion_stand": "opinion_sparring",
+    "light_chat": "social_chat",
+    "lifestyle": "daily_wander",
+    "fun_variety": "mood_release",
+    "parody_remix": "mood_release",
+    "visual_showcase": "aesthetic_browse",
+    "audio_background": "ambient_companion",
+    "music_live": "live_pulse",
+    "live_moment": "live_pulse",
+    "sports_highlight": "live_pulse",
+    "sci_fact": "curiosity_spark",
+}
+
 _XHS_SOURCE_FAMILY = "xiaohongshu"
 _XHS_SOURCE_PREFIXES = ("xhs-", "xhs_", "xiaohongshu")
 _DOUYIN_SOURCE_FAMILY = "douyin"
@@ -312,6 +338,14 @@ def _normalize_source_platform_key(source_platform: object) -> str:
     return raw
 
 
+def _normalize_style_key_for_storage(value: object) -> str:
+    """Canonicalize known style_key values while preserving unknown legacy rows."""
+    token = re.sub(r"[\s-]+", "_", str(value or "").strip().lower())
+    if not token:
+        return ""
+    return _LEGACY_STYLE_KEY_MAP.get(token, token)
+
+
 def _is_linkable_pool_source(
     source: object,
     source_platform: object,
@@ -378,6 +412,7 @@ class Database:
         self._ensure_source_recipes_table()
         self._ensure_xhs_observed_urls_table()
         self._ensure_discovery_candidate_columns()
+        self._normalize_legacy_style_keys()
         self._ensure_llm_usage_cache_columns()
         self._ensure_chat_turns_table()
         self._ensure_watch_later_table()
@@ -1153,7 +1188,7 @@ class Database:
                 json.dumps(kwargs.get("tags", []), ensure_ascii=False),
                 kwargs.get("topic_key", ""),
                 kwargs.get("topic_group", ""),
-                kwargs.get("style_key", ""),
+                _normalize_style_key_for_storage(kwargs.get("style_key", "")),
                 kwargs.get("franchise_key", ""),
                 kwargs.get("description", ""),
                 kwargs.get("cover_url", ""),
@@ -1559,7 +1594,7 @@ class Database:
                     str(evaluation.get("status") or "evaluated"),
                     str(evaluation.get("topic_key") or ""),
                     str(evaluation.get("topic_group") or ""),
-                    str(evaluation.get("style_key") or ""),
+                    _normalize_style_key_for_storage(evaluation.get("style_key")),
                     str(evaluation.get("franchise_key") or ""),
                     float(evaluation.get("relevance_score") or evaluation.get("score") or 0.0),
                     str(evaluation.get("relevance_reason") or evaluation.get("reason") or ""),
@@ -3929,6 +3964,26 @@ class Database:
             self.conn.execute(
                 f"ALTER TABLE discovery_candidates ADD COLUMN {column_name} {column_type}"
             )
+
+    def _normalize_legacy_style_keys(self) -> None:
+        """Rewrite known legacy content-form style keys to viewing-mode keys."""
+
+        targets = (
+            ("content_cache", "style_key"),
+            ("discovery_candidates", "style_key"),
+        )
+        for table_name, column_name in targets:
+            existing_columns = {
+                str(row["name"])
+                for row in self.conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+            }
+            if column_name not in existing_columns:
+                continue
+            for legacy_key, style_key in _LEGACY_STYLE_KEY_MAP.items():
+                self.conn.execute(
+                    f"UPDATE {table_name} SET {column_name} = ? WHERE {column_name} = ?",
+                    (style_key, legacy_key),
+                )
 
     def _ensure_recommendation_read_indexes(self) -> None:
         """Create indexes used by recommendation and activity-feed reads."""
