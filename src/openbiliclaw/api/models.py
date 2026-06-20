@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -613,6 +613,7 @@ ExtensionE2EAction = Literal[
     "repost",
     "bookmark",
 ]
+ExtensionE2EActionList = Annotated[list[ExtensionE2EAction], Field(min_length=1)]
 ExtensionE2EActionStatus = Literal["ok", "skipped", "failed"]
 ExtensionE2ERunStatus = Literal["ok", "partial", "failed", "timeout"]
 
@@ -625,9 +626,10 @@ class ExtensionE2ERunIn(BaseModel):
     """Request to run a local browser-extension E2E simulation."""
 
     platforms: list[ExtensionE2EPlatform] = Field(
-        default_factory=_default_extension_e2e_platforms
+        default_factory=_default_extension_e2e_platforms,
+        min_length=1,
     )
-    actions: dict[ExtensionE2EPlatform, list[ExtensionE2EAction]] = Field(
+    actions: dict[ExtensionE2EPlatform, ExtensionE2EActionList] = Field(
         default_factory=dict
     )
     allow_state_changing: bool = False

@@ -215,11 +215,11 @@ _E2E_ACTION_EVENT_TYPES: dict[ExtensionE2EAction, frozenset[str]] = {
     "scroll": frozenset({"scroll"}),
     "click": frozenset({"click"}),
     "share": frozenset({"share", "click"}),
-    "like": frozenset({"like", "favorite", "click"}),
-    "favorite": frozenset({"favorite", "bookmark", "click"}),
-    "follow": frozenset({"follow", "click"}),
-    "repost": frozenset({"share", "repost", "click"}),
-    "bookmark": frozenset({"bookmark", "favorite", "click"}),
+    "like": frozenset({"like", "favorite"}),
+    "favorite": frozenset({"favorite", "bookmark"}),
+    "follow": frozenset({"follow"}),
+    "repost": frozenset({"share", "repost"}),
+    "bookmark": frozenset({"bookmark", "favorite"}),
 }
 
 
@@ -6715,6 +6715,10 @@ def create_app(
         if not _get_auth_gate().is_trusted_local(request):
             raise HTTPException(status_code=403, detail="local_only")
 
+        registry = cast("dict[str, _ExtensionE2ERunState]", app.state.extension_e2e_runs)
+        if registry:
+            raise HTTPException(status_code=409, detail="e2e_run_in_progress")
+
         expected_actions = _extension_e2e_actions_for_request(payload)
         if not payload.allow_state_changing:
             blocked_actions = sorted(
@@ -6745,16 +6749,15 @@ def create_app(
             expected_actions=expected_actions,
             event=asyncio.Event(),
         )
-        registry = cast("dict[str, _ExtensionE2ERunState]", app.state.extension_e2e_runs)
         registry[run_id] = state
         timed_out = False
 
         try:
             publish = getattr(getattr(ctx, "event_hub", None), "publish", None)
             if not callable(publish):
-                state.error = "event_hub_unavailable"
+                state.error = "extension_runtime_unavailable"
             else:
-                await publish(
+                delivered = await publish(
                     {
                         "type": "extension_e2e_run",
                         "source": "api",
@@ -6769,6 +6772,8 @@ def create_app(
                         "timeout_seconds": payload.timeout_seconds,
                     }
                 )
+                if delivered is False:
+                    state.error = "extension_runtime_unavailable"
 
             if not state.error:
                 try:

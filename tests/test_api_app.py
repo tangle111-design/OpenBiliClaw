@@ -1884,6 +1884,51 @@ class TestBackendAPI:
         assert response.status_code == 400
         assert "allow_state_changing" in response.json()["detail"]
 
+    def test_extension_e2e_run_rejects_remote_clients_with_valid_payload(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        app.state.auth_gate.is_trusted_local = lambda request: False
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/extension/e2e/run",
+            json={"platforms": ["douyin"], "actions": {"douyin": ["snapshot"]}},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "local_only"
+
+    def test_extension_e2e_result_rejects_remote_clients_with_valid_payload(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        app.state.auth_gate.is_trusted_local = lambda request: False
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/extension/e2e/result",
+            json={
+                "run_id": "e2e-test",
+                "token": "good-token",
+                "platforms": [
+                    {
+                        "platform": "douyin",
+                        "actions": [
+                            {
+                                "action": "snapshot",
+                                "status": "ok",
+                                "detail": "captured",
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "local_only"
+
     def test_extension_e2e_rejects_unknown_platform_via_schema(self) -> None:
         from fastapi.testclient import TestClient
 
@@ -1896,6 +1941,50 @@ class TestBackendAPI:
         )
 
         assert response.status_code == 422
+
+    def test_extension_e2e_rejects_empty_platforms(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        app.state.auth_gate.is_trusted_local = lambda request: True
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/extension/e2e/run",
+            json={"platforms": [], "actions": {}},
+        )
+
+        assert response.status_code == 422
+
+    def test_extension_e2e_rejects_empty_action_list(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        app.state.auth_gate.is_trusted_local = lambda request: True
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/extension/e2e/run",
+            json={"platforms": ["douyin"], "actions": {"douyin": []}},
+        )
+
+        assert response.status_code == 422
+
+    def test_extension_e2e_run_rejects_concurrent_run(self) -> None:
+        from fastapi.testclient import TestClient
+
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+        app.state.auth_gate.is_trusted_local = lambda request: True
+        app.state.extension_e2e_runs["e2e-active"] = SimpleNamespace(token="active")
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/extension/e2e/run",
+            json={"platforms": ["douyin"], "actions": {"douyin": ["snapshot"]}},
+        )
+
+        assert response.status_code == 409
+        assert "e2e_run_in_progress" in response.json()["detail"]
 
     def test_extension_e2e_result_rejects_bad_token(self) -> None:
         from fastapi.testclient import TestClient
@@ -1965,6 +2054,31 @@ class TestBackendAPI:
             used_event_ids=used_event_ids,
         ) is None
 
+    def test_match_e2e_event_does_not_treat_click_as_like(self) -> None:
+        from openbiliclaw.api.app import _match_e2e_event
+
+        events = [
+            {
+                "id": 1,
+                "event_type": "click",
+                "url": "https://www.douyin.com/video/1",
+                "title": "Douyin click",
+                "metadata": {"source_platform": "douyin"},
+            }
+        ]
+        used_event_ids: set[int] = set()
+
+        assert (
+            _match_e2e_event(
+                events,
+                platform="douyin",
+                action="like",
+                used_event_ids=used_event_ids,
+            )
+            is None
+        )
+        assert used_event_ids == set()
+
     def test_extension_e2e_run_publishes_runtime_event_and_returns_timeout_report(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1982,8 +2096,9 @@ class TestBackendAPI:
             def __init__(self) -> None:
                 self.events: list[dict[str, object]] = []
 
-            async def publish(self, event: dict[str, object]) -> None:
+            async def publish(self, event: dict[str, object]) -> bool:
                 self.events.append(event)
+                return True
 
         class FakeMemoryManager:
             def query_events(self, **_kwargs: object) -> list[dict[str, object]]:
@@ -2025,6 +2140,58 @@ class TestBackendAPI:
         assert event["actions"] == {"douyin": ["snapshot", "scroll"]}
         assert event["run_id"] == body["run_id"]
         assert isinstance(event["token"], str) and event["token"]
+
+    def test_extension_e2e_run_fails_fast_when_runtime_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        import openbiliclaw.api.app as app_module
+
+        async def _unexpected_wait(awaitable: object, timeout: float) -> object:
+            close = getattr(awaitable, "close", None)
+            if callable(close):
+                close()
+            raise AssertionError("extension e2e run should not wait without subscribers")
+
+        class FakeEventHub:
+            def __init__(self) -> None:
+                self.events: list[dict[str, object]] = []
+
+            async def publish(self, event: dict[str, object]) -> bool:
+                self.events.append(event)
+                return False
+
+        class FakeMemoryManager:
+            def query_events(self, **_kwargs: object) -> list[dict[str, object]]:
+                return []
+
+        monkeypatch.setattr(app_module.asyncio, "wait_for", _unexpected_wait)
+        hub = FakeEventHub()
+        app = create_app(
+            memory_manager=FakeMemoryManager(),
+            database=object(),
+            soul_engine=object(),
+            runtime_event_hub=hub,
+        )
+        app.state.auth_gate.is_trusted_local = lambda request: True
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/extension/e2e/run",
+            json={
+                "platforms": ["douyin"],
+                "actions": {"douyin": ["snapshot"]},
+                "timeout_seconds": 5,
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "failed"
+        assert "extension_runtime_unavailable" in body["error"]
+        assert hub.events
+        assert app.state.extension_e2e_runs == {}
 
     def test_events_endpoint_handles_extension_cors_preflight(self) -> None:
         from fastapi.testclient import TestClient
