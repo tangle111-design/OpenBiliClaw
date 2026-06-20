@@ -190,6 +190,7 @@ SOURCE_LABELS = {
 }
 
 _SOURCE_SHARE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube")
+_INIT_SOURCE_ORDER = ("bilibili", "xiaohongshu", "douyin", "youtube", "twitter")
 _PROBE_MODES = {"near", "lateral", "bridge", "wildcard"}
 _PROBE_CHALLENGE_MODES = {"lateral", "bridge", "wildcard"}
 
@@ -202,9 +203,7 @@ _BENCHMARK_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 # is referenced directly from here, by the startup cleanup call.
 _IMAGE_CACHE_MAX_AGE_DAYS = 30
 
-_E2E_STATE_CHANGING_ACTIONS = frozenset(
-    {"like", "favorite", "follow", "repost", "bookmark"}
-)
+_E2E_STATE_CHANGING_ACTIONS = frozenset({"like", "favorite", "follow", "repost", "bookmark"})
 _E2E_DEFAULT_SAFE_ACTIONS: tuple[ExtensionE2EAction, ...] = (
     "snapshot",
     "scroll",
@@ -431,15 +430,30 @@ def _select_init_platforms(enabled: set[str], selected: set[str] | None) -> set[
 
     ``enabled`` is the config-enabled set; ``selected`` is the extension's
     per-run checkbox choice (``None`` when no selection was sent — CLI / legacy
-    clients — meaning "use everything enabled"). A selection can only NARROW the
-    set: you can't init a source that isn't configured, so the result is the
-    intersection. Bilibili flows through here like every other source
-    (v0.3.118+): it is config-enabled by default, so legacy clients keep their
-    bilibili-included behaviour, but deselecting it skips the B站 fetch.
+    clients — meaning "use everything enabled"). A sent selection is an
+    explicit local opt-in for those sources, not just a filter over old config.
+    Bilibili flows through here like every other source (v0.3.118+): legacy
+    clients keep their config-enabled behaviour, but deselecting it skips the
+    B站 fetch.
     """
     if selected is None:
-        return set(enabled)
-    return set(enabled) & selected
+        return {
+            normalized
+            for source in enabled
+            if (normalized := _normalize_init_source_key(source)) in _INIT_SOURCE_ORDER
+        }
+    return {
+        normalized
+        for source in selected
+        if (normalized := _normalize_init_source_key(source)) in _INIT_SOURCE_ORDER
+    }
+
+
+def _normalize_init_source_key(source: object) -> str:
+    source_key = str(source or "").strip().lower()
+    if not source_key:
+        return ""
+    return _normalize_source_platform(source_key)
 
 
 def _normalize_source_platform(source: object) -> str:
@@ -1797,6 +1811,57 @@ def create_app(
                 pass
         return True, ""
 
+    async def _persist_guided_init_source_opt_in(effective_sources: set[str]) -> None:
+        """Best-effort: checked guided-init sources become enabled settings.
+
+        The run itself uses ``effective_sources`` directly, so a config write
+        failure must not block initialization. Persisting keeps the setup page,
+        popup, and later background discovery aligned with the user's explicit
+        checkbox choice.
+        """
+
+        cfg = getattr(ctx, "config", None)
+        sources_cfg = getattr(cfg, "sources", None) if cfg is not None else None
+        if sources_cfg is None or not effective_sources:
+            return
+
+        changed = False
+        for source in _INIT_SOURCE_ORDER:
+            if source not in effective_sources:
+                continue
+            source_cfg = getattr(sources_cfg, source, None)
+            if source_cfg is not None and not bool(getattr(source_cfg, "enabled", False)):
+                source_cfg.enabled = True
+                changed = True
+        if not changed:
+            return
+
+        try:
+            from openbiliclaw.config import Config, save_config
+
+            cfg = cast("Config", cfg)
+
+            async with _CONFIG_SAVE_LOCK:
+                save_config(cfg)
+        except Exception:
+            logger.warning("guided init source opt-in save_config failed", exc_info=True)
+            return
+
+        if bool(getattr(ctx, "degraded", False)):
+            return
+        try:
+            await ctx.rebuild_from_config(cfg)
+            await ctx.restart_background_tasks(app, run_post_reload_llm_work=False)
+            with suppress(Exception):
+                await ctx.event_hub.publish(
+                    {
+                        "type": "config_reloaded",
+                        "message": "初始化来源选择已写入配置。",
+                    }
+                )
+        except Exception:
+            logger.warning("guided init source opt-in hot-reload failed", exc_info=True)
+
     async def _run_guided_init_wrapper(
         run_id: str, selected_sources: set[str] | None = None
     ) -> None:
@@ -1806,9 +1871,10 @@ def create_app(
         never via a side path. Imported lazily to avoid an import cycle with
         the CLI module that owns the shared pipeline.
 
-        ``selected_sources`` is the extension's per-run platform choice; it can
-        only narrow the config-enabled set (see :func:`_select_init_platforms`).
-        ``None`` keeps the legacy behaviour of using everything enabled.
+        ``selected_sources`` is the extension's per-run platform choice. When
+        present, it is an explicit local opt-in for those sources (see
+        :func:`_select_init_platforms`). ``None`` keeps the legacy behaviour of
+        using everything enabled.
         """
         from openbiliclaw.cli import (
             _INIT_BILIBILI_FAVORITE_LIMIT,
@@ -1866,6 +1932,10 @@ def create_app(
             logger.exception("guided init %s crashed", run_id)
             with suppress(Exception):
                 await coord.fail(run_id, "internal_error")
+        finally:
+            if not bool(getattr(ctx, "degraded", False)):
+                with suppress(Exception):
+                    await ctx.restart_background_tasks(app)
 
     @app.post("/api/init")
     async def start_guided_init(request: Request) -> JSONResponse:
@@ -1884,7 +1954,8 @@ def create_app(
         force = bool(body.get("force", False)) if isinstance(body, dict) else False
         # Optional per-run platform selection from the extension checkboxes. A
         # list (even empty) is an explicit choice; absent → None = use all
-        # enabled (CLI / legacy clients). Narrowed against config-enabled later.
+        # enabled (CLI / legacy clients). Sent source keys are explicit opt-ins
+        # for this local guided-init run.
         raw_sources = body.get("sources") if isinstance(body, dict) else None
         selected_sources = {str(s) for s in raw_sources} if isinstance(raw_sources, list) else None
 
@@ -1898,18 +1969,20 @@ def create_app(
                 {"error": "already_initialized", "detail": "已初始化；重建请传 force"},
                 status_code=409,
             )
-        # At least one config-enabled source must survive an EXPLICIT per-run
-        # selection (v0.3.118+: bilibili is selectable like the rest, so an
-        # empty intersection is now reachable). Cheap rejection, before
-        # reserving. Legacy clients (no "sources" key) stay permissive.
+        # At least one valid source must survive an EXPLICIT per-run selection
+        # (v0.3.118+: bilibili is selectable like the rest, so an empty
+        # selection is reachable). Cheap rejection, before reserving. Legacy
+        # clients (no "sources" key) stay permissive.
         effective_sources = _select_init_platforms(
             set(ctx.init_prereqs.enabled_platforms()), selected_sources
         )
         if selected_sources is not None and not effective_sources:
             return JSONResponse(
-                {"error": "no_sources_selected", "detail": "至少选择一个已启用的数据来源"},
+                {"error": "no_sources_selected", "detail": "至少选择一个有效数据来源"},
                 status_code=409,
             )
+        if selected_sources is not None:
+            await _persist_guided_init_source_opt_in(effective_sources)
 
         run_id = uuid.uuid4().hex
         if not coord.try_start(run_id):
@@ -7285,9 +7358,7 @@ def create_app(
                 multimodal_batch_size=cfg.discovery.multimodal_batch_size,
                 multimodal_image_max_px=cfg.discovery.multimodal_image_max_px,
                 multimodal_image_quality=cfg.discovery.multimodal_image_quality,
-                multimodal_image_timeout_seconds=(
-                    cfg.discovery.multimodal_image_timeout_seconds
-                ),
+                multimodal_image_timeout_seconds=(cfg.discovery.multimodal_image_timeout_seconds),
             ),
             autostart=AutostartConfigOut(
                 enabled=cfg.autostart.enabled,
@@ -7604,6 +7675,7 @@ def create_app(
         cfg = load_config()
         update = payload.model_dump(exclude_none=True)
         reset_fields = [str(field) for field in update.pop("reset_fields", [])]
+        suppress_background_llm_work = bool(update.pop("suppress_background_llm_work", False))
         unknown_reset_fields = [
             field for field in reset_fields if field not in _RESETTABLE_CONFIG_FIELDS
         ]
@@ -8034,7 +8106,10 @@ def create_app(
             reload_message = f"配置已保存到 {saved_path}。"
             try:
                 await ctx.rebuild_from_config(cfg)
-                await ctx.restart_background_tasks(app)
+                await ctx.restart_background_tasks(
+                    app,
+                    run_post_reload_llm_work=not suppress_background_llm_work,
+                )
                 reload_message += " 运行时组件已热重载，新配置立即生效。"
                 logger.info("Config hot-reload succeeded")
                 # Notify WebSocket subscribers so the extension re-fetches data

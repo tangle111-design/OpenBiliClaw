@@ -18,6 +18,8 @@
 - **README / 首页同步 release 结构**：用户下载说明明确 `openbiliclaw-v*` 是聚合 Latest Release，`backend-v*` / `extension-v*` / `desktop-v*` 是自动化频道；桌面安装包可能落后于后端源码版本，以聚合页 `Current Channels` 和附带 `.dmg` / `.exe` 为准。
 - **插件设置补齐封面图评估开关**：浏览器插件 side panel 的调度 tab 现在也能开关 `[discovery].multimodal_evaluation_enabled`，并编辑图文 batch、封面最大边、JPEG 质量和图片准备超时；保存时保留既有 discovery 配置，避免插件与桌面 Web 设置面脱节。
 - **移动 Web 添加到主屏幕补强**：`/m/` manifest 增加 `id` / `scope` / maskable 图标声明，HTML head 增加 `mobile-web-app-capable`、iOS Web Clip 标题与 touch icon；新增后端静态资源契约测试，并修复 degraded 模式下 `/favicon.ico` 被 503 拦截的问题，确保手机保存桌面图标时使用稳定名称、图标和启动路径（不引入 service worker / 离线缓存）。README / README_EN 和官网首页同步补充 iOS「添加到主屏幕」与 Android「安装应用 / 添加到主屏幕」使用说明。
+- **图形化初始化来源勾选即生效**：`/setup/`、桌面 Web 和插件推荐 tab 不再把“小红书 / 抖音 / YouTube / X 已勾选但未在设置开启”当作启动前错误；显式 `sources` 现在是本轮 guided init 的 opt-in，并 best-effort 写回 `sources.<platform>.enabled=true`。前置清单同步显示“本次初始化来源”，避免首启默认勾选后仍报未开启。
+- **`/setup/` 保存模型配置不再提前启动画像 / 探针**：安装包首启向导第一页把“模型名”移出高级折叠并自动填入推荐默认模型；点击“保存并继续”只保存 LLM/provider/model 并热重载组件，同时用 `suppress_background_llm_work=true` 暂停 post-reload speculator、画像/探针和补池后台工作。只有第二页选择来源并点击“开始初始化”后才真正进入四阶段 guided init，初始化终态后再恢复后台循环。
 - **补充机会系统统一规格草案**：新增 `docs/plans/2026-06-18-opportunity-system-spec.md`，沉淀画像准确性、OpenCloud / HMA / WorkValue 客户端边界与后续机会系统路线。
 
 ## v0.3.130: DeepSeek reasoning_effort 配置保存修复（2026-06-20）

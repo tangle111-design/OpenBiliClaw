@@ -840,7 +840,12 @@ class RuntimeContext:
             11,
         )
 
-    async def restart_background_tasks(self, app: FastAPI) -> None:
+    async def restart_background_tasks(
+        self,
+        app: FastAPI,
+        *,
+        run_post_reload_llm_work: bool = True,
+    ) -> None:
         """Cancel old background tasks and start new ones from current components."""
         # Cancel existing tasks
         for attr in ("refresh_task", "account_sync_task", "auto_update_task"):
@@ -853,19 +858,23 @@ class RuntimeContext:
         # Start new tasks from the freshly-built components.
         # v0.3.63+: route through ``self.task_registry.track`` so the
         # next hot-reload's ``cancel_all`` cleanly stops them too.
-        run_forever = getattr(self.runtime_controller, "run_forever", None)
-        app.state.refresh_task = (
-            self.task_registry.track("refresh_loop", run_forever())
-            if callable(run_forever)
-            else None
-        )
+        if run_post_reload_llm_work:
+            run_forever = getattr(self.runtime_controller, "run_forever", None)
+            app.state.refresh_task = (
+                self.task_registry.track("refresh_loop", run_forever())
+                if callable(run_forever)
+                else None
+            )
 
-        sync_forever = getattr(self.account_sync_service, "run_forever", None)
-        app.state.account_sync_task = (
-            self.task_registry.track("account_sync_loop", sync_forever())
-            if callable(sync_forever)
-            else None
-        )
+            sync_forever = getattr(self.account_sync_service, "run_forever", None)
+            app.state.account_sync_task = (
+                self.task_registry.track("account_sync_loop", sync_forever())
+                if callable(sync_forever)
+                else None
+            )
+        else:
+            app.state.refresh_task = None
+            app.state.account_sync_task = None
 
         update_forever = getattr(self.auto_update_service, "run_forever", None)
         app.state.auto_update_task = (
@@ -874,7 +883,7 @@ class RuntimeContext:
             else None
         )
 
-        llm_work_allowed = self.background_llm_work_allowed()
+        llm_work_allowed = run_post_reload_llm_work and self.background_llm_work_allowed()
 
         # Kick speculators to seed speculative interests / avoidances
         if self.soul_engine is not None and llm_work_allowed:
@@ -954,7 +963,10 @@ class RuntimeContext:
                 self._safe_prewarm_pool_mmr_embeddings(prewarm_pool),
             )
 
-        logger.info("Background tasks restarted after hot-reload")
+        if run_post_reload_llm_work:
+            logger.info("Background tasks restarted after hot-reload")
+        else:
+            logger.info("Background LLM tasks suspended after setup config hot-reload")
 
     @staticmethod
     async def _safe_post_reload_speculate(

@@ -103,7 +103,7 @@
       { key: "youtube", label: "YouTube" },
       { key: "twitter", label: "X" }
     ];
-    const INIT_SOURCE_LOGIN_HINT = "勾选要纳入初始化的平台（至少一个）。使用某个平台前，请先在当前浏览器登录该平台账号；未在设置里开启的平台，需先到设置开启。";
+    const INIT_SOURCE_LOGIN_HINT = "勾选要纳入初始化的平台（至少一个）。使用某个平台前，请先在当前浏览器登录该平台账号；勾选会同时开启该来源。";
     const INIT_REASON_TEXT = {
       unsupported_runtime: "当前运行环境不支持图形化初始化，请改用 CLI 初始化入口。",
       already_running: "初始化正在进行中。",
@@ -732,8 +732,9 @@
     function buildInitChecklist(status, selected = null) {
       const prereq = status?.prerequisites || {};
       const enabled = initEnabledPlatforms(status);
+      const selectedSources = Array.isArray(selected) ? selected : null;
       // B 站登录只在勾选了 B 站时才是硬前置。
-      const biliSelected = Array.isArray(selected) ? selected.includes("bilibili") : true;
+      const biliSelected = selectedSources ? selectedSources.includes("bilibili") : true;
       return [
         {
           key: "bilibili",
@@ -758,22 +759,16 @@
         },
         {
           key: "platforms",
-          label: enabled.length
-            ? `已启用来源：${initSourceLabels(enabled).join("、")}`
-            : "数据来源：仅 B 站（可在设置里开启更多平台）",
+          label: selectedSources?.length
+            ? `本次初始化来源：${initSourceLabels(selectedSources).join("、")}`
+            : enabled.length
+              ? `已启用来源：${initSourceLabels(enabled).join("、")}`
+              : "数据来源：仅 B 站（可在设置里开启更多平台）",
           ok: true,
           hard: false,
           hint: ""
         }
       ];
-    }
-
-    function initSelectedSourcesNeedingEnable(selected, status) {
-      const checked = new Set(Array.isArray(selected) ? selected : []);
-      const enabled = new Set(initEnabledPlatforms(status));
-      return INIT_SOURCE_OPTIONS
-        .filter((opt) => checked.has(opt.key) && !enabled.has(opt.key))
-        .map((opt) => opt.key);
     }
 
     function initProgressView(status) {
@@ -1006,13 +1001,6 @@
       }
       if (!selected.length) {
         state.initReason = INIT_REASON_TEXT.no_sources_selected;
-        state.initBusy = false;
-        renderAll();
-        return;
-      }
-      const needEnable = initSelectedSourcesNeedingEnable(selected, status);
-      if (needEnable.length > 0) {
-        state.initReason = `你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；先打开设置开启对应平台，或取消勾选后再点一次。`;
         state.initBusy = false;
         renderAll();
         return;

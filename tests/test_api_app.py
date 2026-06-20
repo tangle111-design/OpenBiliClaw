@@ -181,6 +181,53 @@ class TestBackendAPI:
         assert rec.prewarm_calls == 0
 
     @pytest.mark.asyncio
+    async def test_runtime_context_can_suppress_post_reload_llm_one_shots(self) -> None:
+        """Setup config saves must not kick profile/probe/pool LLM work."""
+        from types import SimpleNamespace
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config
+
+        class FakeSpeculator:
+            async def force_tick(self, *_args: object, **_kwargs: object) -> None:
+                raise AssertionError("setup config save must not generate probes")
+
+        class FakeSoulEngine:
+            def __init__(self) -> None:
+                self._speculator = FakeSpeculator()
+                self.profile_calls = 0
+
+            async def get_profile(self) -> dict[str, object]:
+                self.profile_calls += 1
+                return {"profile": "ok"}
+
+        class FakeRecommendationEngine:
+            async def precompute_pool_copy(self, *_args: object, **_kwargs: object) -> None:
+                raise AssertionError("setup config save must not precompute pool copy")
+
+            async def prewarm_pool_mmr_embeddings(self) -> int:
+                raise AssertionError("setup config save must not prewarm embeddings")
+
+        soul = FakeSoulEngine()
+        ctx = RuntimeContext(
+            config=Config(),
+            memory_manager=SimpleNamespace(load_discovery_runtime_state=lambda: {}),
+            runtime_controller=object(),
+            account_sync_service=object(),
+            auto_update_service=object(),
+            soul_engine=soul,
+            recommendation_engine=FakeRecommendationEngine(),
+        )
+        app = SimpleNamespace(state=SimpleNamespace())
+
+        await ctx.restart_background_tasks(app, run_post_reload_llm_work=False)
+
+        assert soul.profile_calls == 0
+        assert ctx.task_registry.stats().get("post_reload_speculate") is None
+        assert ctx.task_registry.stats().get("post_reload_precompute_pool_copy") is None
+        assert ctx.task_registry.stats().get("prewarm_pool_mmr_embeddings") is None
+
+    @pytest.mark.asyncio
     async def test_restart_tasks_detaches_speculator_tick(self) -> None:
         from types import SimpleNamespace
 
@@ -578,6 +625,54 @@ class TestBackendAPI:
 
         assert response.status_code == 200
         assert response.json()["reloaded"] is True
+
+    @pytest.mark.asyncio
+    async def test_put_config_setup_suppression_flag_skips_post_reload_llm_work(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        import httpx
+
+        from openbiliclaw.api.runtime_context import RuntimeContext
+        from openbiliclaw.config import Config, save_config
+
+        config_path = tmp_path / "config.toml"
+        cfg = Config()
+        cfg.llm.default_provider = "openai"
+        cfg.llm.openai.api_key = "sk-test-openai"
+        save_config(cfg, config_path)
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+
+        async def _fake_rebuild(self: RuntimeContext, new_config: Config) -> None:
+            self.config = new_config
+
+        restart_flags: list[bool] = []
+
+        async def _fake_restart(
+            self: RuntimeContext,
+            app: object,
+            *,
+            run_post_reload_llm_work: bool = True,
+        ) -> None:
+            restart_flags.append(run_post_reload_llm_work)
+
+        monkeypatch.setattr(RuntimeContext, "rebuild_from_config", _fake_rebuild)
+        monkeypatch.setattr(RuntimeContext, "restart_background_tasks", _fake_restart)
+        app = create_app(memory_manager=object(), database=object(), soul_engine=object())
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            response = await client.put(
+                "/api/config",
+                json={"language": "zh", "suppress_background_llm_work": True},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["reloaded"] is True
+        assert restart_flags == [False]
 
     def test_create_app_bootstrap_shares_database_with_memory_manager(
         self,
@@ -2098,12 +2193,15 @@ class TestBackendAPI:
             )
             is None
         )
-        assert _match_e2e_event(
-            events,
-            platform="douyin",
-            action="click",
-            used_event_ids=used_event_ids,
-        ) is None
+        assert (
+            _match_e2e_event(
+                events,
+                platform="douyin",
+                action="click",
+                used_event_ids=used_event_ids,
+            )
+            is None
+        )
 
     def test_match_e2e_event_does_not_treat_click_as_like(self) -> None:
         from openbiliclaw.api.app import _match_e2e_event
@@ -7388,9 +7486,7 @@ class TestEmbeddingAndCompatProviderE2E:
         assert data["logging"]["unmanaged_truncate_mb"] == 78
         assert data["logging"]["unmanaged_max_age_days"] == 9
 
-    def test_put_config_updates_multimodal_discovery_settings(
-        self, monkeypatch, tmp_path
-    ) -> None:
+    def test_put_config_updates_multimodal_discovery_settings(self, monkeypatch, tmp_path) -> None:
         from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
 
         cfg = Config(llm=LLMConfig(openai=LLMProviderConfig(api_key="sk-openai")))
@@ -8283,7 +8379,7 @@ def test_select_init_platforms_none_selection_uses_all_enabled() -> None:
     assert _select_init_platforms(enabled, None) == enabled
 
 
-def test_select_init_platforms_narrows_to_intersection() -> None:
+def test_select_init_platforms_explicit_selection_is_opt_in() -> None:
     from openbiliclaw.api.app import _select_init_platforms
 
     enabled = {"bilibili", "xiaohongshu", "douyin", "youtube"}
@@ -8291,14 +8387,21 @@ def test_select_init_platforms_narrows_to_intersection() -> None:
         "bilibili",
         "xiaohongshu",
     }
+    assert _select_init_platforms({"bilibili"}, {"bilibili", "xiaohongshu", "douyin"}) == {
+        "bilibili",
+        "xiaohongshu",
+        "douyin",
+    }
 
 
-def test_select_init_platforms_drops_unconfigured_selection() -> None:
+def test_select_init_platforms_keeps_unconfigured_selection() -> None:
     from openbiliclaw.api.app import _select_init_platforms
 
-    # A selected source that isn't enabled in config can't be init'd → dropped.
+    # A selected source is an explicit guided-init opt-in, so it must become
+    # effective even if it was not already enabled in settings.
     assert _select_init_platforms({"bilibili", "xiaohongshu"}, {"bilibili", "douyin"}) == {
-        "bilibili"
+        "bilibili",
+        "douyin",
     }
 
 
@@ -8496,21 +8599,21 @@ class TestGuidedInitEndpoints:
         assert captured["include_dy"] is True
         assert captured["include_yt"] is False  # youtube not enabled in config
 
-    def test_init_drops_selected_source_not_enabled_in_config(
+    def test_init_keeps_selected_source_not_enabled_in_config(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from fastapi.testclient import TestClient
 
         captured = self._capture_run_guided_init(monkeypatch)
-        # douyin is selected but NOT enabled in config → backend intersects it
-        # away (the extension separately warns the user; the API stays robust).
+        # douyin is selected but NOT enabled in config → the explicit checkbox
+        # choice is treated as opt-in for this guided-init run.
         prereqs = _FakeInitPrereqs(bili="ok", chat=True, platforms=["bilibili", "xiaohongshu"])
         app, _ = self._make_app(tmp_path, prereqs=prereqs)
         with TestClient(app) as client:
             resp = client.post("/api/init", json={"sources": ["bilibili", "douyin"]})
             assert resp.status_code == 202
             self._drive_until(client, captured)
-        assert captured["include_dy"] is False
+        assert captured["include_dy"] is True
         assert captured["include_xhs"] is False
 
     def test_cancel_without_active_run_returns_409(self, tmp_path: Path) -> None:

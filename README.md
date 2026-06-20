@@ -53,7 +53,7 @@
 请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
 ```
 
-3. **在同一个浏览器登录内容平台**：默认会用 [B 站](https://www.bilibili.com) 做初始化来源，也可以取消 B 站、改用已启用的 [小红书](https://www.xiaohongshu.com) / [抖音](https://www.douyin.com) / [YouTube](https://www.youtube.com) / [X](https://x.com)；初始化至少需要一个已登录且能取到信号的来源。
+3. **在同一个浏览器登录内容平台**：默认会用 [B 站](https://www.bilibili.com) 做初始化来源，也可以取消 B 站、改勾 [小红书](https://www.xiaohongshu.com) / [抖音](https://www.douyin.com) / [YouTube](https://www.youtube.com) / [X](https://x.com)；初始化至少需要一个已登录且能取到信号的来源，勾选会同时开启该来源。
 4. **打开桌面端或移动端 Web**：后端启动后访问 `http://127.0.0.1:8420/web`；手机可扫插件二维码打开 `http://<电脑局域网 IP>:8420/m/`，再从手机浏览器保存到主屏幕，像桌面 App 一样快速进入。
 
 ## 为什么需要 OpenBiliClaw？
@@ -310,7 +310,7 @@ Chrome Web Store / AMO 发布包默认只声明本机后端权限，插件侧建
 
 ### 3. 在同一个浏览器登录内容平台
 
-默认登录 [B 站](https://www.bilibili.com) 并勾选 B 站来源即可生成第一版画像和推荐；如果不想接 B 站，也可以在初始化来源选择里取消它，改用已启用且已登录的 [小红书](https://www.xiaohongshu.com) / [抖音](https://www.douyin.com) / [YouTube](https://www.youtube.com) / [X](https://x.com)。至少保留一个来源，且它需要能拉到行为信号。
+默认登录 [B 站](https://www.bilibili.com) 并勾选 B 站来源即可生成第一版画像和推荐；如果不想接 B 站，也可以在初始化来源选择里取消它，改勾已登录的 [小红书](https://www.xiaohongshu.com) / [抖音](https://www.douyin.com) / [YouTube](https://www.youtube.com) / [X](https://x.com)，勾选会同时开启该来源。至少保留一个来源，且它需要能拉到行为信号。
 
 ### 4. 打开桌面端或移动端 Web
 

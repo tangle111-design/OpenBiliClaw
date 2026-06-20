@@ -629,9 +629,7 @@ class ExtensionE2ERunIn(BaseModel):
         default_factory=_default_extension_e2e_platforms,
         min_length=1,
     )
-    actions: dict[ExtensionE2EPlatform, ExtensionE2EActionList] = Field(
-        default_factory=dict
-    )
+    actions: dict[ExtensionE2EPlatform, ExtensionE2EActionList] = Field(default_factory=dict)
     allow_state_changing: bool = False
     timeout_seconds: int = Field(default=45, ge=5, le=180)
 
@@ -1170,6 +1168,7 @@ class ConfigUpdateIn(BaseModel):
     language: str | None = None
     data_dir: str | None = None
     reset_fields: list[str] | None = None
+    suppress_background_llm_work: bool | None = None
     llm: dict[str, object] | None = None
     bilibili: dict[str, object] | None = None
     sources: dict[str, object] | None = None

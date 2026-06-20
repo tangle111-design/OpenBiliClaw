@@ -44,8 +44,6 @@ import {
   initProgressView,
   INIT_SOURCE_OPTIONS,
   INIT_SOURCE_LOGIN_HINT,
-  initSourceLabels,
-  initSelectedSourcesNeedingEnable,
 } from "./popup-init-control.js";
 import {
   getBackendBaseUrl,
@@ -998,18 +996,6 @@ async function handleStartInitClick() {
   if (status.running) {
     renderInitProgress(status);
     _startInitProgressPoll();
-    return;
-  }
-
-  // The user checked a platform that isn't enabled in settings — the backend
-  // would silently drop it, so guide them to enable it (or uncheck) instead.
-  const needEnable = initSelectedSourcesNeedingEnable(selectedSources, status);
-  if (needEnable.length > 0) {
-    _renderInitChecklist(status, selectedSources);
-    _setInitStartButton("开始初始化", true);
-    _setInitReason(
-      `你勾选了 ${initSourceLabels(needEnable).join("、")}，但还没在设置里开启；到设置开启对应平台，或取消勾选后再点一次。`,
-    );
     return;
   }
 

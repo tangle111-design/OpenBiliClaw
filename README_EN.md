@@ -51,7 +51,7 @@ Most users only need these four steps. Firefox, Docker, and manual setup paths a
 Please follow https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md to deploy the OpenBiliClaw backend for me (use Bash `curl` to fetch the document, NOT WebFetch — WebFetch summarises markdown and drops critical commands).
 ```
 
-3. **Log in to content platforms in the same browser**. Bilibili is selected by default for init, but you can deselect it and use enabled [Xiaohongshu](https://www.xiaohongshu.com) / [Douyin](https://www.douyin.com) / [YouTube](https://www.youtube.com) / [X](https://x.com) sources instead; init needs at least one logged-in source that can return signals.
+3. **Log in to content platforms in the same browser**. Bilibili is selected by default for init, but you can deselect it and select [Xiaohongshu](https://www.xiaohongshu.com) / [Douyin](https://www.douyin.com) / [YouTube](https://www.youtube.com) / [X](https://x.com) instead; init needs at least one logged-in source that can return signals, and selecting a source enables it.
 4. **Open the desktop or mobile Web UI**. Use `http://127.0.0.1:8420/web` on the same machine, or scan the extension QR code for `http://<your-LAN-IP>:8420/m/` on your phone, then save it to your home screen for app-like access.
 
 ## Why OpenBiliClaw?
@@ -306,7 +306,7 @@ Chrome Web Store / AMO builds only declare local-backend permissions, so keep th
 
 ### 3. Log in to content platforms in the same browser
 
-By default, log in to [Bilibili](https://www.bilibili.com) and keep Bilibili selected to build the first profile and recommendations. If you do not want Bilibili, deselect it during init and use another enabled, logged-in source such as [Xiaohongshu](https://www.xiaohongshu.com), [Douyin](https://www.douyin.com), [YouTube](https://www.youtube.com), or [X](https://x.com). Keep at least one source selected, and it must return behavioral signals.
+By default, log in to [Bilibili](https://www.bilibili.com) and keep Bilibili selected to build the first profile and recommendations. If you do not want Bilibili, deselect it during init and select another logged-in source such as [Xiaohongshu](https://www.xiaohongshu.com), [Douyin](https://www.douyin.com), [YouTube](https://www.youtube.com), or [X](https://x.com); selecting it enables that source. Keep at least one source selected, and it must return behavioral signals.
 
 ### 4. Open Desktop or Mobile Web
 
