@@ -56,6 +56,7 @@ import {
   handleCookieSyncAlarm,
   handleCookieSyncRuntimeEvent,
 } from "./cookie-sync.js";
+import { handleE2ERuntimeEvent } from "./e2e-runner.ts";
 // Use .ts extension so node:test's --experimental-strip-types resolver
 // (which doesn't rewrite .js → .ts for source-only modules) can follow
 // the import when test files load these dispatchers directly. esbuild
@@ -185,8 +186,18 @@ let runtimeSocket: WebSocket | null = null;
 let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let runtimeConnectInFlight = false;
 
-function handleRuntimeEvent(event: Record<string, unknown>): void {
+async function handleRuntimeEvent(event: Record<string, unknown>): Promise<void> {
   if (handleCookieSyncRuntimeEvent(event)) return;
+
+  try {
+    if (await handleE2ERuntimeEvent(event)) return;
+  } catch (err) {
+    console.warn(
+      "[OpenBiliClaw] Extension E2E runtime event failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return;
+  }
 
   const eventType = String(event.type ?? "");
 
@@ -334,7 +345,7 @@ async function connectRuntimeStream(): Promise<void> {
     runtimeSocket.onmessage = (msg) => {
       try {
         const payload = JSON.parse(String(msg.data)) as Record<string, unknown>;
-        handleRuntimeEvent(payload);
+        void handleRuntimeEvent(payload);
       } catch {
         // Ignore malformed payloads.
       }
