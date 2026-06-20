@@ -2122,6 +2122,8 @@ async def _run_init_discovery_backfill_async(
     label_suffix: str = "",
 ) -> int:
     """Backfill the initial discovery pool in stages until the target is reached."""
+    from openbiliclaw.discovery.pool_snapshot import build_cold_start_pool_snapshot
+
     database = _get_runtime_database()
     discovery_engine = _build_discovery_engine()
     discovered_count = 0
@@ -2131,6 +2133,15 @@ async def _run_init_discovery_backfill_async(
         if current_pool_count >= target_pool_count:
             break
         request_limit = max(20, target_pool_count - current_pool_count)
+        pool_snapshot = (
+            build_cold_start_pool_snapshot(
+                profile,
+                pool_target_count=target_pool_count,
+                source_targets={"bilibili": target_pool_count},
+            )
+            if current_pool_count <= 0
+            else None
+        )
         console.print(
             f"补货阶段 {index}/{len(_INIT_DISCOVERY_PLAN)}: {_format_strategy_group(strategies)}"
             f"{label_suffix}"
@@ -2146,6 +2157,7 @@ async def _run_init_discovery_backfill_async(
                 # Init is latency-critical — skip the default search-first
                 # phase split and let every strategy share the gather.
                 fully_parallel=True,
+                pool_snapshot=pool_snapshot,
             ),
             label=f"发现内容({_format_strategy_group(strategies)} 并发){label_suffix}",
             eta_seconds=300,

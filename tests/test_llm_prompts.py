@@ -211,6 +211,52 @@ def test_search_prompt_includes_pool_distribution_hints() -> None:
     assert "人物纪录" in user_prompt
 
 
+def test_search_prompt_treats_cold_start_hints_as_diversity_budget() -> None:
+    messages = build_search_queries_prompt(
+        profile_summary={"interests": [{"name": "人工智能", "weight": 0.96}]},
+        pool_hints={
+            "cold_start": True,
+            "avoid_topics": ["人工智能", "机器学习"],
+            "prefer_axes": ["篮球战术", "电影拉片", "科技"],
+        },
+    )
+
+    system_prompt = messages[0]["content"]
+    user_prompt = messages[1]["content"]
+
+    assert "cold_start" in user_prompt
+    assert "冷启动" in system_prompt
+    assert "最多 2 个 query" in system_prompt
+    assert "prefer_axes" in system_prompt
+
+
+def test_merged_keywords_prompt_treats_cold_start_hints_as_diversity_budget() -> None:
+    messages = build_merged_keywords_prompt(
+        profile_summary={"interests": [{"name": "人工智能", "weight": 0.96}]},
+        platform_blocks=[
+            {
+                "platform": "bilibili",
+                "need": 5,
+                "recent_keywords": [],
+                "avoid_topics": ["人工智能"],
+                "avoid_styles": [],
+                "avoid_franchises": [],
+                "prefer_axes": ["篮球战术", "电影拉片"],
+                "cold_start": True,
+            }
+        ],
+    )
+
+    system_prompt = messages[0]["content"]
+    user_prompt = messages[1]["content"]
+
+    assert "冷启动保护" in system_prompt
+    assert "最多 2 个" in system_prompt
+    assert '"cold_start": true' in user_prompt
+    assert "prefer_axes" in user_prompt
+    assert "篮球战术" in user_prompt
+
+
 def test_build_explore_domains_prompt_requires_directional_diversity() -> None:
     messages = build_explore_domains_prompt(
         profile_summary={
@@ -883,6 +929,14 @@ def test_batch_eval_system_invariant_across_negative_example_lengths() -> None:
         for p in payloads
     }
     assert len(systems) == 1
+
+
+def test_batch_eval_system_uses_json_object_results_wrapper() -> None:
+    system = _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT
+
+    assert "严格 JSON 对象" in system
+    assert '"results" 数组' in system
+    assert '"results": [' in system
 
 
 def test_batch_eval_negative_examples_json_uses_sort_keys() -> None:

@@ -2247,6 +2247,59 @@ async def test_evaluate_batch_accepts_newline_delimited_json_objects() -> None:
 
 
 @pytest.mark.asyncio
+async def test_evaluate_batch_accepts_identifier_keyed_object_response() -> None:
+    """JSON-object providers may return a bvid-keyed result map instead of an array."""
+
+    class _KeyedObjectBatchLLMService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete_structured_task(
+            self,
+            *,
+            system_instruction: str,
+            user_input: str,
+            history: list[dict[str, str]] | None = None,
+            temperature: float = 0.7,
+            max_tokens: int = 4096,
+            caller: str = "",
+            reasoning_effort: str | None = None,
+        ) -> object:
+            self.calls += 1
+            return _SlowResponse(
+                json.dumps(
+                    {
+                        "BVKEY2": {
+                            "score": 0.42,
+                            "reason": "B reason",
+                            "style_key": "story_doc",
+                        },
+                        "BVKEY1": {
+                            "score": 0.88,
+                            "reason": "A reason",
+                            "style_key": "practical_guide",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+    llm_service = _KeyedObjectBatchLLMService()
+    engine = ContentDiscoveryEngine(llm_service=llm_service)
+    batch = [
+        DiscoveredContent(bvid="BVKEY1", title="t1", up_name="u1", source_strategy="trending"),
+        DiscoveredContent(bvid="BVKEY2", title="t2", up_name="u2", source_strategy="trending"),
+    ]
+
+    scores = await engine._evaluate_batch(batch, _build_profile())
+
+    assert scores == [0.88, 0.42]
+    assert batch[0].relevance_reason == "A reason"
+    assert batch[1].relevance_reason == "B reason"
+    assert llm_service.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_evaluate_batch_intra_batch_franchise_cap() -> None:
     """v0.3.50: same-franchise items beyond the cap get their scores zeroed.
 

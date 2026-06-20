@@ -224,6 +224,28 @@ async def test_cold_start_multiple_platforms_one_merged_call(db: Database) -> No
     assert _pending(db, _TWITTER, digest) == []
 
 
+async def test_cold_start_merged_prompt_carries_diversity_hints(db: Database) -> None:
+    profile = _profile(("人工智能", 0.96), ("篮球战术", 0.72), ("电影拉片", 0.68))
+    llm = _FakeLLM(
+        payload={
+            _BILI: ["篮球战术 复盘", "电影拉片 结构"],
+            _XHS: ["篮球训练 真实体验"],
+        }
+    )
+    deficit = _FakeDeficitSource(deficits={_BILI: 20, _XHS: 20})
+    planner = _make_planner(db, llm=llm, profile=profile, deficit=deficit)
+
+    await planner.run_once()
+
+    assert len(llm.calls) == 1
+    user = llm.calls[0]["user"]
+    assert '"cold_start": true' in user
+    assert '"prefer_axes"' in user
+    assert "人工智能" in user
+    assert "篮球战术" in user
+    assert "电影拉片" in user
+
+
 async def test_full_pool_no_deficit_zero_llm_calls(db: Database) -> None:
     """No platform has a deficit and B站 has no catalyst → nothing due → zero
     LLM calls, zero inserts."""
@@ -823,6 +845,17 @@ def test_avoid_hints_below_floor_falls_back_to_global() -> None:
     )._avoid_hints()
     assert hints[_DOUYIN]["avoid_topics"] == ["全局热点"]
     assert hints[_YOUTUBE]["avoid_topics"] == ["全局热点"]  # no own data → global too
+
+
+def test_avoid_hints_use_profile_cold_start_when_pool_is_empty() -> None:
+    profile = _profile(("人工智能", 0.96), ("篮球战术", 0.72), ("电影拉片", 0.68))
+
+    hints = _avoid_planner({})._avoid_hints(profile)
+
+    assert hints[_BILI]["cold_start"] is True
+    assert hints[_BILI]["avoid_topics"] == ["人工智能"]
+    assert "篮球战术" in hints[_BILI]["prefer_axes"]
+    assert "电影拉片" in hints[_XHS]["prefer_axes"]
 
 
 # ── P3.3 data-driven supply advantage ─────────────────────────────────────

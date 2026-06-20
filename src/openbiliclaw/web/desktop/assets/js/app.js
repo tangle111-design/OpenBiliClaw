@@ -56,14 +56,7 @@
       config: null,
       runtimeStatus: null,
       runtimeSocket: null,
-      videos: [
-        { id: 4268, bvid: "BV1KMwuzdEcB", title: "为什么说回县城你也躺不平：县域经济的明斯基时刻", up: "硬核半佛宇宙", topic: "宏观债务", platform: "bilibili", duration: "28:41", presented: false, reason: "你最近一直在盯地缘政治和债务周期，这条用长链条把土地财政、县域就业和个人选择连起来。" },
-        { id: 4269, bvid: "yt-arch-001", title: "Concrete, light and silence: why Tadao Ando still feels modern", up: "Design Essays", topic: "建筑美学", platform: "youtube", duration: "18:09", presented: false, reason: "这是系统猜测兴趣：你对结构、空间和最少元素构建最大张力的内容反应更好。" },
-        { id: 4270, bvid: "dy-feed-882", title: "参数化设计不是炫技：从结构优化看复杂曲面", up: "结构可视化", topic: "参数化设计", platform: "douyin", duration: "04:36", presented: true, reason: "短视频来源用于补足你的轻量入口，但只保留解释密度较高的候选。" },
-        { id: 4271, bvid: "xhs-119", title: "手冲咖啡器具选择：为什么滤杯几何会改变口感", up: "桌面实验室", topic: "咖啡器具", platform: "xiaohongshu", duration: "07:22", presented: false, reason: "小红书兴趣信号和 B 站工艺内容交叉，系统认为你可能会喜欢“器物背后的结构逻辑”。" },
-        { id: 4272, bvid: "BV1OpenClaw", title: "大模型 Agent 为什么需要长期记忆，而不是更长上下文", up: "工程师的抽屉", topic: "AI Agent", platform: "bilibili", duration: "36:12", presented: false, reason: "你近期对本地化、可控和个人数据归属更敏感，这条能解释 OpenBiliClaw 的底层取向。" },
-        { id: 4273, bvid: "yt-macro-144", title: "The plumbing of money markets, explained with one balance sheet", up: "Macro Notes", topic: "金融机制", platform: "youtube", duration: "22:15", presented: false, reason: "它不是新闻，而是机制解释；与你的“先看齿轮怎么咬合”的认知风格更匹配。" }
-      ],
+      videos: [],
       messages: [],
       messageListSnapshot: null,
       messageListDomLocked: false,
@@ -118,6 +111,7 @@
     const INIT_STATUS_POLL_MS = Number(window.__OBC_TEST_INIT_POLL_MS) || 3000;
     const INIT_STATUS_START_POLL_MS = Number(window.__OBC_TEST_INIT_START_POLL_MS) || 1200;
     const INIT_STATUS_WATCHDOG_MS = Number(window.__OBC_TEST_INIT_WATCHDOG_MS) || 15000;
+    const INIT_FIRST_POOL_WAIT_TEXT = "画像已生成，正在整理首轮内容池；等第一批内容可刷后才算初始化完成。";
     const CHAT_PLACEHOLDERS = [
       "说说你最近怎么想——你是什么样的人、喜欢什么、讨厌什么，都可以直接说。",
       "比如：我喜欢慢慢讲清楚的长视频，讨厌标题党和故意搞悬念的。",
@@ -790,6 +784,28 @@
       };
     }
 
+    function initContentReadyFromRuntime(status = state.runtimeStatus) {
+      const runtime = normalizeRuntimeStatus(status);
+      return Boolean(runtime) && (
+        runtime.pool_available_count > 0 ||
+        runtime.recommendation_count > 0
+      );
+    }
+
+    function initWaitingForFirstPool(status = state.initStatus) {
+      return Boolean(status?.initialized) && !initContentReadyFromRuntime(state.runtimeStatus);
+    }
+
+    async function refreshRuntimeStatusForInitContent() {
+      try {
+        const runtime = await requestJsonStrict(ENDPOINTS.runtimeStatus, { timeoutMs: 60000 });
+        state.runtimeStatus = normalizeRuntimeStatus(runtime);
+      } catch {
+        // Keep the last runtime snapshot; the init poll will retry.
+      }
+      return initContentReadyFromRuntime(state.runtimeStatus);
+    }
+
     function selectedInitSourcesFromDom() {
       return Array.from(document.querySelectorAll("input[data-init-source]"))
         .filter((input) => input.checked)
@@ -823,7 +839,7 @@
 
     function initOnboardingPhase(status, progress) {
       if (state.initBusy) return "busy";
-      if (Boolean(status?.initialized)) return "completed";
+      if (Boolean(status?.initialized)) return initContentReadyFromRuntime(state.runtimeStatus) ? "completed" : "running";
       if (Boolean(status?.running)) return "running";
       if (progress.failed) return "failed";
       return "idle";
@@ -860,23 +876,31 @@
       const status = state.initStatus;
       const progress = initProgressView(status);
       const isRunning = Boolean(status?.running);
-      const alreadyInitialized = Boolean(status?.initialized);
-      const showProgress = isRunning || progress.failed;
-      const reason = state.initReason || describeInitReason(status?.reason) || status?.detail || "";
-      const phase = initOnboardingPhase(status, progress);
+      const waitingForFirstPool = initWaitingForFirstPool(status);
+      const displayProgress = waitingForFirstPool
+        ? { ...progress, active: true, failed: false, pct: 95, stageLabel: "4/4 整理首轮内容池" }
+        : progress;
+      const alreadyInitialized = Boolean(status?.initialized) && !waitingForFirstPool;
+      const showProgress = isRunning || displayProgress.failed || waitingForFirstPool;
+      const reason = waitingForFirstPool
+        ? (state.initReason || INIT_FIRST_POOL_WAIT_TEXT)
+        : (state.initReason || describeInitReason(status?.reason) || status?.detail || "");
+      const phase = initOnboardingPhase(status, displayProgress);
       const buttonLabel = state.initBusy
         ? "检查中…"
         : isRunning
           ? "初始化进行中…"
+          : waitingForFirstPool
+            ? "整理首轮内容…"
           : alreadyInitialized
             ? "已初始化"
-            : progress.failed
+            : displayProgress.failed
               ? "重试初始化"
               : "开始初始化";
-      const buttonDisabled = state.initBusy || isRunning || alreadyInitialized;
+      const buttonDisabled = state.initBusy || isRunning || waitingForFirstPool || alreadyInitialized;
       const existing = grid.querySelector(".init-onboarding");
       if (existing?.dataset.initPhase === phase && phase !== "idle" && phase !== "busy") {
-        updateInitOnboardingStatus(existing, status, progress, reason, buttonLabel, buttonDisabled);
+        updateInitOnboardingStatus(existing, status, displayProgress, reason, buttonLabel, buttonDisabled);
         const loadMore = $("#loadMoreBtn");
         if (loadMore) loadMore.hidden = true;
         return;
@@ -891,8 +915,8 @@
           ${isRunning ? "" : initSourcesMarkup()}
           <ul class="init-checklist">${initChecklistMarkup(status, state.initSelectedSources)}</ul>
           <div class="init-progress"${showProgress ? "" : " hidden"}>
-            <div class="init-progress-track"><div class="init-progress-fill" style="width:${progress.pct}%"></div></div>
-            <p>${escapeHtml(progress.failed ? (describeInitReason(status?.reason) || progress.failedReason || "初始化未完成，请稍后重试。") : progress.active ? `${progress.stageLabel || "正在初始化"}（${progress.pct}%）` : "等待开始")}</p>
+            <div class="init-progress-track"><div class="init-progress-fill" style="width:${displayProgress.pct}%"></div></div>
+            <p>${escapeHtml(displayProgress.failed ? (describeInitReason(status?.reason) || displayProgress.failedReason || "初始化未完成，请稍后重试。") : displayProgress.active ? `${displayProgress.stageLabel || "正在初始化"}（${displayProgress.pct}%）` : "等待开始")}</p>
           </div>
           <p class="init-reason"${reason ? "" : " hidden"}>${escapeHtml(reason)}</p>
           <div class="init-actions">
@@ -943,13 +967,19 @@
       }
       initRefreshInFlight = true;
       clearInitPolling();
-      const wasInitialized = Boolean(state.initStatus?.initialized);
+      const wasInitialized = Boolean(state.initStatus?.initialized) && initContentReadyFromRuntime(state.runtimeStatus);
       try {
         const status = await requestJsonStrict(ENDPOINTS.initStatus, { timeoutMs: 60000 });
         state.initStatus = status;
         state.initReason = "";
-        renderAll();
         if (status?.initialized) {
+          if (!(await refreshRuntimeStatusForInitContent())) {
+            state.initReason = INIT_FIRST_POOL_WAIT_TEXT;
+            renderAll();
+            scheduleInitStatusRefresh(schedule ? INIT_STATUS_POLL_MS : INIT_STATUS_WATCHDOG_MS);
+            return;
+          }
+          renderAll();
           clearInitPolling();
           initRefreshPending = false;
           if (!wasInitialized) {
@@ -958,6 +988,7 @@
           }
           return;
         }
+        renderAll();
         if (status?.running) {
           scheduleInitStatusRefresh(schedule ? INIT_STATUS_POLL_MS : INIT_STATUS_WATCHDOG_MS);
         } else if (!status?.running) {
@@ -989,6 +1020,18 @@
       } catch (error) {
         state.initReason = error?.message || "前置检查没拉到，稍后再试。";
         state.initBusy = false;
+        renderAll();
+        return;
+      }
+      if (status.initialized) {
+        state.initBusy = false;
+        if (await refreshRuntimeStatusForInitContent()) {
+          state.initReason = "";
+          scheduleBackendHydration();
+        } else {
+          state.initReason = INIT_FIRST_POOL_WAIT_TEXT;
+          scheduleInitStatusRefresh(INIT_STATUS_POLL_MS);
+        }
         renderAll();
         return;
       }
@@ -3243,6 +3286,8 @@
 
     function shouldShowInitOnboarding(status) {
       const runtime = normalizeRuntimeStatus(status);
+      if (initWaitingForFirstPool(state.initStatus)) return true;
+      if (Boolean(state.initStatus?.running)) return true;
       return Boolean(status) && runtime.initialized === false && !hasPostInitRuntimeSignals(runtime);
     }
 
@@ -3843,6 +3888,9 @@
       if (["init_progress", "init_failed", "init_completed"].includes(event.type)) {
         void refreshInitStatus({ schedule: event.type === "init_progress" });
       }
+      if (event.type === "refresh.pool_updated" && Boolean(state.initStatus?.initialized)) {
+        void refreshInitStatus({ schedule: false });
+      }
       if (event.type === "activity.added") scheduleActivityPageRefresh();
       if (
         event.type === "profile_updated" ||
@@ -3918,7 +3966,7 @@
     }
 
     async function hydrateFromBackend() {
-      const [health, recs, runtime, activity, profile, delights, notification, chatTurns, delightChatTurns, config] = await Promise.all([
+      const [health, recs, runtime, activity, profile, delights, notification, chatTurns, delightChatTurns, config, initStatus] = await Promise.all([
         requestJson(ENDPOINTS.health),
         requestJson(ENDPOINTS.recommendations),
         requestJson(ENDPOINTS.runtimeStatus),
@@ -3928,11 +3976,13 @@
         requestJson(ENDPOINTS.notificationPending),
         requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=chat&limit=20`),
         requestJson(`${ENDPOINTS.chatTurns}?session=webui&scope=delight&limit=80`),
-        requestJson(ENDPOINTS.config)
+        requestJson(ENDPOINTS.config),
+        requestJson(ENDPOINTS.initStatus)
       ]);
       if (health) $("#statusLabel").textContent = "已连接本地后端";
+      if (initStatus) state.initStatus = initStatus;
       const recommendationItems = Array.isArray(recs) ? recs : asArray(recs?.items);
-      if (recommendationItems.length) state.videos = normalizeRecommendationList(recommendationItems);
+      state.videos = normalizeRecommendationList(recommendationItems);
       if (activity) {
         state.activity = activity;
         state.activityItems = asArray(activity.items);

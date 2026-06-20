@@ -59,6 +59,7 @@
     .msg.show { display: block; }
     .msg.ok { background: rgba(54,196,111,.12); color: var(--ok); border: 1px solid rgba(54,196,111,.3); }
     .msg.err { background: rgba(255,107,107,.12); color: var(--err); border: 1px solid rgba(255,107,107,.3); }
+    .msg.info { background: rgba(255,122,162,.12); color: var(--accent); border: 1px solid rgba(255,122,162,.28); }
     .check-list { list-style: none; padding: 0; margin: 18px 0; }
     .check-list li { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--panel-2);
       border: 1px solid var(--line); border-radius: 12px; margin-bottom: 10px; }
@@ -461,6 +462,35 @@
       return await r.json();
     }
 
+    async function fetchRuntimeStatus() {
+      const r = await fetch("/api/runtime-status");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    }
+
+    function runtimeHasFirstPool(runtime) {
+      return Number(runtime?.pool_available_count ?? runtime?.pool_available ?? runtime?.available_count ?? 0) > 0
+        || Number(runtime?.recommendation_count ?? 0) > 0;
+    }
+
+    async function firstInitPoolReady() {
+      try {
+        return runtimeHasFirstPool(await fetchRuntimeStatus());
+      } catch {
+        return false;
+      }
+    }
+
+    function renderWaitingForFirstPool() {
+      $("#initSources").style.display = "none";
+      $("#initProgress").hidden = false;
+      $("#initProgressBar").style.width = "95%";
+      $("#initProgressLabel").textContent = "画像已生成，正在整理首轮内容池…";
+      $("#startInit").disabled = true;
+      $("#startInit").textContent = "整理首轮内容…";
+      setInitReason("等第一批内容入池可刷后，初始化才会完成。", "info");
+    }
+
     function progressView(status) {
       const total = status?.total_stages || 4;
       const stages = Array.isArray(status?.stages) ? status.stages : [];
@@ -533,8 +563,13 @@
         const status = await fetchInitStatus();
         renderInitProgress(status);
         if (status.initialized) {
-          clearInitPoll();
-          setStep(3);
+          if (await firstInitPoolReady()) {
+            clearInitPoll();
+            setStep(3);
+            return;
+          }
+          renderWaitingForFirstPool();
+          scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_POLL_MS);
           return;
         }
         if (status.running) {
@@ -564,7 +599,7 @@
         initSocket.onmessage = (event) => {
           try {
             const payload = JSON.parse(event.data);
-            if (["init_progress", "init_completed", "init_failed"].includes(payload.type)) {
+            if (["init_progress", "init_completed", "init_failed", "refresh.pool_updated"].includes(payload.type)) {
               void pollInitStatus();
             }
           } catch {}
@@ -594,7 +629,14 @@
       }
 
       if (status.initialized) {
-        setStep(3);
+        if (await firstInitPoolReady()) {
+          setStep(3);
+        } else {
+          renderInitProgress(status);
+          renderWaitingForFirstPool();
+          connectInitStream();
+          scheduleInitPoll(initStreamReady() ? INIT_STREAM_WATCHDOG_MS : INIT_POLL_MS);
+        }
         return;
       }
       if (status.running) {

@@ -8,7 +8,7 @@
 
 1. **拉取数据** — B站 历史 / 收藏 / 关注（`_fetch_bilibili_init_data`，v0.3.118+ 仅当 `include_bili=True`，B 站与其他来源一样可取消）+ 小红书 / 抖音 / YouTube bootstrap 信号采集（按本轮勾选来源）+ X 点赞 / 收藏（`_fetch_x_init_data`,服务端 twitter-cli 直拉、无扩展任务,与 B站 一样在本轮直接持久化;cookie 未同步时静默跳过）→ 统一 `build_event` → `memory.propagate_event` 入库。X 点赞 → `event_type="like"`、收藏 → `event_type="favorite"`(均为显式正向信号,v0.3.118+ 同时进画像构建的 history 行,保证 X-only 初始化也有画像输入)。
 2. **分析偏好** — `soul_engine.analyze_events(...)` 分片并发。
-3. **生成画像** ‖ 4. **发现补池**（并行）— `soul_engine.build_initial_profile(...)` 与发现补池同时跑，发现用 preference-only 草稿画像预热评估。
+3. **生成画像** ‖ 4. **发现补池**（并行）— `soul_engine.build_initial_profile(...)` 与发现补池同时跑，发现用 preference-only 草稿画像预热评估；如果正式候选池还是空的，补池会先构造 `cold_start` 的 `PoolDistributionSnapshot`，把画像中最高权重兴趣作为首批 query 的软避让方向，并优先覆盖次级兴趣 / 兴趣域，避免第一批 discovery 全部集中在同一个强 topic。
 
 ## 共享流水线 `cli.run_guided_init`
 
@@ -23,6 +23,8 @@
 | 失败语义 | 硬失败抛 `GuidedInitError(reason)`（`empty_history`（选了 B 站但历史为空）/ `empty_signals`（所有所选来源 0 信号，v0.3.118+）/ `profile_failed`）：CLI 转状态面板 + 退出码 1，API 转 `coordinator.fail(reason)`。发现阶段失败是部分成功（画像已生成），记在 `InitResult.discovery_error`。 |
 
 `InitResult` 携带 CLI summary / API wrapper 需要的全部字段（各来源事件数、scope counts、profile、discovered_count、discovery_error）。
+
+首轮发现多样性由 `discovery.pool_snapshot.build_cold_start_pool_snapshot()` 提供：当 CLI `_run_init_discovery_backfill_async` 或 API `ContinuousRefreshController.run_init_backfill()` 看到 `count_pool_candidates()==0` 时，会生成 `cold_start=true` 的 snapshot 并传给 `ContentDiscoveryEngine.discover(..., pool_snapshot=...)`。这份 snapshot 不代表真实池子已有饱和历史；它只把权重最高的 1-2 个兴趣当作 `avoid_topics` 软约束，把剩余兴趣名和一级兴趣域放入 `prefer_axes`，让搜索词 prompt 在保留少量强兴趣命中感的同时，把首批内容面铺开。池子已有内容后，API runtime 会改用真实 `build_pool_distribution_snapshot()`；CLI 首轮 init 只做空池冷启动保护。初始化完成后的统一 keyword planner 如果遇到正式池仍为空，也会把同一套 cold-start hints 写进各平台的 merged keyword prompt，避免跨平台第一批关键词都押在同一个强兴趣上。
 
 ## 状态机 `InitCoordinator`
 
@@ -66,7 +68,7 @@
 
 推荐 tab 未初始化空状态给「开始初始化」面板：数据来源勾选（v0.3.118+ B 站默认勾选但可取消，与小红书 / 抖音 / YouTube / X 一样可选，至少保留一个；配「需在本浏览器登录目标平台」文案）+ 按钮（点击驱动校验：点击时拉 `/api/init-status`，一个来源都没勾 → 提示「至少勾选一个数据来源」，勾选的小红书 / 抖音 / YouTube / X 会作为本轮 opt-in 并自动开启对应来源，勾了 B 站但未登录 → 提示登录或取消勾选，前置未通过 → 展示前置清单 + 原因、不启动；全通过才带所选 `sources` 启动）+ 启动后进度条，详见 [extension 模块文档](extension.md)。DOM 无关逻辑在 `extension/popup/popup-init-control.js`，单测在 `extension/tests/init-control.test.ts`。
 
-桌面 Web 对齐同一套交互：安装包首启 `/setup/` 从「连接 AI → 连接 B站」后进入第 3 步「初始化画像和推荐池」。第一步把 provider、API Key、Base URL 和模型名作为普通字段保存，只热重载配置，不启动画像 / 探针 / 补池；第二步展示同款来源勾选、前置清单、`POST /api/init` 启动和 `runtime-stream`/轮询进度，用户点击「开始初始化」后才真正进入四阶段流水线；完成后才跳转 `/web`。用户跳过或后来直接打开 `/web` 时，推荐网格仅在 `runtime-status.initialized=false` 且没有插件同款“初始化后信号”（推荐数、候选池可用数、待整理数、最近发现 / 补货数）时渲染同款「开始初始化」面板，不再提示去命令行跑 init，也不展示示例推荐卡。
+桌面 Web 对齐同一套交互：安装包首启 `/setup/` 从「连接 AI → 连接 B站」后进入第 3 步「初始化画像和推荐池」。第一步把 provider、API Key、Base URL 和模型名作为普通字段保存，只热重载配置，不启动画像 / 探针 / 补池；第二步展示同款来源勾选、前置清单、`POST /api/init` 启动和 `runtime-stream`/轮询进度，用户点击「开始初始化」后才真正进入四阶段流水线。PC 侧完成态不是单纯的 `init-status.initialized=true`：`/setup/` 和 `/web` 收到 `init_completed` 后还会读取 `/api/runtime-status`，只有 `pool_available_count>0` 或已有推荐数时才进入完成 / 推荐体验；画像已生成但首批内容尚未入池时会继续停在「整理首轮内容池」进度态。用户跳过或后来直接打开 `/web` 时，推荐网格仅在 `runtime-status.initialized=false` 且没有插件同款“初始化后信号”（推荐数、候选池可用数、待整理数、最近发现 / 补货数）时渲染同款「开始初始化」面板，不再提示去命令行跑 init，也不展示示例推荐卡。
 
 ## 测试
 
@@ -77,5 +79,5 @@
 - `tests/test_cli.py` — `openbiliclaw init` 全回归（共享流水线零回归）。
 - `extension/tests/init-control.test.ts` — 清单 / 按钮态 / 进度状态机纯函数。
 - `tests/test_web_guided_init.py` — 安装包 `/setup/` 与桌面 `/web` 未初始化空状态的 guided-init 接线静态合约。
-- `tests/test_web_guided_init_e2e.py` — Playwright 驱动真实 `/setup/` 与 `/web` 页面，stub 外部 HTTP 响应来覆盖浏览器交互：成功进度、前置失败、启动冲突、终态重试、runtime-stream 静默 watchdog，以及 PC Web 与插件一致的未初始化入口判断（已有推荐 / 候选池信号时不再弹引导）；CI 的 `web-guided-init-e2e` job 安装 `[browser]` extra + Chromium 后单独运行。
+- `tests/test_web_guided_init_e2e.py` — Playwright 驱动真实 `/setup/` 与 `/web` 页面，stub 外部 HTTP 响应来覆盖浏览器交互：成功进度、前置失败、启动冲突、终态重试、runtime-stream 静默 watchdog，PC setup / Web 等首批 `pool_available_count>0` 后才完成，以及 PC Web 与插件一致的未初始化入口判断（已有推荐 / 候选池信号时不再弹引导）；CI 的 `web-guided-init-e2e` job 安装 `[browser]` extra + Chromium 后单独运行。
 - 完整真号 GUI init（插件推荐 tab → 前置清单 → 开始 → 进度 → 画像 → 推荐）列入用户手测 DoD。

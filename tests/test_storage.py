@@ -22,6 +22,7 @@ def _seed_visible(db: Database, bvid: str, **kwargs: Any) -> None:
     kwargs.setdefault("pool_topic_label", "测试主题")
     kwargs.setdefault("style_key", "tutorial")
     kwargs.setdefault("topic_group", "测试分组")
+    kwargs.setdefault("relevance_score", 0.90)
     db.cache_content(bvid, **kwargs)
 
 
@@ -562,7 +563,7 @@ class TestDatabase:
             db = Database(Path(tmpdir) / "test.db")
             db.initialize()
 
-            # Seed three items, then force them into different terminal states.
+            # Seed items, then force them into different terminal states.
             for status in ("suppressed", "shown", "purged_by_dislike"):
                 bvid = f"BV1{status}"
                 db.cache_content(
@@ -576,6 +577,17 @@ class TestDatabase:
                     "UPDATE content_cache SET pool_status = ? WHERE bvid = ?",
                     (status, bvid),
                 )
+            db.cache_content(
+                "BV1suppressed_low",
+                title="item suppressed low",
+                up_name="UP",
+                source="trending",
+                relevance_score=0.20,
+            )
+            db._execute_write(
+                "UPDATE content_cache SET pool_status = 'suppressed' WHERE bvid = ?",
+                ("BV1suppressed_low",),
+            )
 
             # Re-discover all three (simulates trending re-fetching same BVIDs)
             for status in ("suppressed", "shown", "purged_by_dislike"):
@@ -586,11 +598,20 @@ class TestDatabase:
                     source="trending",
                     relevance_score=0.8,
                 )
+            db.cache_content(
+                "BV1suppressed_low",
+                title="item suppressed low",
+                up_name="UP",
+                source="trending",
+                relevance_score=0.20,
+            )
 
             rows = db.get_cached_content(limit=10)
             by_bvid = {row["bvid"]: row for row in rows}
             # Suppressed re-fresh ✓
             assert by_bvid["BV1suppressed"]["pool_status"] == "fresh"
+            # Low-score suppression is admission, not just diversity trim.
+            assert by_bvid["BV1suppressed_low"]["pool_status"] == "suppressed"
             # Shown stays shown (user already saw)
             assert by_bvid["BV1shown"]["pool_status"] == "shown"
             # Disliked stays purged
@@ -626,7 +647,7 @@ class TestDatabase:
                     source="dy-plugin-search",
                     source_platform="douyin",
                     content_url=f"https://www.douyin.com/video/{i}",
-                    relevance_score=0.60,
+                    relevance_score=0.66,
                 )
 
             suppressed = db.trim_pool_to_target_count(
@@ -683,7 +704,7 @@ class TestDatabase:
                 source="dy-plugin-search",
                 source_platform="douyin",
                 content_url="https://www.douyin.com/video/1",
-                relevance_score=0.50,
+                relevance_score=0.66,
             )
 
             suppressed = db.trim_pool_source_overflow(
@@ -724,7 +745,7 @@ class TestDatabase:
                     content_url=(
                         f"https://www.xiaohongshu.com/explore/xhs-linkable-{i}?xsec_token=ABC="
                     ),
-                    relevance_score=0.10 + i / 1000,
+                    relevance_score=0.70 + i / 1000,
                 )
             for i in range(60):
                 _seed_visible(
@@ -774,7 +795,7 @@ class TestDatabase:
                     title=f"L{i}",
                     up_name="UP",
                     source="trending",
-                    relevance_score=0.30,
+                    relevance_score=0.66,
                 )
 
             suppressed = db.trim_pool_to_target_count(target=5)
@@ -821,7 +842,7 @@ class TestDatabase:
                     source="dy-plugin-search",
                     source_platform="douyin",
                     content_url=f"https://www.douyin.com/video/{i}",
-                    relevance_score=0.50,
+                    relevance_score=0.66,
                 )
             for i in range(4):
                 db.cache_content(
@@ -860,7 +881,13 @@ class TestDatabase:
             db = Database(Path(tmpdir) / "test.db")
             db.initialize()
 
-            db.cache_content("BVSOURCE", title="S", up_name="UP", source="search")
+            db.cache_content(
+                "BVSOURCE",
+                title="S",
+                up_name="UP",
+                source="search",
+                relevance_score=0.90,
+            )
             db.cache_content(
                 "XHS-TASK-1",
                 title="X1",
@@ -868,6 +895,7 @@ class TestDatabase:
                 source="xhs-extension-task",
                 source_platform="xiaohongshu",
                 content_url=("https://www.xiaohongshu.com/explore/XHS-TASK-1?xsec_token=ABC="),
+                relevance_score=0.90,
             )
             db.cache_content(
                 "XHS-SEARCH-1",
@@ -876,6 +904,7 @@ class TestDatabase:
                 source="xhs-extension-search",
                 source_platform="xiaohongshu",
                 content_url=("https://www.xiaohongshu.com/explore/XHS-SEARCH-1?xsec_token=ABC="),
+                relevance_score=0.90,
             )
             db.cache_content(
                 "XHS-LEGACY-1",
@@ -883,6 +912,7 @@ class TestDatabase:
                 up_name="XHS",
                 source="xhs-extension-profile",
                 content_url=("https://www.xiaohongshu.com/explore/XHS-LEGACY-1?xsec_token=ABC="),
+                relevance_score=0.90,
             )
 
             counts = db.count_pool_candidates_by_source()
@@ -895,7 +925,13 @@ class TestDatabase:
             db = Database(Path(tmpdir) / "test.db")
             db.initialize()
 
-            db.cache_content("BVSOURCE", title="S", up_name="UP", source="search")
+            db.cache_content(
+                "BVSOURCE",
+                title="S",
+                up_name="UP",
+                source="search",
+                relevance_score=0.90,
+            )
             db.cache_content(
                 "dy:1",
                 title="D1",
@@ -904,6 +940,7 @@ class TestDatabase:
                 source_platform="douyin",
                 content_id="1",
                 content_url="https://www.douyin.com/video/1",
+                relevance_score=0.90,
             )
             db.cache_content(
                 "dy:2",
@@ -913,6 +950,7 @@ class TestDatabase:
                 source_platform="douyin",
                 content_id="2",
                 content_url="https://www.douyin.com/video/2",
+                relevance_score=0.90,
             )
 
             counts = db.count_pool_candidates_by_source()
@@ -931,6 +969,7 @@ class TestDatabase:
                     title=source,
                     up_name="UP",
                     source=source,
+                    relevance_score=0.90,
                 )
 
             counts = db.count_pool_candidates_by_source()
@@ -977,7 +1016,7 @@ class TestDatabase:
                     content_url=(
                         f"https://www.xiaohongshu.com/explore/XHS-QUOTA-{i}?xsec_token=ABC="
                     ),
-                    relevance_score=0.50,
+                    relevance_score=0.66,
                 )
 
             suppressed = db.trim_pool_to_target_count(
@@ -1418,6 +1457,7 @@ class TestDatabase:
                 up_name="UPA",
                 source="search",
                 view_count=100,
+                relevance_score=0.90,
             )
             db.cache_content(
                 "BV1B",
@@ -1425,6 +1465,7 @@ class TestDatabase:
                 up_name="UPB",
                 source="trending",
                 view_count=200,
+                relevance_score=0.90,
             )
             db.insert_recommendation("BV1A", confidence=0.91, presented=0)
 
@@ -1623,6 +1664,35 @@ class TestDatabase:
 
             db.close()
 
+    def test_get_pool_candidates_and_count_exclude_low_relevance_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            _seed_visible(
+                db,
+                "BV1HIGH",
+                title="高分候选",
+                up_name="UPA",
+                source="search",
+                relevance_score=0.82,
+            )
+            _seed_visible(
+                db,
+                "BV1LOW",
+                title="低分脏数据",
+                up_name="UPB",
+                source="search",
+                relevance_score=0.30,
+            )
+
+            items = db.get_pool_candidates(limit=10)
+
+            assert [item["bvid"] for item in items] == ["BV1HIGH"]
+            assert db.count_pool_candidates() == 1
+
+            db.close()
+
     def test_get_pool_candidates_returns_topic_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "test.db")
@@ -1741,12 +1811,12 @@ class TestDatabase:
             db = Database(Path(tmpdir) / "test.db")
             db.initialize()
 
-            db.cache_content("a", title="a", source="search", relevance_score=0.5)
+            db.cache_content("a", title="a", source="search", relevance_score=0.70)
             db.cache_content(
                 "b",
                 title="b",
                 source="search",
-                relevance_score=0.5,
+                relevance_score=0.70,
                 style_key="tutorial",
                 topic_group="测试分组",
             )
@@ -1842,7 +1912,7 @@ class TestDatabase:
                 content_id="dy-other-1",
                 content_url="https://www.douyin.com/video/dy-other-1",
                 topic_group="其他主题",
-                relevance_score=0.50,
+                relevance_score=0.66,
             )
 
             counts = db.count_pool_available_candidates_by_source()
@@ -2245,6 +2315,32 @@ class TestDatabase:
 
             db.close()
 
+    def test_get_recommendations_excludes_low_confidence_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "test.db")
+            db.initialize()
+
+            db.insert_recommendation(
+                "BV1HIGHREC",
+                confidence=0.83,
+                expression="",
+                topic="",
+                presented=0,
+            )
+            db.insert_recommendation(
+                "BV1LOWREC",
+                confidence=0.30,
+                expression="",
+                topic="",
+                presented=0,
+            )
+
+            rows = db.get_recommendations(limit=10)
+
+            assert [row["bvid"] for row in rows] == ["BV1HIGHREC"]
+
+            db.close()
+
     def test_get_recommendations_joins_multi_source_fields(self) -> None:
         """Regression: get_recommendations must surface content_cache's
         ``content_url``/``source_platform``/``content_id`` so xhs items
@@ -2377,7 +2473,7 @@ class TestDatabase:
             for bv in (bare_id, tokenized_id, bilibili_id):
                 db.insert_recommendation(
                     bv,
-                    confidence=0.5,
+                    confidence=0.9,
                     expression="",
                     topic="",
                     presented=0,

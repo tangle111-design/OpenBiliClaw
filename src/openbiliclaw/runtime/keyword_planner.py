@@ -47,7 +47,10 @@ import uuid
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from openbiliclaw.discovery.keyword_digest import profile_kw_digest
-from openbiliclaw.discovery.pool_snapshot import build_pool_distribution_snapshot
+from openbiliclaw.discovery.pool_snapshot import (
+    build_cold_start_pool_snapshot,
+    build_pool_distribution_snapshot,
+)
 from openbiliclaw.llm.prompts import (
     build_merged_keywords_prompt,
     parse_merged_keywords_with_presence,
@@ -345,7 +348,7 @@ class KeywordPlanner:
     ) -> dict[str, int]:
         from openbiliclaw.discovery.strategies._utils import build_profile_summary
 
-        hints_by_platform = self._avoid_hints()
+        hints_by_platform = self._avoid_hints(profile)
         supply_by_platform = self._supply_hints(hints_by_platform)
         blocks: list[dict[str, object]] = []
         needs: dict[str, int] = {}
@@ -371,9 +374,11 @@ class KeywordPlanner:
                     "platform": platform,
                     "need": shown_need,
                     "recent_keywords": self._history(platform),
-                    "avoid_topics": list(avoid.get("avoid_topics", [])),
-                    "avoid_styles": list(avoid.get("avoid_styles", [])),
-                    "avoid_franchises": list(avoid.get("avoid_franchises", [])),
+                    "avoid_topics": _as_str_list(avoid.get("avoid_topics")),
+                    "avoid_styles": _as_str_list(avoid.get("avoid_styles")),
+                    "avoid_franchises": _as_str_list(avoid.get("avoid_franchises")),
+                    "prefer_axes": _as_str_list(avoid.get("prefer_axes")),
+                    "cold_start": bool(avoid.get("cold_start")),
                     "supply_hint": list(supply_by_platform.get(platform, [])),
                 }
             )
@@ -597,7 +602,7 @@ class KeywordPlanner:
             logger.exception("recycle_oldest_used failed for %s", platform)
             return 0
 
-    def _avoid_hints(self) -> dict[str, dict[str, list[str]]]:
+    def _avoid_hints(self, profile: SoulProfile | None = None) -> dict[str, dict[str, object]]:
         """Per-platform topic avoid + global style/franchise avoid (P3.1).
 
         P1/P2 fed every platform the GLOBAL avoid, which over-avoids — a topic
@@ -605,7 +610,9 @@ class KeywordPlanner:
         OWN saturated topics (relative to that platform's own pool); styles and
         franchises stay global (coarser, less platform-specific). A platform
         with too little of its own pool falls back to the global topic avoid.
-        ``prefer_axes`` stays disabled.
+        Empty-pool cold start falls back to profile-derived soft diversity hints
+        so every platform's first keyword batch does not collapse onto the same
+        top-weighted interest.
         """
         hints: dict[str, object] = {}
         try:
@@ -614,12 +621,22 @@ class KeywordPlanner:
                 pool_target_count=self._resolved_pool_target(),
                 source_targets=self._source_targets(),
             )
+            if profile is not None and int(snapshot.pool_available_count) <= 0:
+                cold_snapshot = build_cold_start_pool_snapshot(
+                    profile,
+                    pool_target_count=self._resolved_pool_target(),
+                    source_targets=self._source_targets(),
+                )
+                if cold_snapshot is not None:
+                    snapshot = cold_snapshot
             hints = snapshot.to_prompt_hints()
         except Exception:
             logger.exception("keyword planner failed to build pool distribution snapshot")
         global_topics = _as_str_list(hints.get("avoid_topics"))
         shared_styles = _as_str_list(hints.get("avoid_styles"))
         shared_franchises = _as_str_list(hints.get("avoid_franchises"))
+        shared_prefer_axes = _as_str_list(hints.get("prefer_axes"))
+        cold_start = bool(hints.get("cold_start"))
 
         per_platform: dict[str, dict[str, int]] = {}
         getter = getattr(self._db, "get_pool_topic_counts_by_platform", None)
@@ -629,7 +646,7 @@ class KeywordPlanner:
             except Exception:
                 logger.exception("keyword planner failed to read per-platform topic counts")
 
-        result: dict[str, dict[str, list[str]]] = {}
+        result: dict[str, dict[str, object]] = {}
         for platform in _PLANNER_PLATFORMS:
             topic_counts = per_platform.get(platform, {})
             total = sum(int(count) for count in topic_counts.values())
@@ -648,11 +665,13 @@ class KeywordPlanner:
                 "avoid_topics": avoid_topics,
                 "avoid_styles": list(shared_styles),
                 "avoid_franchises": list(shared_franchises),
+                "prefer_axes": list(shared_prefer_axes),
+                "cold_start": cold_start,
             }
         return result
 
     def _supply_hints(
-        self, avoid_by_platform: dict[str, dict[str, list[str]]]
+        self, avoid_by_platform: dict[str, dict[str, object]]
     ) -> dict[str, list[str]]:
         """Per-platform data-driven supply-advantage topics (P3.3).
 
@@ -680,7 +699,7 @@ class KeywordPlanner:
             if total < _PER_PLATFORM_SUPPLY_FLOOR:
                 result[platform] = []
                 continue
-            avoid = set(avoid_by_platform.get(platform, {}).get("avoid_topics", []))
+            avoid = set(_as_str_list(avoid_by_platform.get(platform, {}).get("avoid_topics")))
             threshold = max(
                 _PER_PLATFORM_SUPPLY_MIN_THRESHOLD, total // _PER_PLATFORM_SUPPLY_DIVISOR
             )

@@ -110,9 +110,11 @@
 
    evaluator 的候选输入不再只依赖标题：各来源会尽量映射 `view_count`、`like_count`、`favorite_count` / `collect_count`、`comment_count` / `reply_count`、`share_count`、`danmaku_count`、`retweet_count`、`bookmark_count`、`tags`、`body_text` 等字段。prompt 明确把互动指标当辅助信号，不能用高热度替代内容与画像的真实匹配，也不能因为低热度惩罚小众但高度匹配的内容。
 
+   batch evaluator 的 LLM 输出优先使用顶层 JSON object：`{"results": [...]}`，以匹配 OpenAI-compatible provider 的 `json_object` 约束；解析器仍兼容旧的根数组、fenced JSON、JSONL，以及 provider 偶发返回的 `{"content_id": {"score": ...}}` 映射对象。解析失败或结果数量无法可靠对齐时，直接 discovery 兼容路径会降级为逐条 `evaluate_content()`，runtime 待评估池路径则按 batch 级 transient 失败释放回队列等待后续重试。
+
    当 `[discovery].multimodal_evaluation_enabled=true` 且当前 evaluation 路由支持图像输入时，带 `cover_url` 的候选会额外准备封面图：`discovery.multimodal.prepare_cover_image_inputs()` 走 `runtime.image_cache.get_or_fetch_cover_bytes()`，先查本地 `data/image-cache/`，命中则直接复用缓存图，未命中才按同一 SSRF / 白名单 / redirect / 大小限制边界抓取并写回缓存。小红书 token 图因此优先使用预取或 UI 代理已经落盘的副本，不依赖评估时原 CDN token 仍有效；随后再按 `multimodal_image_max_px` 与 `multimodal_image_quality` 压成 JPEG data URL。准备成功的候选会在 `content_batch` 里带 `cover_image_ref="cover:<content_id>"`，LLM user message 中每张图前也会插入同样的 `cover:<content_id>` 文字锚点，prompt 明确要求模型用这个锚点把图片和候选绑定；没有 `cover_image_ref` 的候选只按文本字段判断。该 batch 会使用更小的 `multimodal_batch_size`；如果模型不支持图像或图片准备失败，自动退回文本 + 互动指标评估。
 
-   评估结果会回写到 `discovery_candidates`：通过阈值前先标为 `evaluated`，低分会变成 `rejected_low_score`，全局 franchise 入池配额命中时会变成 `rejected_franchise_quota`。B 站 / YouTube / 抖音等主动 discovery 会把来源策略自己的 `score_threshold` 写入候选行，pipeline 优先使用这个阈值，避免统一池降低原策略质量线。小红书 observed notes 仍进入同一 evaluator 补全主题 / 风格，但 `raw_payload.admission_policy="observed"` 会把 admission 阈值降为 0；低分会被记录，却不会丢掉用户当前浏览行为信号。
+   评估结果会回写到 `discovery_candidates`：通过阈值前先标为 `evaluated`，低分会变成 `rejected_low_score`，全局 franchise 入池配额命中时会变成 `rejected_franchise_quota`。候选行自己的 `score_threshold` 优先，其次使用 raw payload 中显式携带的 `score_threshold`，最后回落到 `[discovery].admission_min_score`（默认 `0.65`）。`raw_payload.admission_policy="observed"` 只表示来源是用户观察 / 插件采集，不再降低 admission 阈值；B 站扩展搜索、小红书 observed、抖音 / YouTube / X 等任意来源都必须经过同一 evaluator 分数门。低分 observed 内容仍保留在 `discovery_candidates` 里作为学习 / 诊断信号，但不会写入 `content_cache` 的正式可推荐池。
 
    provider / LLM batch 级 transient 异常、空 scores、短 scores 或长 scores 都会释放回 `pending_eval` 后续重试，不消耗单条候选的 `eval_attempts`，避免一次短暂 provider outage 把整批内容永久打成 `failed_eval`；同时会递增独立的 `batch_eval_attempts`，高阈值熔断后才进入 `failed_eval`，避免永久坏 provider 无限 churn。batch prompt 明确要求不要因为平台不同而随意抬高或压低分数，只能按内容与用户画像匹配度打分。
 
@@ -599,7 +601,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 **P2 打磨（供给优势 / 弃权 / 轮换）**：合并 prompt 的静态 system 里加了**平台供给优势表**（B站 学习区/梗、小红书 生活/美妆、抖音 娱乐/热点、YouTube 英文长内容、X 实时/英文），让模型把用户兴趣映射到各平台真正有货的方向；并允许**弃权**——某平台供给与用户兴趣不匹配时可少出或返回 `[]`。planner 区分「弃权」与「调用失败」：合并调用**成功**但某平台返回空 = 故意弃权（**不**回退确定性兴趣名、本轮跳过）；**整次调用失败**才对所有 due 平台回退兴趣名。轮换上 `claim_keywords` 严格 FIFO（最旧 pending 先出），非弃权平台生成后仍低于低水位则按缺口 `recycle_oldest_used` 补足，保持多样性而不再额外调 LLM。
 
-**P3 自适应（per-platform 饱和避让 + 动态缓存水位）**：避让从「全局一份」细化到**逐平台**——`_avoid_hints()` 用新增的 `Database.get_pool_topic_counts_by_platform()`（与 servable 同口径）算出**每个平台自己池里**已饱和的 `topic_group`（阈值 `max(5, 本平台池量//5)`、取 top-12），写进该平台的合并 prompt 分块；某平台池量不足 floor 10（冷启动）时回退到全局热门 topic 避让。这样「小红书池里美妆已满」只压小红书的美妆词、不误伤 B站。缓存高水位也从静态 `kw_cache_high` 改为**按平台产出动态**：`_target_high(platform)` 用 `ceil(本平台缺口 / 平均单词产出)` 估算需要囤多少词，`平均产出 = keyword_yield_total(platform) / used_keyword_count(platform)`（需 ≥10 个 `used` 样本才采信），夹在 `[max(1, kw_cache_low + fetch_batch), kw_cache_high*3]`；样本不足 / 无缺口 / 平均产出为 0 时回退静态 `kw_cache_high`。高产平台少囤词、低产平台多囤词，缓存深度随真实 admit 产出自适应。v0.3.124 起默认开启、flag-off 逐字回退。
+**P3 自适应（per-platform 饱和避让 + 动态缓存水位）**：避让从「全局一份」细化到**逐平台**——`_avoid_hints(profile)` 用新增的 `Database.get_pool_topic_counts_by_platform()`（与 servable 同口径）算出**每个平台自己池里**已饱和的 `topic_group`（阈值 `max(5, 本平台池量//5)`、取 top-12），写进该平台的合并 prompt 分块；某平台池量不足 floor 10 时回退到全局热门 topic 避让。若正式池整体还是空的，planner 会先用 `build_cold_start_pool_snapshot(profile)` 生成 `cold_start=true` hints：高权重兴趣进入各平台 `avoid_topics` 软预算，次级兴趣 / 兴趣域进入 `prefer_axes`，merged prompt 规则要求每个平台首批关键词保留少量强兴趣入口但至少一半覆盖其它画像相关方向。这样「小红书池里美妆已满」只压小红书的美妆词、不误伤 B站；而真正冷启动时，各平台不会同时把第一批关键词全部押在同一个强兴趣上。缓存高水位也从静态 `kw_cache_high` 改为**按平台产出动态**：`_target_high(platform)` 用 `ceil(本平台缺口 / 平均单词产出)` 估算需要囤多少词，`平均产出 = keyword_yield_total(platform) / used_keyword_count(platform)`（需 ≥10 个 `used` 样本才采信），夹在 `[max(1, kw_cache_low + fetch_batch), kw_cache_high*3]`；样本不足 / 无缺口 / 平均产出为 0 时回退静态 `kw_cache_high`。高产平台少囤词、低产平台多囤词，缓存深度随真实 admit 产出自适应。v0.3.124 起默认开启、flag-off 逐字回退。
 
 **P3.3 数据驱动供给优势**：P2.1 的 `<supply_advantage>` 是**静态先验**（B站擅长学习区、小红书擅长美妆…）；P3.3 在它之上叠一层**这个用户的真实 admit 历史**。新增 `Database.get_admitted_topic_counts_by_platform()`——口径与 P3.1 的「当前可服务池」**不同**：它统计每个平台**历来入过缓存**（非 dislike、可链接、不限是否已服务/已看）的 `topic_group`，反映「这个平台为该用户实际产出过哪些主题」。`KeywordPlanner._supply_hints()` 取各平台 top-8（阈值 `max(3, 本平台入池量//10)`、入池量不足 floor 10 则空），并**减去该平台当前的 `avoid_topics`**——所以「擅长但当前饱和」的主题只留在避让里，绝不同时出现在「主推」和「避让」。结果作为每平台 `supply_hint` 写进合并 prompt 分块（静态 system 描述该字段语义、`<supply_advantage>` 表保持不变，prompt-cache 不破）；冷启动无历史时该字段为空、模型只依据静态表。意义：用户若在某平台稳定看某偏门主题（如抖音上的硬核科普），planner 会学到并优先把相关兴趣往该方向映射，而非死守平台刻板印象。
 
@@ -626,7 +628,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | M122 来源优先补齐与观看模式误判修正 | ✅ | 池子压缩时会优先保留不同 `source` 的候选，再限制重复 `style`；同时补强 `style_key` 规则，减少深度内容误判成轻聊天模式 |
 | M123 按平台缺口补池子 | ✅ | runtime 在补货时会先按 `[scheduler.pool_source_shares]` 统计平台族余量；默认保存的 B 站 / 小红书 / 抖音 / YouTube share = 8 / 1 / 1 / 1，但默认只有 B 站启用，disabled 平台会从有效配比中剔除。B 站缺口会按前端真实可换来源数计算，并用 raw-material headroom 夹住请求量，再合并四个策略生产 raw candidates；小红书 / 抖音缺口分别交给对应 producer；YouTube 缺口交给 `YoutubeDiscoveryProducer` 独立 loop。所有来源再统一进入 `discovery_candidates` batch 评估；超 raw-ceiling 配额的平台族才会被压回 raw 配额内 |
 | runtime 调度参数配置 | ✅ | 后台 discovery 不使用 `discovery_cron`；`ContinuousRefreshController` 从 `[scheduler]` 读取 `refresh_check_interval_seconds`、`signal_event_threshold`、`trending_refresh_hours`、`explore_refresh_hours`、`discovery_limit` 和 `proactive_push_interval_seconds`，配置热重载后重建 controller 生效 |
-| M124 LLM 评估窗口控费 | ✅ | runtime 按平台自身缺口传递补货 limit；各策略在 LLM 评估前把候选窗口收缩到 `max(6, limit*2)`、上限 90，少量补货时不再把几十条候选送去评分后立刻 suppressed；batch parser 兼容 fenced JSON、回显输入后追加结果、NDJSON object 序列，避免退回 N 次单条评估 |
+| M124 LLM 评估窗口控费 | ✅ | runtime 按平台自身缺口传递补货 limit；各策略在 LLM 评估前把候选窗口收缩到 `max(6, limit*2)`、上限 90，少量补货时不再把几十条候选送去评分后立刻 suppressed；batch evaluator 优先要求 `{"results":[...]}` 以贴合 `json_object` provider，parser 兼容 fenced JSON、回显输入后追加结果、NDJSON object 序列和按内容 ID 映射的 object，避免退回 N 次单条评估 |
 | v0.3.74 eval-batch JSON 容错统一 | ✅ | `_evaluate_batch` 改用 `llm.json_utils.extract_llm_json_list()`，在原 fenced / echo / JSONL 基础上统一兼容 `results/items/data/output/scores/evaluations` wrapper、MiMo malformed `{ [ ... ] }` 数组包裹和 schema echo 后最终结果；解析失败仍按原有降级路径处理，不把示例 JSON 当作真实评分 |
 | v0.3.81 eval-batch 按内容 ID 绑定 | ✅ | batch 内容评估 prompt 会携带 `bvid/content_id`，解析时优先按返回 ID 写回 `score/reason/topic/style/franchise`。provider 乱序或漏项时，不再把后一条候选的 `relevance_reason` 写到前一条；无 ID 且数量不完整时降级逐条评估 |
 | eval-batch 互动指标与封面图输入 | ✅ | `DiscoveredContent` / `discovery_candidates` / `content_cache` 透传观看、点赞、收藏、评论、分享、弹幕、转推、书签等指标；batch prompt 会带 `tags/body_text` 和互动指标。`[discovery].multimodal_evaluation_enabled=true` 且 evaluation 模型支持图像时，封面图经运行时图片缓存命中或白名单抓取后压缩为 image input 一并评估，并用 `cover_image_ref="cover:<content_id>"` 和图片前置文字锚点稳定绑定候选，自动使用更小 batch |
@@ -641,6 +643,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | v0.3.0 suppressed 重发现复活 | ✅ | `cache_content` UPSERT 时把 `pool_status='suppressed'` 自动复位为 `'fresh'`；slow-churning 源（trending）从此不再被旧 trim 决定终生淘汰 |
 | v0.3.69 平台级来源配比 | ✅ | `_SOURCE_TARGET_SHARES` 硬编码策略配比改为配置项 `[scheduler.pool_source_shares]`；`source_policy` 会按 `[sources.xiaohongshu]` / `[sources.douyin]` / `[sources.youtube]` 的 `enabled` 生成有效配比，避免关闭源占 quota；配置页和 init 都可更新开关与比例 |
 | Pool distribution snapshot | ✅ | `build_pool_distribution_snapshot()` 汇总候选池总量、平台缺口、饱和 topic/style/franchise，为后续 pool-aware discovery prompt 和 rerank 提供轻量输入 |
+| Cold-start pool snapshot | ✅ | `build_cold_start_pool_snapshot()` 在 init 首轮空池和统一 keyword planner 空池时生成 synthetic hints：把画像最高权重兴趣作为 `avoid_topics` 软预算，把次级兴趣 / 兴趣域作为 `prefer_axes`，避免第一批 discovery query / 跨平台 keywords 全部集中在同一强 topic |
 | v0.3.1 trim_topic_group 每 tick 触发 | ✅ | 修复"trim 只在 discover 之后跑"的盲点：`_enforce_pool_cap` 路径上每 tick 都调一次，避免 pool 满 cap 时 topic 配额永远不收敛 |
 | v0.3.31 小红书来源族均衡 | ✅ | `xhs-extension-task/search/profile` 等 raw source 归并为 `xiaohongshu` 平台族参与配额，满池时会从 suppressed 高分小红书候选中复活 under-quota 库存，再按统一 cap trim 让出空间 |
 | v0.3.67-0.3.69 抖音 discovery 策略边界 | ✅ | `DouyinDiscoveryService` 现在封装 search / hot / feed 三个公开来源的统一策略边界，Cookie 从环境变量覆盖或扩展同步文件解析；`discover --source douyin` 走缓存路径，`discover-douyin` 可指定关键词、子来源并用 `--no-cache --no-evaluate` 调试；作者主页 `creator` 不再作为默认公开渠道 |
@@ -815,6 +818,7 @@ assert result.source_counts.get("dy-plugin-feed", 0) >= 0
 ```python
 from openbiliclaw.discovery.pool_snapshot import (
     PoolDistributionSnapshot,
+    build_cold_start_pool_snapshot,
     build_pool_distribution_snapshot,
 )
 
@@ -824,17 +828,24 @@ snapshot = build_pool_distribution_snapshot(
     source_targets={"bilibili": 240, "xiaohongshu": 30, "douyin": 30},
 )
 hints = snapshot.to_prompt_hints()
+
+cold_start_snapshot = build_cold_start_pool_snapshot(
+    profile,
+    pool_target_count=30,
+    source_targets={"bilibili": 30},
+)
 ```
 
 行为说明：
 
-- `PoolDistributionSnapshot` 是冻结 dataclass，记录 `pool_target_count`、`pool_available_count`、各平台族目标数量 / 当前数量 / 缺口，以及已饱和的 `topic_group`、`style_key`、`franchise_key`；其中 `pool_available_count` 使用 recommendation serve 同口径的默认每 `topic_group` 最多 3 条候选窗口。
+- `PoolDistributionSnapshot` 是冻结 dataclass，记录 `pool_target_count`、`pool_available_count`、各平台族目标数量 / 当前数量 / 缺口、`cold_start` 标记，以及已饱和的 `topic_group`、`style_key`、`franchise_key`；其中 `pool_available_count` 使用 recommendation serve 同口径的默认每 `topic_group` 最多 3 条候选窗口。
 - 默认饱和阈值按池目标数换算：topic 为 `max(8, pool_target_count // 20)`，style 为 `max(12, pool_target_count // 8)`，franchise 固定为 10；以默认 `pool_target_count=300` 为例，topic 15 条、style 37 条、franchise 10 条即进入软避让。
 - `source_deficits` 只表示平台 / 来源族缺口，例如 `bilibili`、`xiaohongshu`、`douyin`、`youtube` 距离目标配比还差多少；它和内容轴分开处理，不会被解释成“应该搜索某个平台名”。
-- `to_prompt_hints()` 输出面向后续 prompt 的轻量 dict：`avoid_topics`、`avoid_styles`、`avoid_franchises`、`prefer_axes` 和 `source_deficits`。其中 `avoid_styles` 会把旧缓存 key 合并到新观看模式（如 `deep_dive` → `deep_focus`），`avoid_*`、`prefer_axes` 都是软信号，只影响 query 生成和引擎层软重排，不是硬过滤条件。
+- `to_prompt_hints()` 输出面向后续 prompt 的轻量 dict：`cold_start`、`avoid_topics`、`avoid_styles`、`avoid_franchises`、`prefer_axes` 和 `source_deficits`。其中 `avoid_styles` 会把旧缓存 key 合并到新观看模式（如 `deep_dive` → `deep_focus`），`avoid_*`、`prefer_axes` 都是软信号，只影响 query 生成和引擎层软重排，不是硬过滤条件。
+- `build_cold_start_pool_snapshot()` 用于没有真实池子分布可参考的 init 首轮和统一 keyword planner 空池首批关键词。它会读取 `build_profile_summary(profile)`，把权重最高且 `weight>=0.88` 的兴趣（最多 2 个；否则取 top 1）放入 `saturated_topics` / `avoid_topics`，把剩余兴趣名和一级兴趣域放入 `undercovered_axes` / `prefer_axes`，并标记 `cold_start=true`。这里的 `avoid_topics` 不是用户避雷项，只是“不要让首批 query / keywords 被强兴趣占满”的预算约束。
 - 当前 runtime 构建的 snapshot 不会把平台缺口自动合成内容 `prefer_axes`；`undercovered_axes` / `prefer_axes` 保留给手动传入或未来更细的内容轴缺口判断。
 - 统计口径复用候选池可见性：只看 fresh、非 dislike、未推荐、已预生成 pool copy 且可打开的候选；`pool_available_count` 额外复用 serve 候选窗口，避免拥挤主题把补货状态误判为可换库存充足。
-- runtime refresh 会在每次 B 站 discovery 前构建 snapshot，并通过 `ContentDiscoveryEngine.discover(..., pool_snapshot=...)` 传入；构建失败只记录日志，不阻塞补货。
+- runtime refresh 会在每次 B 站 discovery 前构建 snapshot，并通过 `ContentDiscoveryEngine.discover(..., pool_snapshot=...)` 传入；init 空池首轮和统一 keyword planner 空池时使用 cold-start snapshot，池子已有内容后改用真实 pool snapshot；构建失败只记录日志，不阻塞补货。
 - 引擎层会在最终压缩前应用 snapshot 软重排：饱和 topic/style/franchise 分别轻微降权，显式 undercovered topic 轻微加权，强相关候选仍保留优先级，且调整分只用于本轮排序，不会持久化覆盖 `relevance_score`。
 
 ### Runtime pool source balance
@@ -906,7 +917,7 @@ queries = strategy.last_intermediates.get("queries", [])
 行为说明：
 
 - 优先通过 `LLMService.complete_structured_task()` 生成 5 到 10 个 B 站搜索词
-- 如果传入 `pool_snapshot`，会把 `to_prompt_hints()` 写入 query prompt，引导模型软避让已拥挤的 topic/style/franchise，并携带独立的 `source_deficits` 平台缺口信号；运行时快照暂不把平台名转成内容 `prefer_axes`
+- 如果传入 `pool_snapshot`，会把 `to_prompt_hints()` 写入 query prompt，引导模型软避让已拥挤的 topic/style/franchise，并携带独立的 `source_deficits` 平台缺口信号；运行时快照暂不把平台名转成内容 `prefer_axes`。当 `cold_start=true` 时，prompt 会明确 `avoid_topics` 是高权重兴趣的首批预算保护，不是厌恶项：这些主题整组最多直接占 2 个 query，至少一半 query 应覆盖 `prefer_axes`、较低权重兴趣或一级兴趣域的其它切面，同时保留少量强兴趣入口
 - `pool_snapshot` 只是可选上下文：hint 构建失败、返回非 dict 或 hint 无法序列化时会丢弃这段上下文，继续走正常 LLM query 生成，不会直接退回本地 fallback query
 - LLM 返回坏 JSON 或空结果时，回退到本地兴趣标签 query
 - 正常模式默认抓每个 query 的第一页；backfill 变体会放大 query 数和页数

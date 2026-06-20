@@ -49,6 +49,7 @@ _DEFAULT_HISTORY_WINDOW_HOURS = 48
 _DEFAULT_CLAIM_LEASE_MINUTES = 10
 _DEFAULT_PLANNER_POLL_SECONDS = 120
 _DEFAULT_PLAN_TTL_HOURS = 12
+_DEFAULT_ADMISSION_MIN_SCORE = 0.65
 _DEFAULT_MULTIMODAL_BATCH_SIZE = 8
 _DEFAULT_MULTIMODAL_IMAGE_MAX_PX = 384
 _DEFAULT_MULTIMODAL_IMAGE_QUALITY = 72
@@ -296,6 +297,9 @@ class DiscoveryConfig:
     # Plan staleness backstop: pending keywords older than this expire even if
     # the profile digest hasn't changed.
     plan_ttl_hours: int = _DEFAULT_PLAN_TTL_HOURS
+    # Unified recommendation-pool admission floor. Source/provenance metadata
+    # must never bypass this; explicit strategy thresholds live on candidates.
+    admission_min_score: float = _DEFAULT_ADMISSION_MIN_SCORE
     # Optional cover-image evaluation. Kept off by default because it changes
     # LLM cost/latency and requires a vision-capable evaluation model.
     multimodal_evaluation_enabled: bool = False
@@ -950,6 +954,10 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
             default=_DEFAULT_PLAN_TTL_HOURS,
             min_value=1,
         ),
+        admission_min_score=_normalize_probability(
+            discovery_raw.get("admission_min_score"),
+            default=_DEFAULT_ADMISSION_MIN_SCORE,
+        ),
         multimodal_evaluation_enabled=_coerce_bool(
             discovery_raw.get("multimodal_evaluation_enabled"),
             default=False,
@@ -979,6 +987,21 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
             max_value=20,
         ),
     )
+
+
+def _normalize_probability(value: object, *, default: float) -> float:
+    """Normalize a TOML probability in the open interval ``(0, 1]``."""
+    if isinstance(value, bool):
+        return default
+    if not isinstance(value, (int, float, str)):
+        return default
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return default
+    if score <= 0.0 or score > 1.0:
+        return default
+    return score
 
 
 def _coerce_bool(value: object, *, default: bool = False) -> bool:
@@ -1935,6 +1958,7 @@ def _render_config_toml(
             f"claim_lease_minutes = {config.discovery.claim_lease_minutes}",
             f"planner_poll_seconds = {config.discovery.planner_poll_seconds}",
             f"plan_ttl_hours = {config.discovery.plan_ttl_hours}",
+            f"admission_min_score = {config.discovery.admission_min_score:g}",
             "multimodal_evaluation_enabled = "
             f"{_toml_bool(config.discovery.multimodal_evaluation_enabled)}",
             f"multimodal_batch_size = {config.discovery.multimodal_batch_size}",

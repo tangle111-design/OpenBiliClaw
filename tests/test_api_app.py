@@ -2495,6 +2495,49 @@ class TestBackendAPI:
         assert franchise_count == 2
         assert any(it["title"].startswith("番茄炒蛋") for it in items)
 
+    def test_recommendations_endpoint_filters_low_confidence_history(self) -> None:
+        from fastapi.testclient import TestClient
+
+        class FakeDatabase:
+            def get_recommendations(
+                self, limit: int = 20, *, exclude_processed: bool = False
+            ) -> list[dict[str, object]]:
+                assert limit == 40
+                return [
+                    {
+                        "id": 1,
+                        "bvid": "BVLOW",
+                        "title": "低分历史推荐",
+                        "up_name": "UP",
+                        "cover_url": "",
+                        "expression": "",
+                        "topic": "",
+                        "presented": 0,
+                        "confidence": 0.30,
+                        "franchise_key": "",
+                    },
+                    {
+                        "id": 2,
+                        "bvid": "BVHIGH",
+                        "title": "达标历史推荐",
+                        "up_name": "UP",
+                        "cover_url": "",
+                        "expression": "",
+                        "topic": "",
+                        "presented": 0,
+                        "confidence": 0.83,
+                        "franchise_key": "",
+                    },
+                ]
+
+        app = create_app(database=FakeDatabase())
+        client = TestClient(app)
+
+        response = client.get("/api/recommendations")
+
+        assert response.status_code == 200
+        assert [item["bvid"] for item in response.json()["items"]] == ["BVHIGH"]
+
     def test_runtime_status_endpoint_returns_runtime_summary(self) -> None:
         from fastapi.testclient import TestClient
 

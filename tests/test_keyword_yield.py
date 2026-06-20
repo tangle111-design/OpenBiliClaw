@@ -384,13 +384,13 @@ class TestXhsTaskResultProvenance:
                 discovered_content_to_candidate_write(
                     item,
                     source_context="task",
-                    raw_payload={"admission_policy": "observed", "score_threshold": 0.0},
+                    raw_payload={"admission_policy": "observed", "score_threshold": 0.65},
                 )
             ]
         )
-        # admission_policy=observed → threshold 0 → any score admits.
+        # observed describes the source only; admission still follows score_threshold.
         engine = ContentDiscoveryEngine(
-            llm_service=_ScoringLLM([_scored("xhsnote1", 0.10)]),
+            llm_service=_ScoringLLM([_scored("xhsnote1", 0.72)]),
             database=db,
         )
         pipeline = DiscoveryCandidatePipeline(

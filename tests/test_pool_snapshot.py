@@ -1,7 +1,9 @@
 from openbiliclaw.discovery.pool_snapshot import (
     PoolDistributionSnapshot,
+    build_cold_start_pool_snapshot,
     build_pool_distribution_snapshot,
 )
+from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
 from openbiliclaw.storage.database import Database
 
 
@@ -72,6 +74,36 @@ def test_runtime_pool_snapshot_does_not_turn_source_deficits_into_prefer_axes(tm
         "xiaohongshu": 6,
     }
     assert hints["prefer_axes"] == []
+
+
+def test_build_cold_start_pool_snapshot_marks_dominant_interests_as_soft_avoidance():
+    profile = SoulProfile(
+        preferences=PreferenceLayer(
+            interests=[
+                InterestTag(name="人工智能", category="科技", weight=0.96),
+                InterestTag(name="机器学习", category="科技", weight=0.91),
+                InterestTag(name="篮球战术", category="体育", weight=0.74),
+                InterestTag(name="电影拉片", category="影视", weight=0.68),
+            ]
+        )
+    )
+
+    snapshot = build_cold_start_pool_snapshot(
+        profile,
+        pool_target_count=30,
+        source_targets={"bilibili": 20, "douyin": 5, "youtube": 5},
+    )
+    assert snapshot is not None
+    hints = snapshot.to_prompt_hints()
+
+    assert snapshot.cold_start is True
+    assert snapshot.pool_available_count == 0
+    assert snapshot.source_deficits == {"bilibili": 20, "douyin": 5, "youtube": 5}
+    assert hints["cold_start"] is True
+    assert hints["avoid_topics"] == ["人工智能", "机器学习"]
+    assert "篮球战术" in hints["prefer_axes"]
+    assert "电影拉片" in hints["prefer_axes"]
+    assert "科技" in hints["prefer_axes"]
 
 
 def test_pool_snapshot_uses_default_pool_saturation_thresholds(tmp_path):

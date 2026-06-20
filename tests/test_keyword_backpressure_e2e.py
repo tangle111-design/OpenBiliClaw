@@ -471,7 +471,7 @@ async def test_flag_on_planner_to_fetch_to_yield_end_to_end(db: Database) -> Non
             discovered_content_to_candidate_write(
                 note,
                 source_context="task",
-                raw_payload={"admission_policy": "observed", "score_threshold": 0.0},
+                raw_payload={"admission_policy": "observed", "score_threshold": 0.65},
             )
         ]
     )
@@ -479,7 +479,7 @@ async def test_flag_on_planner_to_fetch_to_yield_end_to_end(db: Database) -> Non
     assert _status(db, xhs_word.id) == "used"  # terminal only on callback
 
     xhs_engine = ContentDiscoveryEngine(
-        llm_service=_ScoringLLM([_scored("xhsnote-camp", 0.1)]),
+        llm_service=_ScoringLLM([_scored("xhsnote-camp", 0.72)]),
         database=db,
     )
     xhs_pipeline = DiscoveryCandidatePipeline(

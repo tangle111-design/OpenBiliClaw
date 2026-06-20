@@ -1788,6 +1788,7 @@ class TestDiscoveryConfig:
         assert config.discovery.claim_lease_minutes == 10
         assert config.discovery.planner_poll_seconds == 120
         assert config.discovery.plan_ttl_hours == 12
+        assert config.discovery.admission_min_score == 0.65
         assert config.discovery.multimodal_evaluation_enabled is False
         assert config.discovery.multimodal_batch_size == 8
         assert config.discovery.multimodal_image_max_px == 384
@@ -1800,6 +1801,7 @@ class TestDiscoveryConfig:
         assert config.discovery.unified_keyword_planner_enabled is True
         assert config.discovery.kw_cache_high == 30
         assert config.discovery.plan_ttl_hours == 12
+        assert config.discovery.admission_min_score == 0.65
         assert config.discovery.multimodal_evaluation_enabled is False
         assert config.discovery.multimodal_batch_size == 8
 
@@ -1833,6 +1835,7 @@ history_window_hours = 72
 claim_lease_minutes = 15
 planner_poll_seconds = 90
 plan_ttl_hours = 6
+admission_min_score = 0.72
 multimodal_evaluation_enabled = true
 multimodal_batch_size = 4
 multimodal_image_max_px = 512
@@ -1854,6 +1857,7 @@ multimodal_image_timeout_seconds = 10
         assert config.discovery.claim_lease_minutes == 15
         assert config.discovery.planner_poll_seconds == 90
         assert config.discovery.plan_ttl_hours == 6
+        assert config.discovery.admission_min_score == 0.72
         assert config.discovery.multimodal_evaluation_enabled is True
         assert config.discovery.multimodal_batch_size == 4
         assert config.discovery.multimodal_image_max_px == 512
@@ -1913,6 +1917,23 @@ multimodal_image_timeout_seconds = 10
         config = load_config(toml_path)
 
         assert getattr(config.discovery, field) == expected
+
+    @pytest.mark.parametrize("literal", ["0", "-0.1", "1.1", '"nope"'])
+    def test_discovery_invalid_admission_min_score_falls_back_to_default(
+        self, tmp_path: Path, literal: str
+    ) -> None:
+        toml_path = tmp_path / "c.toml"
+        toml_path.write_text(
+            f"""
+[discovery]
+admission_min_score = {literal}
+""".strip(),
+            encoding="utf-8",
+        )
+
+        config = load_config(toml_path)
+
+        assert config.discovery.admission_min_score == 0.65
 
     def test_discovery_missing_table_uses_defaults(self, tmp_path: Path) -> None:
         toml_path = tmp_path / "c.toml"
@@ -1978,6 +1999,7 @@ multimodal_image_timeout_seconds = 10
         config.discovery.claim_lease_minutes = 12
         config.discovery.planner_poll_seconds = 100
         config.discovery.plan_ttl_hours = 8
+        config.discovery.admission_min_score = 0.72
         config.discovery.multimodal_evaluation_enabled = True
         config.discovery.multimodal_batch_size = 4
         config.discovery.multimodal_image_max_px = 512
@@ -1997,6 +2019,7 @@ multimodal_image_timeout_seconds = 10
         assert loaded.discovery.claim_lease_minutes == 12
         assert loaded.discovery.planner_poll_seconds == 100
         assert loaded.discovery.plan_ttl_hours == 8
+        assert loaded.discovery.admission_min_score == 0.72
         assert loaded.discovery.multimodal_evaluation_enabled is True
         assert loaded.discovery.multimodal_batch_size == 4
         assert loaded.discovery.multimodal_image_max_px == 512
@@ -2012,6 +2035,7 @@ multimodal_image_timeout_seconds = 10
         assert "unified_keyword_planner_enabled = true" in rendered
         assert "kw_cache_high = 30" in rendered
         assert "plan_ttl_hours = 12" in rendered
+        assert "admission_min_score = 0.65" in rendered
         assert "multimodal_evaluation_enabled = false" in rendered
         assert "multimodal_batch_size = 8" in rendered
         assert "multimodal_image_max_px = 384" in rendered

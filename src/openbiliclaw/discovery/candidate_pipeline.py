@@ -50,6 +50,7 @@ class DiscoveryCandidatePipeline:
     discovery_engine: ContentDiscoveryEngine
     pool_target_count: int = 300
     score_thresholds: dict[str, float] = field(default_factory=_default_score_thresholds)
+    admission_min_score: float = 0.65
     xhs_self_nickname: str = ""
     xhs_self_nickname_provider: Callable[[], str] | None = None
     max_eval_attempts: int = 5
@@ -427,28 +428,12 @@ class DiscoveryCandidatePipeline:
 
     def _threshold_for(self, row: dict[str, Any]) -> float:
         payload = self._raw_payload(row)
-        admission_policy = str(payload.get("admission_policy") or "").strip().lower()
-        if admission_policy in {"observed", "always_admit"}:
-            return 0.0
         candidate_threshold = self._coerce_threshold(row.get("score_threshold"))
         if candidate_threshold is None:
             candidate_threshold = self._coerce_threshold(payload.get("score_threshold"))
         if candidate_threshold is not None:
             return candidate_threshold
-        strategy = str(row.get("source_strategy") or "").strip().lower()
-        if "related" in strategy:
-            return self.score_thresholds["related"]
-        if "search" in strategy:
-            return self.score_thresholds["search"]
-        if "trending" in strategy:
-            return self.score_thresholds["trending"]
-        if "hot" in strategy:
-            return self.score_thresholds["hot"]
-        if "explore" in strategy:
-            return self.score_thresholds["explore"]
-        if "feed" in strategy:
-            return self.score_thresholds["feed"]
-        return self.score_thresholds["default"]
+        return self._normalized_admission_min_score()
 
     def _max_pending_per_source(self) -> int | None:
         return discovery_candidate_pending_cap(int(self.pool_target_count))
@@ -486,6 +471,15 @@ class DiscoveryCandidatePipeline:
         if threshold <= 0:
             return None
         return min(1.0, threshold)
+
+    def _normalized_admission_min_score(self) -> float:
+        try:
+            threshold = float(self.admission_min_score)
+        except (TypeError, ValueError):
+            return 0.65
+        if threshold <= 0.0 or threshold > 1.0:
+            return 0.65
+        return threshold
 
     def _current_xhs_self_nickname(self) -> str:
         if self.xhs_self_nickname_provider is not None:

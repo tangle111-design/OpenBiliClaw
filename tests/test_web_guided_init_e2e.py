@@ -361,9 +361,51 @@ def test_setup_wizard_e2e_starts_guided_init_and_finishes_on_runtime_event(
         "() => document.querySelector('#initProgressLabel')?.innerText.includes('1/4')"
     )
     stub.set_initialized()
+    stub.runtime_status.update({"initialized": True, "pool_available_count": 12})
     chromium_page.evaluate("""() => window.__emitRuntimeEvent({ type: "init_completed" })""")
     chromium_page.wait_for_selector('[data-panel="3"].active')
     assert "首轮初始化" in chromium_page.locator('[data-panel="3"]').inner_text()
+
+
+def test_setup_wizard_e2e_waits_for_first_pool_before_finishing(
+    guided_init_server: tuple[str, GuidedInitStub],
+    chromium_page: Any,
+) -> None:
+    base_url, stub = guided_init_server
+    _install_fake_runtime_stream(chromium_page, fast_watchdog=True)
+
+    chromium_page.goto(f"{base_url}/setup/")
+    chromium_page.locator("#provider").select_option("ollama")
+    chromium_page.locator("#saveLlm").click()
+    chromium_page.wait_for_selector('[data-panel="1"].active')
+    chromium_page.locator("#next1").click()
+    chromium_page.wait_for_selector('[data-panel="2"].active')
+    chromium_page.locator("#startInit").click()
+    chromium_page.wait_for_function(
+        "() => document.querySelector('#initProgress')?.hidden === false"
+    )
+
+    stub.set_initialized()
+    stub.runtime_status.update({"initialized": True, "pool_available_count": 0})
+    chromium_page.evaluate("""() => window.__emitRuntimeEvent({ type: "init_completed" })""")
+    chromium_page.wait_for_timeout(100)
+
+    assert chromium_page.locator('[data-panel="2"]').evaluate(
+        "el => el.classList.contains('active')"
+    )
+    assert chromium_page.locator('[data-panel="3"]').evaluate(
+        "el => !el.classList.contains('active')"
+    )
+    assert "首轮内容" in chromium_page.locator("#initProgressLabel").inner_text()
+
+    stub.runtime_status.update({"pool_available_count": 12, "last_replenished_count": 12})
+    chromium_page.evaluate(
+        """() => window.__emitRuntimeEvent({
+            type: "refresh.pool_updated",
+            pool_available_count: 12
+        })"""
+    )
+    chromium_page.wait_for_selector('[data-panel="3"].active')
 
 
 def test_setup_wizard_e2e_save_llm_does_not_start_guided_init(
@@ -430,8 +472,42 @@ def test_desktop_web_e2e_shows_init_cta_and_starts_same_init_endpoint(
     )
     assert fill_width > 0
     stub.set_initialized()
+    stub.runtime_status.update({"initialized": True, "pool_available_count": 12})
     chromium_page.evaluate("""() => window.__emitRuntimeEvent({ type: "init_completed" })""")
-    chromium_page.wait_for_selector('.init-onboarding[data-init-phase="completed"]')
+    chromium_page.wait_for_function("() => document.querySelector('.init-onboarding') === null")
+    assert chromium_page.locator("#loadMoreBtn").is_visible()
+
+
+def test_desktop_web_e2e_waits_for_pool_before_init_completed_state(
+    guided_init_server: tuple[str, GuidedInitStub],
+    chromium_page: Any,
+) -> None:
+    base_url, stub = guided_init_server
+    _install_fake_runtime_stream(chromium_page, fast_watchdog=True)
+
+    chromium_page.goto(f"{base_url}/web/")
+    chromium_page.wait_for_selector(".init-onboarding", state="attached")
+    chromium_page.locator('[data-init-action="start"]').click()
+    chromium_page.wait_for_function("() => window.__obcInitPosted === true")
+
+    stub.set_initialized()
+    stub.runtime_status.update({"initialized": True, "pool_available_count": 0})
+    chromium_page.evaluate("""() => window.__emitRuntimeEvent({ type: "init_completed" })""")
+    chromium_page.wait_for_timeout(100)
+
+    assert chromium_page.locator('.init-onboarding[data-init-phase="completed"]').count() == 0
+    assert chromium_page.locator(".init-onboarding").is_visible()
+    assert "首轮内容" in chromium_page.locator(".init-progress").inner_text()
+
+    stub.runtime_status.update({"pool_available_count": 12, "last_replenished_count": 12})
+    chromium_page.evaluate(
+        """() => window.__emitRuntimeEvent({
+            type: "refresh.pool_updated",
+            pool_available_count: 12
+        })"""
+    )
+    chromium_page.wait_for_function("() => document.querySelector('.init-onboarding') === null")
+    assert chromium_page.locator("#loadMoreBtn").is_visible()
 
 
 def test_desktop_web_e2e_matches_popup_when_runtime_has_post_init_signals(
@@ -476,6 +552,7 @@ def test_setup_wizard_e2e_watchdog_polls_when_runtime_stream_is_silent(
     chromium_page.wait_for_function("() => window.__obcSockets.length === 1")
     chromium_page.wait_for_function("() => window.__obcInitPosted === true")
     stub.set_initialized()
+    stub.runtime_status.update({"initialized": True, "pool_available_count": 12})
     chromium_page.wait_for_selector('[data-panel="3"].active')
 
 
@@ -497,6 +574,7 @@ def test_setup_wizard_e2e_default_watchdog_polls_when_runtime_stream_is_silent(
     chromium_page.wait_for_function("() => window.__obcSockets.length === 1")
     chromium_page.wait_for_function("() => window.__obcInitPosted === true")
     stub.set_initialized()
+    stub.runtime_status.update({"initialized": True, "pool_available_count": 12})
     chromium_page.wait_for_selector('[data-panel="3"].active', timeout=30000)
 
 
@@ -591,5 +669,6 @@ def test_desktop_web_e2e_retries_status_after_terminal_event_fetch_failure(
 
     stub.fail_next_status = True
     stub.set_initialized()
+    stub.runtime_status.update({"initialized": True, "pool_available_count": 12})
     chromium_page.evaluate("""() => window.__emitRuntimeEvent({ type: "init_completed" })""")
-    chromium_page.wait_for_selector('.init-onboarding[data-init-phase="completed"]')
+    chromium_page.wait_for_function("() => document.querySelector('.init-onboarding') === null")

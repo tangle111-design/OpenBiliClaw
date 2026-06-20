@@ -194,6 +194,21 @@ def _parse_batch_evaluation_payload(raw: str) -> list[dict[str, Any]] | None:
         item_predicate=lambda item: "score" in item,
     )
     if payload is None:
+        parsed = parse_llm_json_tolerant(raw)
+        if isinstance(parsed, dict):
+            mapped_payload: list[dict[str, Any]] = []
+            for key, value in parsed.items():
+                if not isinstance(value, dict) or "score" not in value:
+                    continue
+                item = dict(value)
+                identifier = str(key).strip()
+                if identifier:
+                    item.setdefault("content_id", identifier)
+                    if identifier.startswith("BV"):
+                        item.setdefault("bvid", identifier)
+                mapped_payload.append(item)
+            if mapped_payload:
+                return mapped_payload
         return None
     return [dict(item) for item in payload]
 
@@ -1549,8 +1564,10 @@ class ContentDiscoveryEngine:
                 )
                 return [0.0 for _ in batch]
             logger.warning(
-                "Batch evaluation failed for %d items, falling back to single eval",
+                "Batch evaluation failed for %d items (%s: %s), falling back to single eval",
                 len(batch),
+                type(exc).__name__,
+                exc,
             )
             # Fallback: evaluate individually
             return [

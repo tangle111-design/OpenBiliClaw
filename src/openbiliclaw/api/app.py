@@ -3022,12 +3022,38 @@ def create_app(
 
     @app.get("/api/recommendations", response_model=RecommendationListResponse)
     async def recommendations() -> RecommendationListResponse:
+        def _admission_min_score() -> float:
+            runtime_config = getattr(ctx, "config", None) or config
+            discovery_config = getattr(runtime_config, "discovery", None)
+            try:
+                threshold = float(getattr(discovery_config, "admission_min_score", 0.65) or 0.65)
+            except (TypeError, ValueError):
+                return 0.65
+            return threshold if 0.0 < threshold <= 1.0 else 0.65
+
+        def _filter_low_confidence(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            threshold = _admission_min_score()
+            filtered: list[dict[str, Any]] = []
+            for row in rows:
+                if "confidence" not in row:
+                    filtered.append(row)
+                    continue
+                try:
+                    confidence = float(row.get("confidence") or 0.0)
+                except (TypeError, ValueError):
+                    confidence = 0.0
+                if confidence <= 0.0 or confidence >= threshold:
+                    filtered.append(row)
+            return filtered
+
         # Pull a 2x window so the per-franchise cap below still has 20
         # survivors to return after dropping over-represented IPs.
         # Without the wider pool, capping 原神 at 2 in a 20-row request
         # would leave gaps that other items further back in time would
         # have filled.
-        rows = ctx.database.get_recommendations(limit=40, exclude_processed=True)
+        rows = _filter_low_confidence(
+            ctx.database.get_recommendations(limit=40, exclude_processed=True)
+        )
 
         # Fresh-install bootstrap: ``recommendations`` table is the
         # write-only history of items we've ever served. On first popup
@@ -3057,7 +3083,9 @@ def create_app(
                 if pool_count > 0:
                     profile = await ctx.soul_engine.get_profile()
                     await ctx.recommendation_engine.serve(profile, limit=10)
-                    rows = ctx.database.get_recommendations(limit=40, exclude_processed=True)
+                    rows = _filter_low_confidence(
+                        ctx.database.get_recommendations(limit=40, exclude_processed=True)
+                    )
                     logger.info(
                         "GET /api/recommendations bootstrap: served from "
                         "empty history (pool_count=%d → wrote %d to history)",
@@ -5838,7 +5866,6 @@ def create_app(
                         "author": author,
                         "cover_url": cover_url,
                         "admission_policy": "observed",
-                        "score_threshold": 0.0,
                     },
                 )
             )
@@ -7354,6 +7381,7 @@ def create_app(
                 claim_lease_minutes=cfg.discovery.claim_lease_minutes,
                 planner_poll_seconds=cfg.discovery.planner_poll_seconds,
                 plan_ttl_hours=cfg.discovery.plan_ttl_hours,
+                admission_min_score=cfg.discovery.admission_min_score,
                 multimodal_evaluation_enabled=cfg.discovery.multimodal_evaluation_enabled,
                 multimodal_batch_size=cfg.discovery.multimodal_batch_size,
                 multimodal_image_max_px=cfg.discovery.multimodal_image_max_px,
@@ -7650,6 +7678,7 @@ def create_app(
         runtime components so the new settings take effect immediately.
         """
         from openbiliclaw.config import (
+            _DEFAULT_ADMISSION_MIN_SCORE,
             _DEFAULT_DELIGHT_QUEUE_LIMIT,
             _DEFAULT_DISCOVERY_LIMIT,
             _DEFAULT_EXPLORE_REFRESH_HOURS,
@@ -7667,6 +7696,7 @@ def create_app(
             _default_config_path,
             _normalize_extension_disconnect_grace,
             _normalize_pool_source_shares,
+            _normalize_probability,
             _normalize_scheduler_int,
             load_config,
             save_config,
@@ -7994,6 +8024,11 @@ def create_app(
                 if "multimodal_evaluation_enabled" in ddata:
                     cfg.discovery.multimodal_evaluation_enabled = _as_bool(
                         ddata["multimodal_evaluation_enabled"]
+                    )
+                if "admission_min_score" in ddata:
+                    cfg.discovery.admission_min_score = _normalize_probability(
+                        ddata["admission_min_score"],
+                        default=_DEFAULT_ADMISSION_MIN_SCORE,
                     )
                 for key, (default, min_value, max_value) in discovery_int_limits.items():
                     if key in ddata:

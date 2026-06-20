@@ -2,6 +2,36 @@ import re
 from pathlib import Path
 
 
+def test_desktop_web_starts_with_empty_recommendation_list() -> None:
+    """Desktop web must not show built-in demo cards as real recommendations."""
+    app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    match = re.search(
+        r"\n\s+videos:\s*(?P<value>\[[\s\S]*?\])\s*,\n\s+messages:",
+        app_js,
+    )
+    assert match is not None, "desktop initial videos state not found"
+    assert match.group("value").strip() == "[]"
+    assert "为什么说回县城你也躺不平" not in app_js
+    assert "Concrete, light and silence" not in app_js
+
+
+def test_desktop_backend_hydration_clears_empty_recommendations() -> None:
+    """An empty backend recommendation response must clear stale local cards."""
+    app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")
+
+    hydrate = re.search(
+        r"async function hydrateFromBackend\(\) \{(?P<body>.*?)\n    \}",
+        app_js,
+        flags=re.S,
+    )
+    assert hydrate is not None, "desktop hydrateFromBackend not found"
+    body = hydrate.group("body")
+    assert "const recommendationItems = Array.isArray(recs) ? recs : asArray(recs?.items);" in body
+    assert "state.videos = normalizeRecommendationList(recommendationItems);" in body
+    assert "if (recommendationItems.length) state.videos" not in body
+
+
 def test_desktop_pool_status_shows_available_count() -> None:
     """Desktop web UI displays pool_available_count for inventory status."""
     app_js = Path("src/openbiliclaw/web/desktop/assets/js/app.js").read_text(encoding="utf-8")

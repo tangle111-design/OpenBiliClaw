@@ -11,7 +11,10 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from openbiliclaw.config import SchedulerConfig
-from openbiliclaw.discovery.pool_snapshot import build_pool_distribution_snapshot
+from openbiliclaw.discovery.pool_snapshot import (
+    build_cold_start_pool_snapshot,
+    build_pool_distribution_snapshot,
+)
 from openbiliclaw.recommendation.delight import DEFAULT_DELIGHT_THRESHOLD
 from openbiliclaw.runtime.image_cache import (
     cleanup_image_cache,
@@ -563,14 +566,43 @@ class ContinuousRefreshController:
                 if current >= target_pool_count:
                     break
                 request_limit = max(20, target_pool_count - current)
+                pool_snapshot = self._build_init_pool_snapshot(
+                    profile,
+                    current_pool_count=current,
+                    target_pool_count=target_pool_count,
+                )
                 discovered = await self.discovery_engine.discover(
                     profile,
                     strategies=strategies,
                     limit=request_limit,
                     fully_parallel=fully_parallel,
+                    pool_snapshot=pool_snapshot,
                 )
                 discovered_count += len(discovered)
         return discovered_count
+
+    def _build_init_pool_snapshot(
+        self,
+        profile: Any,
+        *,
+        current_pool_count: int,
+        target_pool_count: int,
+    ) -> Any | None:
+        if current_pool_count <= 0:
+            return build_cold_start_pool_snapshot(
+                profile,
+                pool_target_count=target_pool_count,
+                source_targets=self._source_target_counts(total=target_pool_count),
+            )
+        try:
+            return build_pool_distribution_snapshot(
+                self.database,
+                pool_target_count=target_pool_count,
+                source_targets=self._source_target_counts(total=target_pool_count),
+            )
+        except Exception:
+            logger.debug("init backfill pool snapshot unavailable", exc_info=True)
+            return None
 
     async def force_refresh(self) -> dict[str, object]:
         """Run a full refresh immediately, bypassing runtime thresholds.

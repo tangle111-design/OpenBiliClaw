@@ -411,7 +411,7 @@ class TestXhsObservedUrls:
         assert '"source_platform": "xiaohongshu"' in user_input
         assert '"content_type": "note"' in user_input
 
-    def test_observed_note_low_relevance_score_still_reaches_content_cache(
+    def test_observed_note_low_relevance_score_is_rejected_before_content_cache(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -490,10 +490,16 @@ class TestXhsObservedUrls:
             "SELECT * FROM content_cache WHERE content_id = ?",
             ("xhs-low-score-note",),
         ).fetchone()
-        assert row is not None
-        assert row["source_platform"] == "xiaohongshu"
-        assert row["relevance_score"] == 0.30
-        assert db.count_discovery_candidates_by_status()["cached"] == 1
+        candidate = db.conn.execute(
+            "SELECT status, relevance_score, eval_error FROM discovery_candidates "
+            "WHERE content_id = ?",
+            ("xhs-low-score-note",),
+        ).fetchone()
+        assert row is None
+        assert candidate is not None
+        assert candidate["status"] == "rejected_low_score"
+        assert candidate["relevance_score"] == 0.30
+        assert "below threshold" in candidate["eval_error"]
 
     def test_notes_enqueue_does_not_spawn_legacy_classification(
         self,

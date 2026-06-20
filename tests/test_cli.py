@@ -19,6 +19,7 @@ from openbiliclaw.discovery.engine import DiscoveredContent
 from openbiliclaw.recommendation.engine import Recommendation
 from openbiliclaw.soul.profile import (
     CoreLayer,
+    InterestTag,
     OnionProfile,
     PreferenceLayer,
     RoleLayer,
@@ -3952,16 +3953,22 @@ def test_init_backfills_pool_in_stages_until_target_is_reached(
     class FakeDiscoveryEngine:
         def __init__(self, database: FakeDatabase) -> None:
             self.database = database
-            self.calls: list[tuple[list[str] | None, int]] = []
+            self.calls: list[dict[str, object]] = []
 
         async def discover(
             self,
             profile: SoulProfile,
             strategies: list[str] | None = None,
             limit: int = 30,
-            **_: object,
+            **kwargs: object,
         ) -> list[DiscoveredContent]:
-            self.calls.append((strategies, limit))
+            self.calls.append(
+                {
+                    "strategies": strategies,
+                    "limit": limit,
+                    "pool_snapshot": kwargs.get("pool_snapshot"),
+                }
+            )
             if strategies == ["search", "trending", "related_chain", "explore"]:
                 self.database.pool_count = 15
             else:
@@ -4001,13 +4008,36 @@ def test_init_backfills_pool_in_stages_until_target_is_reached(
     )
     monkeypatch.setattr(cli_module, "_get_runtime_database", lambda: fake_database, raising=False)
     monkeypatch.setattr(cli_module, "_initialize_logging", lambda log_level_override=None: None)
+    monkeypatch.setattr(
+        cli_module,
+        "_build_draft_profile_for_discover",
+        lambda memory: SoulProfile(
+            preferences=PreferenceLayer(
+                interests=[
+                    InterestTag(name="人工智能", category="科技", weight=0.96),
+                    InterestTag(name="篮球战术", category="体育", weight=0.72),
+                ]
+            )
+        ),
+        raising=False,
+    )
 
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
-    assert fake_discovery.calls == [
-        (["search", "trending", "related_chain", "explore"], 20),
+    assert len(fake_discovery.calls) == 1
+    assert fake_discovery.calls[0]["strategies"] == [
+        "search",
+        "trending",
+        "related_chain",
+        "explore",
     ]
+    assert fake_discovery.calls[0]["limit"] == 20
+    pool_snapshot = cast("Any", fake_discovery.calls[0]["pool_snapshot"])
+    assert pool_snapshot is not None
+    assert pool_snapshot.cold_start is True
+    assert "人工智能" in pool_snapshot.saturated_topics
+    assert "篮球战术" in pool_snapshot.undercovered_axes
     assert "补货阶段 1/1" in result.stdout
     assert "search + trending + related_chain + explore" in result.stdout
     assert "当前池子 0/15" in result.stdout

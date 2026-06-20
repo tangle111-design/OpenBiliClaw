@@ -604,10 +604,16 @@ class RuntimeContext:
         # 8. Continuous refresh controller
         from openbiliclaw.discovery.candidate_pipeline import DiscoveryCandidatePipeline
 
+        discovery_cfg = getattr(new_config, "discovery", None)
+        admission_min_score = float(getattr(discovery_cfg, "admission_min_score", 0.65) or 0.65)
+        set_admission_min_score = getattr(self.database, "set_admission_min_score", None)
+        if callable(set_admission_min_score):
+            set_admission_min_score(admission_min_score)
         new_candidate_pipeline = DiscoveryCandidatePipeline(
             database=self.database,
             discovery_engine=new_discovery_engine,
             pool_target_count=new_config.scheduler.pool_target_count,
+            admission_min_score=admission_min_score,
             xhs_self_nickname_provider=lambda: str(
                 (_xhs_self_info_provider() or {}).get("nickname", "") or ""
             ).strip(),
@@ -626,7 +632,7 @@ class RuntimeContext:
             # Real ``Config`` always carries ``discovery`` (a dataclass field);
             # lightweight test stubs (SimpleNamespace) may not — fall back to the
             # default (flag off) so the coordinator stays inert.
-            discovery_config=getattr(new_config, "discovery", None) or DiscoveryConfig(),
+            discovery_config=discovery_cfg or DiscoveryConfig(),
         )
 
         new_bilibili_producer: Any = None

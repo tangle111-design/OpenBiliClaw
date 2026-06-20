@@ -762,6 +762,13 @@ def build_search_queries_prompt(
    avoid_styles 是封闭 style_key 观看模式，不是题材标签。
    source_deficits 是平台/来源缺口信号，不是内容轴；不要把平台名当成 query 主题。
    不要为了避让而生成与用户画像无关的 query。
+10. 冷启动保护：如果 <pool_distribution_hints> 里 cold_start=true，
+   表示当前还没有足够历史 discovery / pool 分布可参考，avoid_topics 不是用户讨厌的内容，
+   而是画像里权重最高、最容易让首批内容过度集中的主题。此时：
+   - avoid_topics 中的主题整组最多 2 个 query 可以直接使用，不能占满搜索词；
+   - 至少一半 query 必须来自 prefer_axes、较低权重兴趣、一级兴趣域的其它切面或跨域探索；
+   - prefer_axes 是冷启动时优先补广度的内容轴，应该优先覆盖，但不要生造无关主题；
+   - 仍要保留少量高权重兴趣入口，让首批内容有命中感，不要完全避开用户最喜欢的方向。
 </rules>
 
 <output_schema>
@@ -1031,8 +1038,8 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "<source_context>(发现路径)、<content_batch>(本批候选),你按下面规则打分。\n"
     "</task>\n\n"
     "<rules>\n"
-    "1. 输出必须是严格 JSON 数组,不要附带解释。\n"
-    "2. 数组长度必须与输入内容数量一致,顺序一一对应。\n"
+    '1. 输出必须是严格 JSON 对象,不要附带解释。顶层只包含 "results" 数组。\n'
+    "2. results 数组长度必须与输入内容数量一致,顺序一一对应。\n"
     "3. 每项必须原样带回输入里的 bvid 或 content_id,并包含 score(0-1)、"
     "reason(一句中文)、topic_group(2-4词粗分类)、style_key(13选1)、"
     "franchise_key(可空)。\n"
@@ -1102,14 +1109,16 @@ _BATCH_CONTENT_EVALUATION_SYSTEM_PROMPT = (
     "score 必须下调,不要把它们当成 interests 的反向补充来加分。\n"
     "</rules>\n\n"
     "<output_schema>\n"
-    "[\n"
-    '  {"bvid": "BV1xxx", "score": 0.78, "reason": "...", "topic_group": "认知科学", '
+    "{\n"
+    '  "results": [\n'
+    '    {"bvid": "BV1xxx", "score": 0.78, "reason": "...", "topic_group": "认知科学", '
     '"style_key": "deep_focus", "franchise_key": ""},\n'
-    '  {"bvid": "BV2xxx", "score": 0.72, "reason": "...", "topic_group": "游戏摄影", '
+    '    {"bvid": "BV2xxx", "score": 0.72, "reason": "...", "topic_group": "游戏摄影", '
     '"style_key": "aesthetic_browse", "franchise_key": "原神"},\n'
-    '  {"bvid": "BV3xxx", "score": 0.45, "reason": "...", "topic_group": "美食", '
+    '    {"bvid": "BV3xxx", "score": 0.45, "reason": "...", "topic_group": "美食", '
     '"style_key": "social_chat", "franchise_key": ""}\n'
-    "]\n"
+    "  ]\n"
+    "}\n"
     "</output_schema>"
 )
 
@@ -2033,6 +2042,7 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "(本轮需要补词的平台数组)。<platforms> 里每个平台块给出 platform、need"
     "(要生成多少个该平台关键词)、recent_keywords(最近已经搜过、不要再出的词)、"
     "avoid_topics / avoid_styles / avoid_franchises(当前推荐池已饱和、要避开的方向)、"
+    "prefer_axes(冷启动或手动传入的优先补广度方向)、cold_start(是否空池冷启动)、"
     "supply_hint(数据观察:该平台近来实际产出较多、用户没有反感的方向,是下面 "
     "<supply_advantage> 静态表的数据化补充,可能为空)。\n"
     "</task>\n\n"
@@ -2067,6 +2077,11 @@ _MERGED_KEYWORDS_SYSTEM_PROMPT = (
     "匹配(在该平台搜不到对用户有价值的内容),就为该平台返回更少、甚至空数组 []——"
     "不要硬凑、不要为了填满 need 而编造不契合该平台的词。该平台留空是允许且正确的。\n"
     "9. 同一平台内各关键词的核心主题词要两两不同,不要同一概念换皮出现多次。\n"
+    "10. 冷启动保护:如果某平台块 cold_start=true,avoid_topics 不是用户讨厌的内容,"
+    "而是画像里权重最高、最容易让首批关键词过度集中的主题。该平台的关键词中,"
+    "avoid_topics 整组最多 2 个可以直接使用;至少一半关键词应覆盖 prefer_axes、"
+    "较低权重兴趣、一级兴趣域的其它切面或适合该平台的跨域映射。仍要保留少量"
+    "高权重兴趣入口,不要完全避开用户最喜欢的方向。\n"
     "</rules>\n\n"
     "<output_schema>\n"
     "{\n"
@@ -2142,11 +2157,11 @@ def build_merged_keywords_prompt(
         profile_summary: The canonical ``build_profile_summary`` dict, sent once.
         platform_blocks: One dict per due platform, each carrying
             ``platform`` plus ``need`` / ``recent_keywords`` /
-            ``avoid_topics`` / ``avoid_styles`` / ``avoid_franchises``. Only the
-            platforms passed in appear in the prompt (and may appear in the
-            output). The ``avoid_*`` fields come from
-            ``PoolDistributionSnapshot.to_prompt_hints()`` (global, ``prefer_axes``
-            intentionally disabled).
+            ``avoid_topics`` / ``avoid_styles`` / ``avoid_franchises`` /
+            ``prefer_axes`` / ``cold_start``. Only the platforms passed in
+            appear in the prompt (and may appear in the output). The ``avoid_*``
+            and ``prefer_axes`` fields come from
+            ``PoolDistributionSnapshot.to_prompt_hints()``.
 
     Cache-friendly per CLAUDE.md: ``system_prompt`` is the module-level constant
     ``_MERGED_KEYWORDS_SYSTEM_PROMPT`` (100% static). All per-call data lives in
