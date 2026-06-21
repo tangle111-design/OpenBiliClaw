@@ -6,7 +6,7 @@
 
 ## v0.3.134 / extension v0.3.88: 初始化前事件入口收口（2026-06-21）
 
-后端源码走 `backend-v0.3.134`，浏览器插件走 `extension-v0.3.88`。桌面安装包未改动；如冻结包用户需要同步本次 Web / 后端修复，可后续单独打 `desktop-v0.3.134`。
+后端源码走 `backend-v0.3.134`，浏览器插件走 `extension-v0.3.88`，桌面安装包走 `desktop-v0.3.134`。
 
 - **未初始化 activity feed 不再抢显示待处理信号**：`/api/activity-feed` 现在和推荐空态使用同一初始化优先级；在 `initialized=false` 且还没有推荐 / 可换池 / 补货产物时，`pending_signal_events` 只保留为后台事实，不再把 popup / Web 首屏文案改成“已经记下 N 个信号”，避免保存 LLM provider 后误导用户以为初始化已经开始。
 - **初始化前普通行为事件不再入库**：`POST /api/events` 在 soul 画像明确未初始化时返回 `accepted=0` / `rejected.reason=not_initialized`，不写入 memory、不触发 `activity.added`、也不增加 `pending_signal_events`。首轮画像信号只由用户点击「开始初始化」后的 guided init 来源拉取；初始化任务自己的 `/api/sources/*/task-result` 仍按 init-owned 逻辑放行。
