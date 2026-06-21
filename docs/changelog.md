@@ -6,7 +6,7 @@
 
 ## v0.3.135 / extension v0.3.89 / desktop v0.3.135: 抖音 search discovery 真实召回修复（2026-06-21）
 
-后端源码与 Python 安装包走 `backend-v0.3.135`，浏览器插件走 `extension-v0.3.89`，桌面安装包走 `desktop-v0.3.135`。
+后端源码走 `backend-v0.3.135`，浏览器插件走 `extension-v0.3.89`，桌面安装包走 `desktop-v0.3.135`。
 
 - **抖音 search discovery 恢复真实召回**：search 仍从抖音首页搜索框输入关键词并点击按钮提交，且继续用 `search_navigation_ok` 校验真实搜索结果路由；当页面自身 search fetch tap 与 DOM 解析都没有候选时，content script 会改用已登录页面的 MAIN-world search API bridge 兜底，避免当前抖音搜索页软空 / 响应时序变化导致 `dy_search=0`。真实环境 E2E 已重新验证 search / hot / feed 三个 discover 渠道均返回 3 条候选。
 
