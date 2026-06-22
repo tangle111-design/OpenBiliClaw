@@ -371,6 +371,7 @@ class LLMService:
         caller: str = "",
         reasoning_effort: str | None = None,
         bypass_semaphore: bool = False,
+        skip_core_memory: bool = False,
     ) -> LLMResponse:
         """Execute a task with automatically injected core memory context.
 
@@ -386,9 +387,16 @@ class LLMService:
         ``bypass_semaphore`` (v0.3.64+) skips the global concurrency
         gate entirely. Use for user-initiated interactive requests
         (e.g. chat dialogue) that must never queue behind background work.
+
+        ``skip_core_memory`` (v0.3.68+) omits the core-memory injection
+        so that the system prompt stays byte-identical across calls,
+        enabling provider-side prompt caching (DeepSeek KV Cache,
+        OpenAI cached tokens, etc.). Use for batch analysis calls
+        (preference chunks, category mapping, etc.) where the core
+        memory is not needed and cache hit rate matters.
         """
         core_memory_block = ""
-        if self.memory is not None:
+        if not skip_core_memory and self.memory is not None:
             with suppress(Exception):
                 core_memory_block = self.memory.render_core_memory_prompt()
         parts = [system_instruction.strip()]
@@ -454,6 +462,7 @@ class LLMService:
         max_tokens: int = 4096,
         caller: str = "",
         reasoning_effort: str | None = None,
+        skip_core_memory: bool = False,
     ) -> LLMResponse:
         """Execute a JSON-mode task with core memory injection.
 
@@ -462,6 +471,11 @@ class LLMService:
         structured tasks (eval / classify / write-expression) that
         don't benefit from chain-of-thought — disabling it on
         DeepSeek-V4 cuts a 30-item batch from ~10 min to ~30s.
+
+        ``skip_core_memory`` (v0.3.68+): omit core-memory injection
+        so the system prompt stays byte-identical across calls,
+        enabling provider-side prompt caching. Use for batch
+        analysis calls where core memory is not needed.
         """
         return await self.complete_with_core_memory(
             system_instruction=system_instruction,
@@ -472,6 +486,7 @@ class LLMService:
             json_mode=True,
             caller=caller,
             reasoning_effort=reasoning_effort,
+            skip_core_memory=skip_core_memory,
         )
 
     async def complete_with_tools(

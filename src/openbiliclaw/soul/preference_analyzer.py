@@ -57,6 +57,7 @@ class SupportsCoreMemoryTask(Protocol):
         temperature: float = 0.7,
         max_tokens: int = 4096,
         caller: str = "",
+        skip_core_memory: bool = False,
     ) -> LLMResponse: ...
 
 
@@ -204,6 +205,7 @@ class PreferenceAnalyzer:
                 user_input=messages[1]["content"],
                 max_tokens=DEFAULT_STRUCTURED_MAX_TOKENS,
                 caller="soul.preference",
+                skip_core_memory=True,
             )
         except (LLMProviderError, LLMServiceError) as exc:
             raise PreferenceAnalysisError(str(exc)) from exc
@@ -341,12 +343,19 @@ class PreferenceAnalyzer:
                 events=chunk,
                 existing_preference={},
             )
+            system_prompt_bytes = len(messages[0]["content"].encode("utf-8"))
+            logger.info(
+                "preference chunk system_prompt: %d bytes (%d chars)",
+                system_prompt_bytes,
+                len(messages[0]["content"]),
+            )
             try:
                 response = await self.registry.complete_structured_task(
                     system_instruction=messages[0]["content"],
                     user_input=messages[1]["content"],
                     max_tokens=DEFAULT_STRUCTURED_MAX_TOKENS,
                     caller="soul.preference.chunk",
+                    skip_core_memory=True,
                 )
             except (LLMProviderError, LLMServiceError) as exc:
                 raise PreferenceAnalysisError(str(exc)) from exc
@@ -385,7 +394,18 @@ class PreferenceAnalyzer:
             chunk: list[dict[str, object]],
         ) -> list[tuple[dict[str, object], dict[str, object]]]:
             messages = build_preference_analysis_prompt(events=chunk, existing_preference={})
+            user_prompt_chars = len(messages[1]["content"])
+            logger.info(
+                "preference chunk: events=%d user_prompt=%d chars",
+                len(chunk),
+                user_prompt_chars,
+            )
             if not self._prompt_fits_budget(messages):
+                logger.info(
+                    "preference chunk exceeds budget, splitting: events=%d user_prompt=%d",
+                    len(chunk),
+                    user_prompt_chars,
+                )
                 return await _split_or_compact_chunk(chunk)
             try:
                 return [await _run_chunk_once(chunk)]

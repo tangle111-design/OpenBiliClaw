@@ -4382,7 +4382,9 @@ async def _fetch_bilibili_init_data(
     Extracted from the old ``init`` closure so the CLI and the API
     guided-init paths share a single B站 fetch (gui-init spec §1).
     """
+    console.print(f"  [dim]浏览历史: 开始拉取 (limit={history_limit})…[/dim]")
     hist = await client.get_user_history(max_items=history_limit)
+    console.print(f"  [dim]浏览历史: 实际获取 {len(hist)} 条[/dim]")
 
     favs: list[dict[str, Any]] = []
     try:
@@ -4416,6 +4418,7 @@ async def _fetch_bilibili_init_data(
 
     follows: list[dict[str, Any]] = []
     try:
+        console.print(f"  [dim]关注列表: 开始拉取 (limit={follow_limit})…[/dim]")
         page = 1
         page_size = 50
         while len(follows) < follow_limit:
@@ -4434,6 +4437,7 @@ async def _fetch_bilibili_init_data(
             if len(page_users) < page_size:
                 break
             page += 1
+        console.print(f"  [dim]关注列表: 实际获取 {len(follows)} 人[/dim]")
     except Exception as exc:
         console.print(f"  [yellow]关注列表拉取失败: {exc}[/yellow]")
 
@@ -4809,11 +4813,11 @@ async def run_guided_init(
     # instead of serialising one max-thinking call over ~800 events.
     chunk_size = 200
     num_chunks = max(1, (len(events) + chunk_size - 1) // chunk_size)
-    llm_concurrency = getattr(soul_engine, "_llm_concurrency", 16)
-    effective_concurrency = min(num_chunks, llm_concurrency)
+    batch_size = 16
+    num_batches = max(1, (num_chunks + batch_size - 1) // batch_size)
     await _run_with_progress(
         soul_engine.analyze_events(events, event_chunk_size=chunk_size),
-        label=f"分析偏好({num_chunks} 个分片，分 {effective_concurrency} 批处理)",
+        label=f"分析偏好({num_chunks} 个分片，分 {num_batches} 批处理)",
         eta_seconds=180,
     )
     await _stage_done(2)
@@ -5459,12 +5463,12 @@ def rebuild_profile(
         console.print(f"  总信号量: [green]{len(events)}[/green] 条")
         chunk_size = 200
         num_chunks = max(1, (len(events) + chunk_size - 1) // chunk_size)
-        llm_concurrency = getattr(soul_engine, "_llm_concurrency", 16)
-        effective_concurrency = min(num_chunks, llm_concurrency)
+        batch_size = 16
+        num_batches = max(1, (num_chunks + batch_size - 1) // batch_size)
         asyncio.run(
             _run_with_progress(
                 soul_engine.analyze_events(events, event_chunk_size=chunk_size),
-                label=f"分析偏好({num_chunks} 个分片，分 {effective_concurrency} 批处理)",
+                label=f"分析偏好({num_chunks} 个分片，分 {num_batches} 批处理)",
                 eta_seconds=180,
             )
         )
@@ -6065,16 +6069,16 @@ def import_youtube(
     _print_section_title("2/2 更新偏好画像")
     chunk_size = 200
     num_chunks = max(1, (stats.total + chunk_size - 1) // chunk_size)
-    llm_concurrency = getattr(soul_engine, "_llm_concurrency", 16)
-    effective_concurrency = min(num_chunks, llm_concurrency)
+    batch_size = 16
+    num_batches = max(1, (num_chunks + batch_size - 1) // batch_size)
     console.print(
-        f"  分析 {stats.total} 条 YouTube 信号（{num_chunks} 个分片，分 {effective_concurrency} 批处理，"
+        f"  分析 {stats.total} 条 YouTube 信号（{num_chunks} 个分片，分 {num_batches} 批处理，"
         f"每片 {chunk_size} 条）…"
     )
     asyncio.run(
         _run_with_progress(
             soul_engine.analyze_events(result.events, event_chunk_size=chunk_size),
-            label=f"分析偏好({num_chunks} 个分片，分 {effective_concurrency} 批处理)",
+            label=f"分析偏好({num_chunks} 个分片，分 {num_batches} 批处理)",
             eta_seconds=90,
         )
     )
